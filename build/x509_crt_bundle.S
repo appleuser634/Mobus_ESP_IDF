@@ -1,4 +1,4 @@
-/* * Data converted from /Users/miyagimusashi/esp/MoBus_ESP_IDF/build/esp-idf/mbedtls/x509_crt_bundle
+/* * Data converted from /Users/miyagimusashi/MoBus_ESP_IDF/build/esp-idf/mbedtls/x509_crt_bundle
  */
 .data
 .section .rodata.embedded

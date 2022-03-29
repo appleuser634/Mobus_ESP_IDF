@@ -1,4 +1,4 @@
-# Install script for directory: /Users/miyagimusashi/esp/MoBus_ESP_IDF/components/Display
+# Install script for directory: /Users/miyagimusashi/MoBus_ESP_IDF/components/Display
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)

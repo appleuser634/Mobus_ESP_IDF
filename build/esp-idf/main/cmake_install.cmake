@@ -1,4 +1,4 @@
-# Install script for directory: /Users/miyagimusashi/esp/MoBus_ESP_IDF/main
+# Install script for directory: /Users/miyagimusashi/MoBus_ESP_IDF/main
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)

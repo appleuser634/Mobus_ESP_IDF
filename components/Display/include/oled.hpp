@@ -61,7 +61,6 @@ class LGFX : public lgfx::LGFX_Device {
     }
 };
 
-
 static LGFX lcd;
 static LGFX_Sprite sprite(
     &lcd);  // スプライトを使う場合はLGFX_Spriteのインスタンスを作成。
@@ -70,12 +69,60 @@ static constexpr char text[] = "MoBus!";
 static constexpr size_t textlen = sizeof(text) / sizeof(text[0]);
 size_t textpos = 0;
 
+
+class MenuDisplay {
+    public: 
+
+    char menu_list[3][8] = {"Talk","Setting","Game"};
+    void Menu() { 
+        lcd.init();
+        lcd.setRotation(0);
+
+        // 画面が横長になるように回転
+        // if (lcd.width() < lcd.height()) lcd.setRotation(lcd.getRotation() ^ 2);
+
+        lcd.setRotation(2);
+
+        sprite.setColorDepth(8);
+        sprite.setFont(&fonts::Font4);
+        sprite.setTextWrap(false);  // 右端到達時のカーソル折り返しを禁止
+        sprite.createSprite(lcd.width(), lcd.height());
+       
+        int cursor_position = 0; 
+        for (int i = 0; i <= 2 ; i++) {
+            cursor_position = i * 22;
+            sprite.setCursor(26,cursor_position);  // カーソル位置を更新 
+            printf("Menu Text:%s\n",menu_list[i]);
+            sprite.print(menu_list[i]);  // 1バイトずつ出力
+        }
+        
+        sprite.setCursor(2,0);  // カーソル位置を更新 
+        sprite.print("->");  // 1バイトずつ出力
+
+        sprite.pushSprite(&lcd, 0, 0);
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        //for (int i = 50; i >= 20; i--) {
+        //    sprite.setCursor(25,i);  // カーソル位置を更新 
+        //    sprite.print(menu_text);  // 1バイトずつ出力
+        //    // sprite.scroll(0, 0);  // キャンバスの内容を1ドット上にスクロール
+        //}
+        //
+        //vTaskDelay(1500 / portTICK_PERIOD_MS);
+        //
+        //for (int i = 20; i >= -50; i--) {
+        //    sprite.setCursor(25, i);  // カーソル位置を更新 
+        //    sprite.print(menu_text);  // 1バイトずつ出力
+        //    // sprite.scroll(0, 0);  // キャンバスの内容を1ドット上にスクロール
+        //    sprite.pushSprite(&lcd, 0, 0);
+        //} 
+    }
+};
+
 class Oled {
     
     public:
 
-    void BootDisplay() {
-        
+    void BootDisplay() {        
         printf("Booting!\n");
         
         lcd.init();
@@ -88,7 +135,6 @@ class Oled {
 
         sprite.setColorDepth(8);
         sprite.setFont(&fonts::FreeSansOblique12pt7b);
-        // sprite.setFont(&fonts::Font7);
         sprite.setTextWrap(false);  // 右端到達時のカーソル折り返しを禁止
         sprite.createSprite(lcd.width(), lcd.height());  // 画面幅+１文字分の横幅を用意
 
@@ -108,39 +154,5 @@ class Oled {
             sprite.pushSprite(&lcd, 0, 0);
         }
     }
-    
-    void MenuDisplay() {
-        printf("Booting!\n");
-        
-        lcd.init();
-        lcd.setRotation(0);
-
-        // 画面が横長になるように回転
-        // if (lcd.width() < lcd.height()) lcd.setRotation(lcd.getRotation() ^ 2);
-
-        lcd.setRotation(2);
-
-        sprite.setColorDepth(8);
-        sprite.setFont(&fonts::FreeSansOblique12pt7b);
-        // sprite.setFont(&fonts::Font7);
-        sprite.setTextWrap(false);  // 右端到達時のカーソル折り返しを禁止
-        sprite.createSprite(lcd.width(), lcd.height());  // 画面幅+１文字分の横幅を用意
-
-        for (int i = 50; i >= 20; i--) {
-            sprite.setCursor(25,i);  // カーソル位置を更新 
-            sprite.print(text);  // 1バイトずつ出力
-            // sprite.scroll(0, 0);  // キャンバスの内容を1ドット上にスクロール
-            sprite.pushSprite(&lcd, 0, 0);
-        }
-        
-        vTaskDelay(1500 / portTICK_PERIOD_MS);
-        
-        for (int i = 20; i >= -50; i--) {
-            sprite.setCursor(25, i);  // カーソル位置を更新 
-            sprite.print(text);  // 1バイトずつ出力
-            // sprite.scroll(0, 0);  // キャンバスの内容を1ドット上にスクロール
-            sprite.pushSprite(&lcd, 0, 0);
-        } 
-    }
-
 };
+

@@ -20,19 +20,22 @@ void app_main(void) {
     Joystick joystick;
     joystick.setup();
     
-    for (int i = 0; i <= 1000; i++) {
-        Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
-        printf("C6_Voltage:%d\n",joystick_state.C6_voltage);
-        printf("C7_Voltage:%d\n",joystick_state.C7_voltage);
-        printf("UP:%s\n", joystick_state.up ? "true" : "false");
-        printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
-        printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
-        printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-    }
+    //for (int i = 0; i <= 1000; i++) {
+    //    Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+    //    printf("C6_Voltage:%d\n",joystick_state.C6_voltage);
+    //    printf("C7_Voltage:%d\n",joystick_state.C7_voltage);
+    //    printf("UP:%s\n", joystick_state.up ? "true" : "false");
+    //    printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
+    //    printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
+    //    printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
+    //    vTaskDelay(100 / portTICK_PERIOD_MS);
+    //}
     
     Oled oled;
+    MenuDisplay menu;
+
     oled.BootDisplay();
+    menu.Menu();
 
     printf("Hello world!\n");
 
@@ -57,7 +60,7 @@ void app_main(void) {
     gpio_set_direction(GPIO_NUM_26, GPIO_MODE_INPUT);
     gpio_set_direction(GPIO_NUM_4, GPIO_MODE_INPUT);
 
-    for (int i = 0; i <= 1000; i++) {
+    for (int i = 0; i <= 10; i++) {
         printf(" GPIO25=%d", gpio_get_level(GPIO_NUM_25));
         printf(" GPIO26=%d", gpio_get_level(GPIO_NUM_26));
         printf(" GPIO4=%d\n", gpio_get_level(GPIO_NUM_4));
