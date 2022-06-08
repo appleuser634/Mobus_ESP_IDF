@@ -1,4 +1,4 @@
-# Install script for directory: /Users/miyagimusashi/MoBus_ESP_IDF/components/Input
+# Install script for directory: /Users/miyagimusashi/MoBus_Platformio/components/Input
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)

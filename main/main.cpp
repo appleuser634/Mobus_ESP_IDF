@@ -11,26 +11,12 @@
 #include <joystick.h>
 #include <oled.hpp>
 
-
 extern "C" {
-
+    void app_main();
+}
 
 void app_main(void) {
-    
-    Joystick joystick;
-    joystick.setup();
-    
-    //for (int i = 0; i <= 1000; i++) {
-    //    Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
-    //    printf("C6_Voltage:%d\n",joystick_state.C6_voltage);
-    //    printf("C7_Voltage:%d\n",joystick_state.C7_voltage);
-    //    printf("UP:%s\n", joystick_state.up ? "true" : "false");
-    //    printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
-    //    printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
-    //    printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
-    //    vTaskDelay(100 / portTICK_PERIOD_MS);
-    //}
-    
+     
     Oled oled;
     MenuDisplay menu;
 
@@ -76,4 +62,3 @@ void app_main(void) {
     fflush(stdout);
     esp_restart();
 }
-};

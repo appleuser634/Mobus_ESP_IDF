@@ -1,6 +1,6 @@
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
-
+#include <button.h>
 
 class LGFX : public lgfx::LGFX_Device {
     lgfx::Panel_SSD1306 _panel_instance;
@@ -62,21 +62,43 @@ class LGFX : public lgfx::LGFX_Device {
 };
 
 static LGFX lcd;
-static LGFX_Sprite sprite(
-    &lcd);  // スプライトを使う場合はLGFX_Spriteのインスタンスを作成。
+static LGFX_Sprite sprite(&lcd);  // スプライトを使う場合はLGFX_Spriteのインスタンスを作成。
 
-static constexpr char text[] = "MoBus!";
+static constexpr char text[] = "MoBus!!";
 static constexpr size_t textlen = sizeof(text) / sizeof(text[0]);
 size_t textpos = 0;
 
-
 class MenuDisplay {
-    public: 
+    
+    #define NAME_LENGTH_MAX 8
 
-    char menu_list[3][8] = {"Talk","Setting","Game"};
+    public:   
+    typedef struct {
+        char menu_name[NAME_LENGTH_MAX];
+        int display_position;
+    } menu_t;
+
+    char menu_names[3][NAME_LENGTH_MAX] = {"Talk","Setting","Game"};
+    menu_t menu_list[3];
+
+    void set_menu_position() {
+        int menu_names_length = sizeof(menu_names) / NAME_LENGTH_MAX;
+        printf("menu_names_length:%d",menu_names_length);
+    }
+
+    int cursor_point = 2;
+    
     void Menu() { 
         lcd.init();
         lcd.setRotation(0);
+        
+        Joystick joystick;
+        joystick.setup();
+
+        Button button;
+        button.setup();
+
+        //set_menu_position();
 
         // 画面が横長になるように回転
         // if (lcd.width() < lcd.height()) lcd.setRotation(lcd.getRotation() ^ 2);
@@ -89,33 +111,48 @@ class MenuDisplay {
         sprite.createSprite(lcd.width(), lcd.height());
        
         int cursor_position = 0; 
-        for (int i = 0; i <= 2 ; i++) {
-            cursor_position = i * 22;
-            sprite.setCursor(26,cursor_position);  // カーソル位置を更新 
-            printf("Menu Text:%s\n",menu_list[i]);
-            sprite.print(menu_list[i]);  // 1バイトずつ出力
-        }
         
-        sprite.setCursor(2,0);  // カーソル位置を更新 
-        sprite.print("->");  // 1バイトずつ出力
+        for (int i = 0; i <= 1000; i++) {
+        
+            for (int i = 0; i <= 2 ; i++) {
+                cursor_position = i * 22;
+                sprite.setCursor(26,cursor_position);  // カーソル位置を更新 
+                sprite.print(menu_names[i]);  // 1バイトずつ出力
+            }
+            
+            sprite.setCursor(2, cursor_point);  // カーソル位置を更新 
+            sprite.print("->");  // 1バイトずつ出力 
 
-        sprite.pushSprite(&lcd, 0, 0);
+            Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+            //printf("C6_Voltage:%d\n",joystick_state.C6_voltage);
+            //printf("C7_Voltage:%d\n",joystick_state.C7_voltage);
+            //printf("UP:%s\n", joystick_state.up ? "true" : "false");
+            //printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
+            //printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
+            //printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
+            vTaskDelay(50 / portTICK_PERIOD_MS);
+
+            Button::button_state_t button_state = button.get_button_state();
+            if (button_state.pushed == true) {
+                printf("Button pushed!\n");
+                printf("Pushing time:%lld\n",button_state.pushing_sec);
+                printf("Push type:%c\n",button_state.push_type);
+
+                button.clear_button_state();
+            }
+
+            if (joystick_state.up == true){
+                cursor_point -= 2;
+            }
+            else if (joystick_state.down == true){
+                cursor_point += 2;
+            }
+            
+            sprite.pushSprite(&lcd, 0, 0);
+        }
+
         vTaskDelay(5000 / portTICK_PERIOD_MS);
-        //for (int i = 50; i >= 20; i--) {
-        //    sprite.setCursor(25,i);  // カーソル位置を更新 
-        //    sprite.print(menu_text);  // 1バイトずつ出力
-        //    // sprite.scroll(0, 0);  // キャンバスの内容を1ドット上にスクロール
-        //}
-        //
-        //vTaskDelay(1500 / portTICK_PERIOD_MS);
-        //
-        //for (int i = 20; i >= -50; i--) {
-        //    sprite.setCursor(25, i);  // カーソル位置を更新 
-        //    sprite.print(menu_text);  // 1バイトずつ出力
-        //    // sprite.scroll(0, 0);  // キャンバスの内容を1ドット上にスクロール
-        //    sprite.pushSprite(&lcd, 0, 0);
-        //} 
-    }
+    };
 };
 
 class Oled {
