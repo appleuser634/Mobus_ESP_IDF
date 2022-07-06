@@ -1,6 +1,8 @@
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include <button.h>
+#include <string.h>
+#include <map>
 
 class LGFX : public lgfx::LGFX_Device {
     lgfx::Panel_SSD1306 _panel_instance;
@@ -155,12 +157,95 @@ class MenuDisplay {
     };
 };
 
+class TalkDisplay {
+    
+    public:   
+    
+    int cursor_point = 2;
+
+    char message_text[256] = "";
+    char long_push_text[2] = "_";
+    char short_push_text[2] = ".";
+
+    std::map<std::string, string> mp;
+
+    int release_time = 0;
+    
+    void Talk() { 
+        lcd.init();
+        lcd.setRotation(0);
+        
+        Joystick joystick;
+        joystick.setup();
+
+        Button button;
+        button.setup();
+
+        lcd.setRotation(2);
+
+        sprite.setColorDepth(8);
+        sprite.setFont(&fonts::Font4);
+        sprite.setTextWrap(false);  // 右端到達時のカーソル折り返しを禁止
+        sprite.createSprite(lcd.width(), lcd.height()); 
+
+        int cursor_position = 0; 
+        
+        for (int i = 0; i <= 1000; i++) {
+        
+            //for (int i = 0; i <= 2 ; i++) {
+            //    cursor_position = i * 22;
+            //    sprite.setCursor(26,cursor_position);  // カーソル位置を更新 
+            //    sprite.print(menu_names[i]);  // 1バイトずつ出力
+            //}
+            //
+            //sprite.setCursor(2, cursor_point);  // カーソル位置を更新 
+            //sprite.print("->");  // 1バイトずつ出力 
+            
+            sprite.setCursor(0,cursor_position);  // カーソル位置を更新 
+            sprite.print(message_text);  // 1バイトずつ出力
+
+            //Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+            //printf("C6_Voltage:%d\n",joystick_state.C6_voltage);
+            //printf("C7_Voltage:%d\n",joystick_state.C7_voltage);
+            //printf("UP:%s\n", joystick_state.up ? "true" : "false");
+            //printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
+            //printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
+            //printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
+            vTaskDelay(50 / portTICK_PERIOD_MS);
+
+            Button::button_state_t button_state = button.get_button_state();
+            if (button_state.pushed == true) {
+                printf("Button pushed!\n");
+                printf("Pushing time:%lld\n",button_state.pushing_sec);
+                printf("Push type:%c\n",button_state.push_type);
+                if (button_state.push_type == 's'){
+                    strcat(message_text, short_push_text);
+                }
+                else if (button_state.push_type == 'l'){
+                    strcat(message_text, long_push_text);
+                }
+
+                button.clear_button_state();
+            }
+
+            printf("Release time:%lld\n",button_state.release_sec);
+            if (button_state.release_sec > 8){
+                printf("Release time:%lld\n",button_state.release_sec);
+            }
+            
+            sprite.pushSprite(&lcd, 0, 0);
+        }
+
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+    };
+};
+
 class Oled {
     
     public:
 
     void BootDisplay() {        
-        printf("Booting!\n");
+        printf("Booting!!!\n");
         
         lcd.init();
         lcd.setRotation(0);

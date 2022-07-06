@@ -16,14 +16,18 @@ extern "C" {
 }
 
 void app_main(void) {
+    
+    printf("Hello world!!!!\n");
      
     Oled oled;
     MenuDisplay menu;
+    TalkDisplay talk;
 
     oled.BootDisplay();
-    menu.Menu();
 
-    printf("Hello world!\n");
+    // TODO:menuから各機能の画面に遷移するように実装する
+    // menu.Menu();
+    talk.Talk();
 
     /* Print chip information */
     esp_chip_info_t chip_info;

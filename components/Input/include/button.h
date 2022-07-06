@@ -23,9 +23,10 @@ class Button {
         char push_type; // long or short
         long long int push_start_sec; // push start second
         long long int pushing_sec;    // pushing second
+        long long int release_sec;    // release second
     } button_state_t;
  
-    button_state_t button_state = {false, false, 's', 0, 0};
+    button_state_t button_state = {false, false, 's', 0, 0, 0};
 
     long long int long_push_thresh = 81000;
      
@@ -45,6 +46,13 @@ class Button {
 
             button_state.pushing = false;
             button_state.pushed = true;
+        }
+
+        if (button_state.pushing == false){
+            button_state.release_sec += 1;
+        }
+        else {
+            button_state.release_sec = 0;
         }
         return button_state;
     }
