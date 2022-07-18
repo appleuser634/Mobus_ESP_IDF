@@ -163,9 +163,12 @@ class TalkDisplay {
     
     int cursor_point = 2;
 
-    char message_text[256] = "";
-    char long_push_text[2] = "_";
-    char short_push_text[2] = ".";
+    std::string morse_text = "";
+    std::string message_text = "";
+    std::string alphabet_text = "";
+
+    std::string long_push_text = "_";
+    std::string short_push_text = ".";
 
     
     /*
@@ -187,40 +190,32 @@ class TalkDisplay {
     std::map<std::string, std::string> morse_code {
         {"._","A"},
         {"_...","B"},
+        {"_._.","C"},
+        {"_..","D"},
+        {".","E"},
+        {".._.","F"},
+        {"__.","G"},
+        {"....","H"},
+        {"..","I"},
+        {".___","J"},
+        {"_._","K"},
+        {"._..","L"},
+        {"__","M"},
+        {"_.","N"},
+        {"___","O"},
+        {".__.","P"},
+        {"__._","Q"},
+        {"._.","R"},
+        {"...","S"},
+        {"_","T"},
+        {".._","U"},
+        {"..._","V"},
+        {".__","W"},
+        {"_.._","X"},
+        {"_.__","Y"},
+        {"__..","Z"},
     };
-    
-    // morse_code.insert( map<string, string>::value_type("._", "A");
-    
-    /*
-   morse_code["._"] = "A";
-   morse_code["_..."] = 1;
-   morse_code["_._."] = 2;
-   morse_code["_.."] = 3;
-   morse_code["."] = 4;
-   morse_code[".._."] = 5;
-   morse_code["__."] = 6;
-   morse_code["...."] = 7;
-   morse_code[".."] = 8;
-   morse_code[".___"] = 9;
-   morse_code["_._"] = 10;
-   morse_code["._.."] = 11;
-   morse_code["__"] = 12;
-   morse_code["_."] = 13;
-   morse_code["___"] = 14;
-   morse_code[".__."] = 15;
-   morse_code["__._"] = 16;
-   morse_code["._."] = 17;
-   morse_code["..."] = 18;
-   morse_code["_"] = 19;
-   morse_code[".._"] = 20;
-   morse_code["..._"] = 21;
-   morse_code[".__"] = 22;
-   morse_code["_.._"] = 23;
-   morse_code["_.__"] = 24;
-   morse_code["__.."] = 25;
 
-   string alphabet[] = {"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"};
-   */
 
     int release_time = 0;
     
@@ -243,9 +238,7 @@ class TalkDisplay {
 
         int cursor_position = 0; 
 
-        std::string morse = morse_code.at("._");
-        printf("morse ._ is %s\n",morse.c_str());
- 
+
         for (int i = 0; i <= 1000; i++) {
         
             //for (int i = 0; i <= 2 ; i++) {
@@ -257,8 +250,6 @@ class TalkDisplay {
             //sprite.setCursor(2, cursor_point);  // カーソル位置を更新 
             //sprite.print("->");  // 1バイトずつ出力 
             
-            sprite.setCursor(0,cursor_position);  // カーソル位置を更新 
-            sprite.print(message_text);  // 1バイトずつ出力
 
             //Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
             //printf("C6_Voltage:%d\n",joystick_state.C6_voltage);
@@ -275,10 +266,10 @@ class TalkDisplay {
                 printf("Pushing time:%lld\n",button_state.pushing_sec);
                 printf("Push type:%c\n",button_state.push_type);
                 if (button_state.push_type == 's'){
-                    strcat(message_text, short_push_text);
+                    morse_text += short_push_text;
                 }
                 else if (button_state.push_type == 'l'){
-                    strcat(message_text, long_push_text);
+                    morse_text += long_push_text;
                 }
 
                 button.clear_button_state();
@@ -287,9 +278,24 @@ class TalkDisplay {
             printf("Release time:%lld\n",button_state.release_sec);
             if (button_state.release_sec > 8){
                 printf("Release time:%lld\n",button_state.release_sec);
+
+                if (morse_code.count(morse_text)) {
+                    alphabet_text = morse_code.at(morse_text);
+                }
+                morse_text = "";
             }
             
+
+            std::string display_text = message_text + morse_text + alphabet_text;
+
+            sprite.fillRect(0, 0, 128, 64, 0);
+            
+            sprite.setCursor(0,cursor_position);
+            sprite.print(display_text.c_str());
             sprite.pushSprite(&lcd, 0, 0);
+
+            message_text += alphabet_text;
+            alphabet_text = "";
         }
 
         vTaskDelay(5000 / portTICK_PERIOD_MS);
