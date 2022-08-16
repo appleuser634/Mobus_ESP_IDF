@@ -233,7 +233,7 @@ class TalkDisplay {
 
         sprite.setColorDepth(8);
         sprite.setFont(&fonts::Font4);
-        sprite.setTextWrap(false);  // 右端到達時のカーソル折り返しを禁止
+        sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
         sprite.createSprite(lcd.width(), lcd.height()); 
 
         int cursor_position = 0; 
@@ -275,9 +275,9 @@ class TalkDisplay {
                 button.clear_button_state();
             }
 
-            printf("Release time:%lld\n",button_state.release_sec);
+            // printf("Release time:%lld\n",button_state.release_sec);
             if (button_state.release_sec > 8){
-                printf("Release time:%lld\n",button_state.release_sec);
+                // printf("Release time:%lld\n",button_state.release_sec);
 
                 if (morse_code.count(morse_text)) {
                     alphabet_text = morse_code.at(morse_text);
@@ -296,6 +296,9 @@ class TalkDisplay {
 
             message_text += alphabet_text;
             alphabet_text = "";
+
+            // チャタリング防止用に100msのsleep
+            vTaskDelay(10 / portTICK_PERIOD_MS);
         }
 
         vTaskDelay(5000 / portTICK_PERIOD_MS);

@@ -10,8 +10,9 @@
 
 #include <joystick.h>
 #include <oled.hpp>
+#include <wifi.h>
 
-extern "C" {
+extern "C" {    
     void app_main();
 }
 
@@ -22,6 +23,10 @@ void app_main(void) {
     Oled oled;
     MenuDisplay menu;
     TalkDisplay talk;
+
+    WiFi wifi;
+
+    wifi.main();
 
     oled.BootDisplay();
 

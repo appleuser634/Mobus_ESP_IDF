@@ -1,0 +1,9 @@
+モールス信号変換処理の流れ
+
+morse_textにモールスが入る
+message_textに確定したアルファベットが入る
+morse_textは消す
+
+display_text = morse_text + alphabet_text
+
+

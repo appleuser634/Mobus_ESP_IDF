@@ -28,7 +28,7 @@ class Button {
  
     button_state_t button_state = {false, false, 's', 0, 0, 0};
 
-    long long int long_push_thresh = 81000;
+    long long int long_push_thresh = 150000;
      
     button_state_t get_button_state() {
         if (gpio_get_level(GPIO_INPUT_IO_0) && button_state.pushing == false) {
