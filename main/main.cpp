@@ -25,10 +25,11 @@ void app_main(void) {
     TalkDisplay talk;
 
     WiFi wifi;
-
     wifi.main();
 
     oled.BootDisplay();
+    oled.ShowImage();
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
 
     // TODO:menuから各機能の画面に遷移するように実装する
     // menu.Menu();
