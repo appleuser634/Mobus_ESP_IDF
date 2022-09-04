@@ -143,11 +143,11 @@ class MenuDisplay {
                 button.clear_button_state();
             }
 
-            if (joystick_state.up == true){
-                cursor_point -= 2;
+            if (joystick_state.pushed_up == true){
+                cursor_point -= 20;
             }
-            else if (joystick_state.down == true){
-                cursor_point += 2;
+            else if (joystick_state.pushed_down == true){
+                cursor_point += 20;
             }
             
             sprite.pushSprite(&lcd, 0, 0);
