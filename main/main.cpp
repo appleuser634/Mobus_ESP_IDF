@@ -10,7 +10,7 @@
 
 #include <joystick.h>
 #include <oled.hpp>
-#include <wifi.h>
+#include <wifi.hpp>
 
 extern "C" {    
     void app_main();
@@ -24,15 +24,24 @@ void app_main(void) {
     MenuDisplay menu;
     TalkDisplay talk;
 
+    oled.BootDisplay();
+    
+    // WIP
+    // oled.ShowImage();
+    // vTaskDelay(5000 / portTICK_PERIOD_MS);
+
     WiFi wifi;
     wifi.main();
-
-    oled.BootDisplay();
-    oled.ShowImage();
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
+    
+    // FIXME
+    //for (int i = 0; i <= 10; i++) {
+    //    WiFi::wifi_state_t wifi_state = wifi.get_wifi_state();
+    //    printf("Wifi state:%c\n",wifi_state.state);
+    //    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    //}
 
     // TODO:menuから各機能の画面に遷移するように実装する
-    // menu.Menu();
+    menu.Menu();
     talk.Talk();
 
     /* Print chip information */
