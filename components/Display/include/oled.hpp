@@ -151,6 +151,7 @@ class MenuDisplay {
             }
             
             sprite.pushSprite(&lcd, 0, 0);
+            sprite.fillRect(0, 0, 128, 64, 0);
         }
 
         vTaskDelay(5000 / portTICK_PERIOD_MS);

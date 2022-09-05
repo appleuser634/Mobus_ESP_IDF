@@ -11,6 +11,7 @@
 #include <joystick.h>
 #include <oled.hpp>
 #include <wifi.hpp>
+#include <http_client.hpp>
 // #include <ota.hpp>
 
 extern "C" {    
@@ -20,7 +21,7 @@ extern "C" {
 void app_main(void) {
     
     printf("Hello world!!!!\n");
-     
+  
     Oled oled;
     MenuDisplay menu;
     TalkDisplay talk;
@@ -33,6 +34,10 @@ void app_main(void) {
 
     WiFi wifi;
     wifi.main();
+
+
+	HttpClient http;
+	http.main_client();
     
     // FIXME
     //for (int i = 0; i <= 10; i++) {
