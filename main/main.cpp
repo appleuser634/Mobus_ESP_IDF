@@ -11,6 +11,7 @@
 #include <joystick.h>
 #include <oled.hpp>
 #include <wifi.hpp>
+// #include <ota.hpp>
 
 extern "C" {    
     void app_main();
@@ -27,8 +28,8 @@ void app_main(void) {
     oled.BootDisplay();
     
     // WIP
-    oled.ShowImage();
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
+    // oled.ShowImage();
+    // vTaskDelay(5000 / portTICK_PERIOD_MS);
 
     WiFi wifi;
     wifi.main();
