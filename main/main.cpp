@@ -47,7 +47,7 @@ void app_main(void) {
     //}
 
     // TODO:menuから各機能の画面に遷移するように実装する
-    menu.Menu();
+    // menu.Menu();
     talk.Talk();
 
     /* Print chip information */
@@ -59,6 +59,7 @@ void app_main(void) {
            (chip_info.features & CHIP_FEATURE_BLE) ? "/BLE" : "");
 
     printf("silicon revision %d, ", chip_info.revision);
+
 
     printf("%dMB %s flash\n", spi_flash_get_chip_size() / (1024 * 1024),
            (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded"

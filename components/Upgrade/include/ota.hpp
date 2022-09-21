@@ -41,38 +41,11 @@ static const char *bind_interface_name = EXAMPLE_NETIF_DESC_STA;
 extern const uint8_t server_cert_pem_start[] asm("_binary_ca_cert_pem_start");
 extern const uint8_t server_cert_pem_end[] asm("_binary_ca_cert_pem_end");
 
+#define APP_VERSION  "01"
+#define APP_UPGRADE_URL  "https://mimoc.tech/update" APP_VERSION
+
 #define OTA_URL_SIZE 256
 
-esp_err_t _http_event_handler(esp_http_client_event_t *evt)
-{
-    switch (evt->event_id) {
-    case HTTP_EVENT_ERROR:
-        ESP_LOGD(TAG, "HTTP_EVENT_ERROR");
-        break;
-    case HTTP_EVENT_ON_CONNECTED:
-        ESP_LOGD(TAG, "HTTP_EVENT_ON_CONNECTED");
-        break;
-    case HTTP_EVENT_HEADER_SENT:
-        ESP_LOGD(TAG, "HTTP_EVENT_HEADER_SENT");
-        break;
-    case HTTP_EVENT_ON_HEADER:
-        ESP_LOGD(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
-        break;
-    case HTTP_EVENT_ON_DATA:
-        ESP_LOGD(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
-        break;
-    case HTTP_EVENT_ON_FINISH:
-        ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
-        break;
-    case HTTP_EVENT_DISCONNECTED:
-        ESP_LOGD(TAG, "HTTP_EVENT_DISCONNECTED");
-        break;
-    case HTTP_EVENT_REDIRECT:
-        ESP_LOGD(TAG, "HTTP_EVENT_REDIRECT");
-        break;
-    }
-    return ESP_OK;
-}
 
 void simple_ota_example_task(void *pvParameter)
 {
@@ -88,7 +61,7 @@ void simple_ota_example_task(void *pvParameter)
     ESP_LOGI(TAG, "Bind interface name is %s", ifr.ifr_name);
 #endif
     esp_http_client_config_t config = {
-        .url = CONFIG_EXAMPLE_FIRMWARE_UPGRADE_URL,
+        .url = APP_UPGRADE_URL,
 #ifdef CONFIG_EXAMPLE_USE_CERT_BUNDLE
         .crt_bundle_attach = esp_crt_bundle_attach,
 #else
@@ -162,7 +135,7 @@ static void get_sha256_of_partitions(void)
     print_sha256(sha_256, "SHA-256 for current firmware: ");
 }
 
-void main(void)
+void ota_task(void)
 {
     ESP_LOGI(TAG, "OTA example app_main start");
     // Initialize NVS.
