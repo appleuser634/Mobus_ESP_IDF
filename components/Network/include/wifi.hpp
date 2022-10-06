@@ -11,7 +11,7 @@
 #include "lwip/err.h"
 #include "lwip/sys.h"
 
-#define EXAMPLE_ESP_WIFI_SSID      "elecom-3e6943"
+#define EXAMPLE_ESP_WIFI_SSID      "elecom-3e6943_24"
 #define EXAMPLE_ESP_WIFI_PASS      "7ku65wjwx8fv"
 #define EXAMPLE_ESP_MAXIMUM_RETRY  10
 
