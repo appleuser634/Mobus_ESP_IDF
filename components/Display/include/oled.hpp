@@ -97,8 +97,7 @@ class MenuDisplay {
         Joystick joystick;
         joystick.setup();
 
-        Button button;
-        button.setup();
+        Button button(GPIO_NUM_25);
 
         //set_menu_position();
 
@@ -227,8 +226,9 @@ class TalkDisplay {
         Joystick joystick;
         joystick.setup();
 
-        Button button;
-        button.setup();
+        Button type_button(GPIO_NUM_4);
+        Button back_button(GPIO_NUM_25);
+        Button enter_button(GPIO_NUM_26);
 
         lcd.setRotation(2);
 
@@ -261,23 +261,23 @@ class TalkDisplay {
             //printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
             vTaskDelay(50 / portTICK_PERIOD_MS);
 
-            Button::button_state_t button_state = button.get_button_state();
-            if (button_state.pushed == true) {
+            Button::button_state_t type_button_state = type_button.get_button_state();
+            if (type_button_state.pushed == true) {
                 printf("Button pushed!\n");
-                printf("Pushing time:%lld\n",button_state.pushing_sec);
-                printf("Push type:%c\n",button_state.push_type);
-                if (button_state.push_type == 's'){
+                printf("Pushing time:%lld\n",type_button_state.pushing_sec);
+                printf("Push type:%c\n",type_button_state.push_type);
+                if (type_button_state.push_type == 's'){
                     morse_text += short_push_text;
                 }
-                else if (button_state.push_type == 'l'){
+                else if (type_button_state.push_type == 'l'){
                     morse_text += long_push_text;
                 }
 
-                button.clear_button_state();
+                type_button.clear_button_state();
             }
 
             // printf("Release time:%lld\n",button_state.release_sec);
-            if (button_state.release_sec > 8){
+            if (type_button_state.release_sec > 8){
                 // printf("Release time:%lld\n",button_state.release_sec);
 
                 if (morse_code.count(morse_text)) {

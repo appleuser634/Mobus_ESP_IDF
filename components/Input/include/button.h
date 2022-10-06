@@ -6,16 +6,36 @@
 #include "freertos/queue.h"
 #include "driver/gpio.h"
 
-#define GPIO_OUTPUT_IO_0    18
-#define GPIO_OUTPUT_IO_1    19
-#define GPIO_OUTPUT_PIN_SEL  ((1ULL<<GPIO_OUTPUT_IO_0) | (1ULL<<GPIO_OUTPUT_IO_1))
-#define GPIO_INPUT_IO_0     GPIO_NUM_4
-#define GPIO_INPUT_IO_1     5
-#define GPIO_INPUT_PIN_SEL  ((1ULL<<GPIO_INPUT_IO_0) | (1ULL<<GPIO_INPUT_IO_1))
-#define ESP_INTR_FLAG_DEFAULT 0
 
-class Button { 
-    public:
+class Button {
+
+	public:
+	
+	gpio_num_t gpio_num;
+	
+	Button(gpio_num_t gpio_n = GPIO_NUM_4) {
+		#define GPIO_INPUT_IO_0     GPIO_NUM_4
+		#define GPIO_INPUT_IO_1     GPIO_NUM_25
+		#define GPIO_INPUT_IO_2     GPIO_NUM_26
+		#define GPIO_INPUT_PIN_SEL  (1ULL<<(gpio_n))
+		#define ESP_INTR_FLAG_DEFAULT 0
+
+		gpio_num = gpio_n;
+
+        gpio_config_t io_conf;
+
+        //interrupt of rising edge
+        io_conf.intr_type = GPIO_INTR_ANYEDGE;
+        //bit mask of the pins, use GPIO4/5 here
+        io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
+        //set as input mode
+        io_conf.mode = GPIO_MODE_INPUT;
+        //enable pull-up mode
+        io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+        
+        gpio_config(&io_conf);
+	}
+    
     
     typedef struct {
         bool pushing;   // pushing flag
@@ -27,14 +47,13 @@ class Button {
     } button_state_t;
  
     button_state_t button_state = {false, false, 's', 0, 0, 0};
-
     long long int long_push_thresh = 150000;
      
     button_state_t get_button_state() {
-        if (gpio_get_level(GPIO_INPUT_IO_0) && button_state.pushing == false) {
+        if (gpio_get_level(gpio_num) && button_state.pushing == false) {
             button_state.pushing = true;
             button_state.push_start_sec = esp_timer_get_time();
-        } else if (!gpio_get_level(GPIO_INPUT_IO_0) && button_state.pushing == true) {
+        } else if (!gpio_get_level(gpio_num) && button_state.pushing == true) {
             
             button_state.pushing_sec =  esp_timer_get_time() - button_state.push_start_sec;
             
@@ -65,18 +84,6 @@ class Button {
         button_state.pushing_sec = 0;
     }
 
-    void setup(){
-        gpio_config_t io_conf;
-
-        //interrupt of rising edge
-        io_conf.intr_type = GPIO_INTR_ANYEDGE;
-        //bit mask of the pins, use GPIO4/5 here
-        io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
-        //set as input mode
-        io_conf.mode = GPIO_MODE_INPUT;
-        //enable pull-up mode
-        io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
-        
-        gpio_config(&io_conf);
-    }
+    // void setup(){
+    // }
 };

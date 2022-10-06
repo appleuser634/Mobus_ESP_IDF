@@ -36,7 +36,8 @@
 #include "esp_http_client.h"
 
 /* Constants that aren't configurable in menuconfig */
-#define WEB_SERVER "mimoc.tech"
+// #define WEB_SERVER "mimoc.tech"
+#define WEB_SERVER "192.168.2.118"
 #define WEB_PORT "3000"
 #define WEB_PATH "/getUserName"
 
@@ -129,14 +130,14 @@ static void http_post_native_task(void *pvParameters)
 	char local_response_buffer[MAX_HTTP_OUTPUT_BUFFER] = {0};
 
 	esp_http_client_config_t config = {
-		.url = "http://mimoc.tech:3000/sendMessage"
+		.url = "http://192.168.2.118:3000/sendMessage"
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
 
     // POST
     const char *post_data = "{\"message\":\"Hello From Mobus!\"}";
-    esp_http_client_set_url(client, "http://mimoc.tech:3000/sendMessage");
+    esp_http_client_set_url(client, "http://192.168.2.118:3000/sendMessage");
     esp_http_client_set_method(client, HTTP_METHOD_POST);
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
@@ -328,7 +329,7 @@ static void http_post_task(void *pvParameters)
 class HttpClient {
 	public:
 	
-	void main_client(void)
+	void main_client()
 	{
 		// ESP_ERROR_CHECK( nvs_flash_init() );
 		// ESP_ERROR_CHECK(esp_netif_init());
