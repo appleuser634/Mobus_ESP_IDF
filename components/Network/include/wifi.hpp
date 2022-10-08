@@ -11,8 +11,12 @@
 #include "lwip/err.h"
 #include "lwip/sys.h"
 
-#define EXAMPLE_ESP_WIFI_SSID      "elecom-3e6943_24"
-#define EXAMPLE_ESP_WIFI_PASS      "7ku65wjwx8fv"
+// #define EXAMPLE_ESP_WIFI_SSID      "elecom-3e6943_24"
+// #define EXAMPLE_ESP_WIFI_PASS      "7ku65wjwx8fv"
+
+#define EXAMPLE_ESP_WIFI_SSID      "aterm-ed83de-g"
+#define EXAMPLE_ESP_WIFI_PASS      "460f07c12aedd"
+
 #define EXAMPLE_ESP_MAXIMUM_RETRY  10
 
 #define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD WIFI_AUTH_WPA2_PSK
@@ -26,7 +30,7 @@ static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
-static const char *TAG = "wifi station";
+// static const char *TAG = "wifi station";
 
 static int s_retry_num = 0;
 

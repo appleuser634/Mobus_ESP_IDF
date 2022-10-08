@@ -8,11 +8,13 @@
 #include "freertos/task.h"
 #include "sdkconfig.h"
 
+static const char *TAG = "mobus cllient";
+
 #include <joystick.h>
 #include <oled.hpp>
 #include <wifi.hpp>
-#include <http_client.hpp>
 // #include <ota.hpp>
+
 
 extern "C" {    
     void app_main();
@@ -34,11 +36,7 @@ void app_main(void) {
 
     WiFi wifi;
     wifi.main();
-
-
-	HttpClient http;
-	http.main_client();
-    
+ 
     // FIXME
     //for (int i = 0; i <= 10; i++) {
     //    WiFi::wifi_state_t wifi_state = wifi.get_wifi_state();

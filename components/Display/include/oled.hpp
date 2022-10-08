@@ -4,6 +4,8 @@
 #include <string.h>
 #include <map>
 
+#include <http_client.hpp>
+
 class LGFX : public lgfx::LGFX_Device {
     lgfx::Panel_SSD1306 _panel_instance;
     lgfx::Bus_I2C _bus_instance;
@@ -229,6 +231,8 @@ class TalkDisplay {
         Button type_button(GPIO_NUM_4);
         Button back_button(GPIO_NUM_25);
         Button enter_button(GPIO_NUM_26);
+		
+		HttpClient http;
 
         lcd.setRotation(2);
 
@@ -259,8 +263,9 @@ class TalkDisplay {
             //printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
             //printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
             //printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
-            vTaskDelay(50 / portTICK_PERIOD_MS);
+			vTaskDelay(50 / portTICK_PERIOD_MS);
 
+			// モールス信号打ち込みキーの判定ロジック
             Button::button_state_t type_button_state = type_button.get_button_state();
             if (type_button_state.pushed == true) {
                 printf("Button pushed!\n");
@@ -297,6 +302,21 @@ class TalkDisplay {
 
             message_text += alphabet_text;
             alphabet_text = "";
+
+			// Enter(送信)キーの判定ロジック
+			Button::button_state_t enter_button_state = enter_button.get_button_state();
+            if (enter_button_state.pushed == true and message_text != "") {
+                printf("Button pushed!\n");
+                printf("Pushing time:%lld\n",enter_button_state.pushing_sec);
+                printf("Push type:%c\n",enter_button_state.push_type);
+				
+				http.post_message(message_text);
+				message_text = "";
+
+                enter_button.clear_button_state();
+            }
+
+            
 
             // チャタリング防止用に100msのsleep
             vTaskDelay(10 / portTICK_PERIOD_MS);
