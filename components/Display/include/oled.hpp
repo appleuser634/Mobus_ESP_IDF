@@ -77,20 +77,21 @@ class MenuDisplay {
     #define NAME_LENGTH_MAX 8
 
     public:   
-    typedef struct {
+
+	struct menu_t {
         char menu_name[NAME_LENGTH_MAX];
-        int display_position;
-    } menu_t;
+        int display_position_x;
+        int display_position_y;
+		// void (* func)();
+    };
 
-    char menu_names[3][NAME_LENGTH_MAX] = {"Talk","Setting","Game"};
-    menu_t menu_list[3];
+	struct menu_t menu_list[3] = {
+		{"Talk",26,0},
+		{"Setting",26,22},
+		{"Game",26,44}
+	};
 
-    void set_menu_position() {
-        int menu_names_length = sizeof(menu_names) / NAME_LENGTH_MAX;
-        printf("menu_names_length:%d",menu_names_length);
-    }
-
-    int cursor_point = 2;
+    int cursor_index = 0;
     
     void Menu() { 
         lcd.init();
@@ -99,9 +100,8 @@ class MenuDisplay {
         Joystick joystick;
         joystick.setup();
 
-        Button button(GPIO_NUM_25);
-
-        //set_menu_position();
+        Button type_button(GPIO_NUM_4);
+        Button enter_button(GPIO_NUM_26);
 
         // 画面が横長になるように回転
         // if (lcd.width() < lcd.height()) lcd.setRotation(lcd.getRotation() ^ 2);
@@ -112,19 +112,16 @@ class MenuDisplay {
         sprite.setFont(&fonts::Font4);
         sprite.setTextWrap(false);  // 右端到達時のカーソル折り返しを禁止
         sprite.createSprite(lcd.width(), lcd.height());
-       
-        int cursor_position = 0; 
         
         for (int i = 0; i <= 1000; i++) {
-        
-            for (int i = 0; i <= 2 ; i++) {
-                cursor_position = i * 22;
-                sprite.setCursor(26,cursor_position);  // カーソル位置を更新 
-                sprite.print(menu_names[i]);  // 1バイトずつ出力
-            }
+        	
+			// Menu項目を表示させる
+			int menu_lists_n = sizeof(menu_list) / sizeof(menu_t);
+			for (int i = 0; i <= menu_lists_n; i++){ 
+				sprite.setCursor(menu_list[i].display_position_x,menu_list[i].display_position_y);
+                sprite.print(menu_list[i].menu_name);  // 1バイトずつ出力
+			}
             
-            sprite.setCursor(2, cursor_point);  // カーソル位置を更新 
-            sprite.print("->");  // 1バイトずつ出力 
 
             Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
             //printf("C6_Voltage:%d\n",joystick_state.C6_voltage);
@@ -135,23 +132,33 @@ class MenuDisplay {
             //printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
             vTaskDelay(50 / portTICK_PERIOD_MS);
 
-            Button::button_state_t button_state = button.get_button_state();
-            if (button_state.pushed == true) {
+            Button::button_state_t type_button_state = type_button.get_button_state();
+            if (type_button_state.pushed == true) {
                 printf("Button pushed!\n");
-                printf("Pushing time:%lld\n",button_state.pushing_sec);
-                printf("Push type:%c\n",button_state.push_type);
+                printf("Pushing time:%lld\n",type_button_state.pushing_sec);
+                printf("Push type:%c\n",type_button_state.push_type);
 
-                button.clear_button_state();
+                type_button.clear_button_state();
             }
 
-            if (joystick_state.pushed_up == true){
-                cursor_point -= 20;
+            if (joystick_state.pushed_up_edge == true){
+                cursor_index -= 1;
+				if (cursor_index < 0){
+					cursor_index = menu_lists_n - 1;
+				}
             }
-            else if (joystick_state.pushed_down == true){
-                cursor_point += 20;
+            else if (joystick_state.pushed_down_edge == true){
+                cursor_index += 1;
+				if (cursor_index >= menu_lists_n){
+					cursor_index = 0;
+				}
             }
             
-            sprite.pushSprite(&lcd, 0, 0);
+            // Menu選択"->"の表示
+			sprite.setCursor(2, menu_list[cursor_index].display_position_y);  // カーソル位置を更新 
+            sprite.print("->");  // 1バイトずつ出力 
+            
+			sprite.pushSprite(&lcd, 0, 0);
             sprite.fillRect(0, 0, 128, 64, 0);
         }
 
@@ -188,7 +195,6 @@ class TalkDisplay {
 
     */
 
-
     std::map<std::string, std::string> morse_code {
         {"._","A"},
         {"_...","B"},
@@ -220,7 +226,17 @@ class TalkDisplay {
 
 
     int release_time = 0;
-    
+
+	void SendAnimation() {
+		sprite.fillRect(0, 0, 128, 64, 0);
+		
+		sprite.setCursor(20,32);
+		sprite.print("Send!");
+		sprite.pushSprite(&lcd, 0, 0);
+		
+		vTaskDelay(2000 / portTICK_PERIOD_MS);
+	};
+
     void Talk() { 
         lcd.init();
         lcd.setRotation(0);
@@ -242,7 +258,6 @@ class TalkDisplay {
         sprite.createSprite(lcd.width(), lcd.height()); 
 
         int cursor_position = 0; 
-
 
         for (int i = 0; i <= 1000; i++) {
         
@@ -312,6 +327,8 @@ class TalkDisplay {
 				
 				http.post_message(message_text);
 				message_text = "";
+
+				SendAnimation();
 
                 enter_button.clear_button_state();
             }

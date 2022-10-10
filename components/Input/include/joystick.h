@@ -16,12 +16,16 @@ class Joystick {
         bool pushed_down;
         bool pushed_left;
         bool pushed_right;
+        bool pushed_up_edge;
+        bool pushed_down_edge;
+        bool pushed_left_edge;
+        bool pushed_right_edge;
         uint32_t C6_voltage;
         uint32_t C7_voltage;
     } joystick_state_t;
     
     esp_adc_cal_characteristics_t adcChar;
-    joystick_state_t joystick_state = {false, false, false, false, false, false, false, false,0, 0};
+    joystick_state_t joystick_state = {false, false, false, false, false, false, false, false,  false, false, false, false, 0, 0};
  
     void setup(){
         printf("Setup Joystick.... ");
@@ -60,9 +64,20 @@ class Joystick {
         joystick_state.pushed_left = false;
         joystick_state.pushed_right = false;
         
+		joystick_state.pushed_up_edge = false;
+        joystick_state.pushed_down_edge = false;
+        joystick_state.pushed_left_edge = false;
+        joystick_state.pushed_right_edge = false;
+        
         if (joystick_state.C6_voltage >= 3000){
+			if (not joystick_state.down) {
+				joystick_state.pushed_down_edge = true;
+			}
             joystick_state.down = true;
         } else if (joystick_state.C6_voltage <= 700){
+			if (not joystick_state.up) {
+				joystick_state.pushed_up_edge = true;
+			}
             joystick_state.up = true;
         } else {
             if (joystick_state.up){
@@ -76,8 +91,14 @@ class Joystick {
         }
         
         if (joystick_state.C7_voltage >= 3000){
+			if (not joystick_state.left) {
+				joystick_state.pushed_left_edge = true;
+			}
             joystick_state.left = true;
         } else if (joystick_state.C7_voltage <= 700){
+			if (not joystick_state.right) {
+				joystick_state.pushed_right_edge = true;
+			}
             joystick_state.right = true;
         } else {
             if (joystick_state.left){

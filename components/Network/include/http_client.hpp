@@ -37,7 +37,12 @@
 
 /* Constants that aren't configurable in menuconfig */
 // #define WEB_SERVER "mimoc.tech"
-#define WEB_SERVER "192.168.10.112"
+
+#define USER_NAME "mimoc"
+#define TO_USER_NAME "mu"
+#define TOKEN "1234"
+
+#define WEB_SERVER "192.168.2.103"
 #define WEB_PORT "3000"
 #define WEB_PATH "/getUserName"
 
@@ -141,7 +146,7 @@ static void http_post_native_task(void *pvParameters)
 
     // POST
     // const char *post_data = "{\"message\":\"Hello From Mobus!\"}";
-    const std::string post_data_str = "{\"message\":\"" + message +  "\"}";
+    const std::string post_data_str = "{\"message\":\"" + message + "\",\"from\":\"" + USER_NAME + "\",\"to\":\"" + TO_USER_NAME +  "\",\"token\":\"" + TOKEN +  "\"}";
     const char *post_data = post_data_str.c_str();
     
 	esp_http_client_set_method(client, HTTP_METHOD_POST);
