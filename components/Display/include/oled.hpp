@@ -1,3 +1,4 @@
+#include <iterator>
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include <button.h>
@@ -133,7 +134,7 @@ class MenuDisplay {
             vTaskDelay(50 / portTICK_PERIOD_MS);
 
             Button::button_state_t type_button_state = type_button.get_button_state();
-            if (type_button_state.pushed == true) {
+            if (type_button_state.pushed) {
                 printf("Button pushed!\n");
                 printf("Pushing time:%lld\n",type_button_state.pushing_sec);
                 printf("Push type:%c\n",type_button_state.push_type);
@@ -141,13 +142,13 @@ class MenuDisplay {
                 type_button.clear_button_state();
             }
 
-            if (joystick_state.pushed_up_edge == true){
+            if (joystick_state.pushed_up_edge){
                 cursor_index -= 1;
 				if (cursor_index < 0){
 					cursor_index = menu_lists_n - 1;
 				}
             }
-            else if (joystick_state.pushed_down_edge == true){
+            else if (joystick_state.pushed_down_edge){
                 cursor_index += 1;
 				if (cursor_index >= menu_lists_n){
 					cursor_index = 0;
@@ -230,7 +231,7 @@ class TalkDisplay {
 	void SendAnimation() {
 		sprite.fillRect(0, 0, 128, 64, 0);
 		
-		sprite.setCursor(20,32);
+		sprite.setCursor(30,20);
 		sprite.print("Send!");
 		sprite.pushSprite(&lcd, 0, 0);
 		
@@ -282,7 +283,9 @@ class TalkDisplay {
 
 			// モールス信号打ち込みキーの判定ロジック
             Button::button_state_t type_button_state = type_button.get_button_state();
-            if (type_button_state.pushed == true) {
+			Button::button_state_t back_button_state = back_button.get_button_state();
+            
+			if (type_button_state.pushed and !back_button_state.pushing) {
                 printf("Button pushed!\n");
                 printf("Pushing time:%lld\n",type_button_state.pushing_sec);
                 printf("Push type:%c\n",type_button_state.push_type);
@@ -306,7 +309,14 @@ class TalkDisplay {
                 morse_text = "";
             }
             
-
+			if (back_button_state.pushing and type_button_state.pushed){
+				if (message_text != ""){
+					message_text.pop_back();
+				}
+				back_button.clear_button_state();
+                type_button.clear_button_state();
+            }
+               
             std::string display_text = message_text + morse_text + alphabet_text;
 
             sprite.fillRect(0, 0, 128, 64, 0);
@@ -320,7 +330,7 @@ class TalkDisplay {
 
 			// Enter(送信)キーの判定ロジック
 			Button::button_state_t enter_button_state = enter_button.get_button_state();
-            if (enter_button_state.pushed == true and message_text != "") {
+            if (enter_button_state.pushed and message_text != "") {
                 printf("Button pushed!\n");
                 printf("Pushing time:%lld\n",enter_button_state.pushing_sec);
                 printf("Push type:%c\n",enter_button_state.push_type);
