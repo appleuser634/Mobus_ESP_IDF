@@ -12,6 +12,7 @@ static const char *TAG = "mobus cllient";
 
 #include <joystick.h>
 #include <oled.hpp>
+#include <buzzer.h>
 #include <wifi.hpp>
 // #include <ota.hpp>
 
@@ -29,6 +30,9 @@ void app_main(void) {
     TalkDisplay talk;
 
     oled.BootDisplay();
+
+	Buzzer buzzer;
+	buzzer.buzzer_on();
     
     // WIP
     // oled.ShowImage();

@@ -42,7 +42,7 @@
 #define TO_USER_NAME "mu"
 #define TOKEN "1234"
 
-#define WEB_SERVER "192.168.2.103"
+#define WEB_SERVER "192.168.10.112"
 #define WEB_PORT "3000"
 #define WEB_PATH "/getUserName"
 
