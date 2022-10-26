@@ -2,6 +2,7 @@
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include <button.h>
+#include <buzzer.hpp>
 #include <string.h>
 #include <map>
 
@@ -242,6 +243,8 @@ class TalkDisplay {
         lcd.init();
         lcd.setRotation(0);
         
+		Buzzer buzzer;
+
         Joystick joystick;
         joystick.setup();
 
@@ -260,7 +263,7 @@ class TalkDisplay {
 
         int cursor_position = 0; 
 
-        for (int i = 0; i <= 1000; i++) {
+        while (true) {
         
             //for (int i = 0; i <= 2 ; i++) {
             //    cursor_position = i * 22;
@@ -284,6 +287,10 @@ class TalkDisplay {
 			// モールス信号打ち込みキーの判定ロジック
             Button::button_state_t type_button_state = type_button.get_button_state();
 			Button::button_state_t back_button_state = back_button.get_button_state();
+
+			if (type_button_state.push_edge and !back_button_state.pushing){
+				buzzer.buzzer_on();
+			}
             
 			if (type_button_state.pushed and !back_button_state.pushing) {
                 printf("Button pushed!\n");
@@ -297,6 +304,7 @@ class TalkDisplay {
                 }
 
                 type_button.clear_button_state();
+				buzzer.buzzer_off();
             }
 
             // printf("Release time:%lld\n",button_state.release_sec);
@@ -315,7 +323,9 @@ class TalkDisplay {
 				}
 				back_button.clear_button_state();
                 type_button.clear_button_state();
-            }
+            } else if (back_button_state.pushing){
+				break;
+			}
                
             std::string display_text = message_text + morse_text + alphabet_text;
 
@@ -343,13 +353,13 @@ class TalkDisplay {
                 enter_button.clear_button_state();
             }
 
+
+
             
 
             // チャタリング防止用に100msのsleep
             vTaskDelay(10 / portTICK_PERIOD_MS);
         }
-
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
     };
 };
 

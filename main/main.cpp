@@ -12,7 +12,6 @@ static const char *TAG = "mobus cllient";
 
 #include <joystick.h>
 #include <oled.hpp>
-#include <buzzer.h>
 #include <wifi.hpp>
 // #include <ota.hpp>
 
@@ -25,14 +24,15 @@ void app_main(void) {
     
     printf("Hello world!!!!\n");
   
-    Oled oled;
+	Buzzer buzzer;
+	buzzer.boot_sound();
+    
+	Oled oled;
     MenuDisplay menu;
     TalkDisplay talk;
 
     oled.BootDisplay();
 
-	Buzzer buzzer;
-	buzzer.buzzer_on();
     
     // WIP
     // oled.ShowImage();
@@ -48,9 +48,10 @@ void app_main(void) {
     //    vTaskDelay(1000 / portTICK_PERIOD_MS);
     //}
 
-    // TODO:menuから各機能の画面に遷移するように実装する
-    // menu.Menu();
     talk.Talk();
+    
+	// TODO:menuから各機能の画面に遷移するように実装する
+    menu.Menu();
 
     /* Print chip information */
     esp_chip_info_t chip_info;
