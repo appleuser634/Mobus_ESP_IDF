@@ -3,10 +3,6 @@
 #include <LovyanGFX.hpp>
 #include <button.h>
 #include <buzzer.hpp>
-#include <string.h>
-#include <map>
-
-#include <http_client.hpp>
 
 class LGFX : public lgfx::LGFX_Device {
     lgfx::Panel_SSD1306 _panel_instance;

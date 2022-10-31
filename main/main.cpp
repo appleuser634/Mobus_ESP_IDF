@@ -10,9 +10,15 @@
 
 static const char *TAG = "mobus cllient";
 
+#include <string.h>
+#include <map>
+
+#include <http_client.hpp>
+
 #include <joystick.h>
 #include <oled.hpp>
 #include <wifi.hpp>
+
 // #include <ota.hpp>
 
 
@@ -47,8 +53,10 @@ void app_main(void) {
     //    vTaskDelay(1000 / portTICK_PERIOD_MS);
     //}
     
-	// talk.Talk();
+	HttpClient http;
+	http.start_receiving_wait();
 	
+
 	// TODO:menuから各機能の画面に遷移するように実装する
     menu.Menu();
 
