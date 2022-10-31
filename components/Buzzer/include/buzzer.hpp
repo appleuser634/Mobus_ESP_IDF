@@ -4,7 +4,7 @@
 #include "driver/ledc.h"
 #include "esp_err.h"
 
-#define LEDC_GPIO       15
+#define LEDC_GPIO       18
 #define LEDC_DUTY       128
 
 class Buzzer {

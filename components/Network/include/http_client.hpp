@@ -30,6 +30,8 @@
 #include "esp_netif.h"
 #include "protocol_examples_common.h"
 #include "esp_tls.h"
+#include "cJSON.h"
+
 #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
 #include "esp_crt_bundle.h"
 #endif
@@ -47,7 +49,7 @@
 #define WEB_PATH "/getUserName"
 
 #define MAX_HTTP_RECV_BUFFER 512
-#define MAX_HTTP_OUTPUT_BUFFER 2048
+#define MAX_HTTP_OUTPUT_BUFFER 1024
 
 
 
@@ -100,6 +102,7 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
                     memcpy(output_buffer + output_len, evt->data, evt->data_len);
                 }
                 output_len += evt->data_len;
+				free(output_buffer);
             }
 
             break;
@@ -133,13 +136,16 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 
 static void http_post_native_task(void *pvParameters)
 {
-	char local_response_buffer[MAX_HTTP_OUTPUT_BUFFER] = {0};
+	char output_buffer[MAX_HTTP_OUTPUT_BUFFER] = {0};
+	int content_length = 0;
 
 	std::string message;
 	message = *(std::string *)pvParameters;
 
 	esp_http_client_config_t config = {
-		.url = "http://" WEB_SERVER ":3000/sendMessage"
+		.url = "http://" WEB_SERVER ":3000/sendMessage",
+		.event_handler = _http_event_handler,
+		.user_data = output_buffer,
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -152,13 +158,57 @@ static void http_post_native_task(void *pvParameters)
 	esp_http_client_set_method(client, HTTP_METHOD_POST);
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
+
     esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "HTTP POST Status = %d",
-                esp_http_client_get_status_code(client));
+    
+	// if (err == ESP_OK) {
+    //     ESP_LOGI(TAG, "HTTP POST Status = %d",
+    //             esp_http_client_get_status_code(client));
+	// 	
+	// 	// content_length = esp_http_client_fetch_headers(client);
+	// 	content_length = esp_http_client_get_content_length(client);
+    //     if (content_length < 0) {
+    //         ESP_LOGE(TAG, "HTTP client fetch headers failed");
+    //     } else {
+    //         int data_read = esp_http_client_read_response(client, output_buffer, MAX_HTTP_OUTPUT_BUFFER);
+    //         if (data_read >= 0) {
+    //             ESP_LOGI(TAG, "HTTP GET Status = %d, content_length = %d, response = %s",
+    //             esp_http_client_get_status_code(client),
+    //             esp_http_client_get_content_length(client),
+	// 			output_buffer);
+    //             // ESP_LOG_BUFFER_HEX(TAG, output_buffer, data_read);
+    //         } else {
+    //             ESP_LOGE(TAG, "Failed to read response");
+    //         }
+    //     }
+    // } else {
+    //     ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
+    // }
+
+	if (err == ESP_OK) {
+        ESP_LOGI(TAG, "HTTP GET Status = %d, content_length = %d",
+                esp_http_client_get_status_code(client),
+                esp_http_client_get_content_length(client));
     } else {
         ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
     }
+    ESP_LOGI(TAG, "%s", output_buffer);
+
+	cJSON *root = cJSON_Parse(output_buffer);
+	// std::string from = cJSON_GetObjectItem(root,"from");
+	// std::string message = cJSON_GetObjectItem(root,"message");
+	
+	std::string from = cJSON_GetObjectItem(root,"from")->valuestring;
+	
+	// const cJSON *from = NULL;
+	// const cJSON *message = NULL;
+	// from = cJSON_GetObjectItemCaseSensitive(root, "from");
+	// message = cJSON_GetObjectItemCaseSensitive(root, "message");
+
+
+	printf("FROM:%s\n",from.c_str());
+
+    // ESP_LOG_BUFFER_HEX(TAG, local_response_buffer, strlen(local_response_buffer));
 
     esp_http_client_cleanup(client);
 	vTaskDelete(NULL);

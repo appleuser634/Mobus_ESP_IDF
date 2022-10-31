@@ -29,14 +29,13 @@ void app_main(void) {
     
 	Oled oled;
     MenuDisplay menu;
-    TalkDisplay talk;
+    // TalkDisplay talk;
 
-    oled.BootDisplay();
-
-    
-    // WIP
+	// WIP:起動時のロゴを表示
     // oled.ShowImage();
     // vTaskDelay(5000 / portTICK_PERIOD_MS);
+    
+	oled.BootDisplay();
 
     WiFi wifi;
     wifi.main();
@@ -47,11 +46,12 @@ void app_main(void) {
     //    printf("Wifi state:%c\n",wifi_state.state);
     //    vTaskDelay(1000 / portTICK_PERIOD_MS);
     //}
-
-    talk.Talk();
     
+	// talk.Talk();
+	
 	// TODO:menuから各機能の画面に遷移するように実装する
     menu.Menu();
+
 
     /* Print chip information */
     esp_chip_info_t chip_info;

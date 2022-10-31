@@ -69,12 +69,12 @@ class Joystick {
         joystick_state.pushed_left_edge = false;
         joystick_state.pushed_right_edge = false;
         
-        if (joystick_state.C6_voltage >= 3000){
+        if (joystick_state.C6_voltage <= 700){
 			if (not joystick_state.down) {
 				joystick_state.pushed_down_edge = true;
 			}
             joystick_state.down = true;
-        } else if (joystick_state.C6_voltage <= 700){
+        } else if (joystick_state.C6_voltage >= 3000){
 			if (not joystick_state.up) {
 				joystick_state.pushed_up_edge = true;
 			}

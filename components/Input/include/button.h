@@ -41,13 +41,14 @@ class Button {
         bool push_edge;   // pushing flag
         bool pushing;   // pushing flag
         bool pushed;    // pushed flag
+		bool pushed_same_time;
         char push_type; // long or short
         long long int push_start_sec; // push start second
         long long int pushing_sec;    // pushing second
         long long int release_sec;    // release second
     } button_state_t;
  
-    button_state_t button_state = {false, false, false, 's', 0, 0, 0};
+    button_state_t button_state = {false, false, false, false, 's', 0, 0, 0};
     long long int long_push_thresh = 150000;
      
     button_state_t get_button_state() {
@@ -81,10 +82,15 @@ class Button {
         return button_state;
     }
 
+	void pushed_same_time() {
+        button_state.pushed_same_time = true;
+	}
+
     void clear_button_state() {
         button_state.push_edge = false; 
         button_state.pushing = false; 
         button_state.pushed = false;
+        button_state.pushed_same_time = false;
         button_state.push_type = 's';
         button_state.push_start_sec = 0;
         button_state.pushing_sec = 0;
