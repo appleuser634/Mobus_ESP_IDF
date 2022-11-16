@@ -45,14 +45,15 @@
 #define TO_USER_NAME "mu"
 #define TOKEN "1234"
 
-#define WEB_SERVER "192.168.10.112"
+#define WEB_SERVER "192.168.10.103"
+// #define WEB_SERVER "raspberrypi.local"
 #define WEB_PORT "3000"
 #define WEB_PATH "/getUserName"
 
 #define MAX_HTTP_RECV_BUFFER 512
 #define MAX_HTTP_OUTPUT_BUFFER 1024
 
-
+#pragma once
 
 static const char *GET_REQUEST = "GET " WEB_PATH " HTTP/1.0\r\n"
     "Host: "WEB_SERVER":"WEB_PORT"\r\n"
@@ -311,6 +312,9 @@ static void http_post_task(void *pvParameters)
 class HttpClient {
 	
 	public:
+		static std::string new_message;
+		static int new_message_id;
+		static bool notif_flag;
 	
 		void post_message(std::string message = ""){
 			xTaskCreate(&http_post_native_task, "http_post_native_task", 4096, &message, 5, NULL);
@@ -324,10 +328,6 @@ class HttpClient {
 		}
 	
 	private:
-		
-		// static std::string new_message;
-		// static int new_message_id;
-
 		
 		static void http_post_native_task(void *pvParameters){
 
@@ -391,23 +391,28 @@ class HttpClient {
 
 			esp_http_client_handle_t client = esp_http_client_init(&config);
 
-			std::string message_id = "40";
-			std::string to = "mu";
-			std::string token = "4321";
+			std::string to = "mimoc";
+			std::string token = "1234";
 
-			// POST
-			// const char *post_data = "{\"message\":\"Hello From Mobus!\"}";
-			const std::string post_data_str = "{\"id\":\"" + message_id + "\",\"to\":\"" + to + "\",\"token\":\"" + token + "\"}";
-			const char *post_data = post_data_str.c_str();
 			
-			esp_http_client_set_method(client, HTTP_METHOD_POST);
-			esp_http_client_set_header(client, "Content-Type", "application/json");
-			esp_http_client_set_post_field(client, post_data, strlen(post_data));
-
 			while (1) {
+				
 				// 5秒おきに受信を確認する
 				vTaskDelay(5000 / portTICK_PERIOD_MS);
+
+				printf("NEW_MESSAGE_ID:%d\n",new_message_id);
+				printf("NEW_MESSAGE:%s\n",new_message.c_str());
 				
+				std::string message_id = std::to_string(new_message_id);
+				
+				// POST
+				std::string post_data_str = "{\"id\":\"" + message_id + "\",\"to\":\"" + to + "\",\"token\":\"" + token + "\"}";
+				const char *post_data = post_data_str.c_str();
+				
+				esp_http_client_set_method(client, HTTP_METHOD_POST);
+				esp_http_client_set_header(client, "Content-Type", "application/json");
+				esp_http_client_set_post_field(client, post_data, strlen(post_data));
+	
 				esp_err_t err = esp_http_client_perform(client);
 				
 				if (err == ESP_OK) {
@@ -425,7 +430,7 @@ class HttpClient {
 				int null_found = output_buffer_string.find(null_string);
 
 				if (null_found == 0){
-					printf("No New Arrivals Message");
+					printf("No New Arrivals Message: response is null");
 					continue;
 				}
 				
@@ -433,7 +438,7 @@ class HttpClient {
 				cJSON *message = NULL;
 				cJSON *messages = NULL;
 				if (root == NULL){
-					printf("No New Arrivals Message");
+					printf("No New Arrivals Message: Json is null");
 					continue;
 				}
 
@@ -452,33 +457,25 @@ class HttpClient {
 					std::string message_s = cJSON_GetObjectItem(message,"Message")->valuestring;
 					printf("MESSAGE:%s\n",message_s.c_str());
 
-					// if (message_id > new_message_id){
-					// 	new_message = message_s;
-					// 	new_message_id = message_id;
-					// }
+					if (message_id > new_message_id){
+						new_message = message_s;
+						new_message_id = message_id;
+					}
 
-					// cJSON *width = cJSON_GetObjectItemCaseSensitive(resolution, "width");
-					// cJSON *height = cJSON_GetObjectItemCaseSensitive(resolution, "height");
-				
-					// if (!cJSON_IsNumber(width) || !cJSON_IsNumber(height))
-					// {
-					// 	status = 0;
-					// 	goto end;
-					// }
+				}
 
-					// if ((width->valuedouble == 1920) && (height->valuedouble == 1080))
-					// {
-					// 	status = 1;
-					// 	goto end;
-					// }
-				}	
-
-				// printf("NEW_MESSAGE_ID:%d\n",new_message_id);
-				// printf("NEW_MESSAGE:%s\n",new_message.c_str());
+				if (cJSON_GetArraySize(messages)){
+					notif_flag = true;
+				}
+								
 			}
 
 			esp_http_client_cleanup(client);
 			vTaskDelete(NULL);
 		}
-
 };
+
+std::string HttpClient::new_message = "";
+int HttpClient::new_message_id = 50;
+bool HttpClient::notif_flag = false;
+

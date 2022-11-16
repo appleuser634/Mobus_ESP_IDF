@@ -4,6 +4,13 @@ morse_textにモールスが入る
 message_textに確定したアルファベットが入る
 morse_textは消す
 
-display_text = morse_text + alphabet_text
+taskまとめ
 
+- oled.h
+	- menu_task
+		- talk_task
+- notif.h
+	- check_notific
 
+	ation_task
+		- notification_task

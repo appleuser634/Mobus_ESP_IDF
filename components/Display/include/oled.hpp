@@ -1,8 +1,12 @@
 #include <iterator>
+
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include <button.h>
 #include <buzzer.hpp>
+#include <images.hpp>
+
+#pragma once
 
 class LGFX : public lgfx::LGFX_Device {
     lgfx::Panel_SSD1306 _panel_instance;
@@ -74,65 +78,20 @@ class TalkDisplay {
     
     public:   
     
-    int cursor_point = 2;
+    static int cursor_point;
 
-    std::string morse_text = "";
-    std::string message_text = "";
-    std::string alphabet_text = "";
+    static std::string morse_text;
+    static std::string message_text;
+    static std::string alphabet_text;
 
-    std::string long_push_text = "_";
-    std::string short_push_text = ".";
+    static std::string long_push_text;
+    static std::string short_push_text;
 
-    
-    /*
-    std::map<std::string, int> mp {
-        {"apple",1},
-        {"banana",2},
-    };
-    
-    int apple = mp.at("apple");
- 
-    a = mp["apple"];
-    
-    mp["apple"] = int 6;
-    mp["banana"] = int 4;
+    static std::map<std::string, std::string> morse_code;
 
-    */
+    static int release_time;
 
-    std::map<std::string, std::string> morse_code {
-        {"._","A"},
-        {"_...","B"},
-        {"_._.","C"},
-        {"_..","D"},
-        {".","E"},
-        {".._.","F"},
-        {"__.","G"},
-        {"....","H"},
-        {"..","I"},
-        {".___","J"},
-        {"_._","K"},
-        {"._..","L"},
-        {"__","M"},
-        {"_.","N"},
-        {"___","O"},
-        {".__.","P"},
-        {"__._","Q"},
-        {"._.","R"},
-        {"...","S"},
-        {"_","T"},
-        {".._","U"},
-        {"..._","V"},
-        {".__","W"},
-        {"_.._","X"},
-        {"_.__","Y"},
-        {"__..","Z"},
-        {"....."," "},
-    };
-
-
-    int release_time = 0;
-
-	void SendAnimation() {
+	static void SendAnimation() {
 		sprite.fillRect(0, 0, 128, 64, 0);
 		
 		sprite.setCursor(30,20);
@@ -142,7 +101,15 @@ class TalkDisplay {
 		vTaskDelay(2000 / portTICK_PERIOD_MS);
 	};
 
-    void Talk() { 
+	static bool running_flag;
+
+	void start_talk_task(){
+		printf("Start Talk Task...");
+		// xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
+		xTaskCreatePinnedToCore(&talk_task, "talk_task", 4096, NULL, 6, NULL, 1);
+	}
+
+    static void talk_task(void *pvParameters) {
         lcd.init();
         lcd.setRotation(0);
         
@@ -168,24 +135,13 @@ class TalkDisplay {
 
         while (true) {
         
-            //for (int i = 0; i <= 2 ; i++) {
-            //    cursor_position = i * 22;
-            //    sprite.setCursor(26,cursor_position);  // カーソル位置を更新 
-            //    sprite.print(menu_names[i]);  // 1バイトずつ出力
-            //}
-            //
-            //sprite.setCursor(2, cursor_point);  // カーソル位置を更新 
-            //sprite.print("->");  // 1バイトずつ出力 
-            
-
-            //Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+            Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
             //printf("C6_Voltage:%d\n",joystick_state.C6_voltage);
             //printf("C7_Voltage:%d\n",joystick_state.C7_voltage);
             //printf("UP:%s\n", joystick_state.up ? "true" : "false");
             //printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
             //printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
             //printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
-			vTaskDelay(50 / portTICK_PERIOD_MS);
 
 			// モールス信号打ち込みキーの判定ロジック
             Button::button_state_t type_button_state = type_button.get_button_state();
@@ -228,6 +184,9 @@ class TalkDisplay {
                 type_button.clear_button_state();
             } else if (back_button_state.pushed and !back_button_state.pushed_same_time and !type_button_state.pushing){
 				break;
+			} else if (joystick_state.left) {
+				// FIXME
+				break;
 			} else if (back_button_state.pushed){
 				back_button.clear_button_state();
 			}
@@ -258,15 +217,108 @@ class TalkDisplay {
                 enter_button.clear_button_state();
             }
 
-
-
-            
-
             // チャタリング防止用に100msのsleep
             vTaskDelay(10 / portTICK_PERIOD_MS);
         }
+
+		// 実行フラグをfalseへ変更
+		running_flag = false;
+		vTaskDelete(NULL);
     };
 };
+
+int TalkDisplay::cursor_point = 2;
+
+std::string TalkDisplay::morse_text = "";
+std::string TalkDisplay::message_text = "";
+std::string TalkDisplay::alphabet_text = "";
+std::string TalkDisplay::long_push_text = "_";
+std::string TalkDisplay::short_push_text = ".";
+
+std::map<std::string, std::string> TalkDisplay::morse_code = {
+	{"._","A"},
+	{"_...","B"},
+	{"_._.","C"},
+	{"_..","D"},
+	{".","E"},
+	{".._.","F"},
+	{"__.","G"},
+	{"....","H"},
+	{"..","I"},
+	{".___","J"},
+	{"_._","K"},
+	{"._..","L"},
+	{"__","M"},
+	{"_.","N"},
+	{"___","O"},
+	{".__.","P"},
+	{"__._","Q"},
+	{"._.","R"},
+	{"...","S"},
+	{"_","T"},
+	{".._","U"},
+	{"..._","V"},
+	{".__","W"},
+	{"_.._","X"},
+	{"_.__","Y"},
+	{"__..","Z"},
+	{"....."," "},
+};
+
+int TalkDisplay::release_time = 0;
+bool TalkDisplay::running_flag = false;
+
+class BoxDisplay {
+    
+    public:   
+
+	static bool running_flag;
+
+	void start_box_task(){
+		printf("Start Talk Task...");
+		// xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
+		xTaskCreatePinnedToCore(&box_task, "box_task", 4096, NULL, 6, NULL, 1);
+	}
+
+    static void box_task(void *pvParameters) {
+        lcd.init();
+        lcd.setRotation(0);
+        
+        Joystick joystick;
+        joystick.setup();
+
+        Button type_button(GPIO_NUM_4);
+        Button back_button(GPIO_NUM_25);
+        Button enter_button(GPIO_NUM_26);
+		
+        lcd.setRotation(2);
+
+        sprite.setColorDepth(8);
+        sprite.setFont(&fonts::Font4);
+        sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
+        sprite.createSprite(lcd.width(), lcd.height()); 
+	
+		sprite.setCursor(0, 0);
+		sprite.print(HttpClient::new_message.c_str());
+		sprite.pushSprite(&lcd, 0, 0);
+
+        while (true) {            
+			Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+			Button::button_state_t back_button_state = back_button.get_button_state();
+
+			if (joystick_state.left or back_button_state.pushed) {
+				break;
+			}
+               
+            // チャタリング防止用に100msのsleep
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+		}
+		
+		running_flag = false;
+		vTaskDelete(NULL);
+    };
+};
+bool BoxDisplay::running_flag = false;
 
 class MenuDisplay {
     
@@ -274,30 +326,38 @@ class MenuDisplay {
 
     public:   
 
-	struct menu_t {
-        char menu_name[NAME_LENGTH_MAX];
-        int display_position_x;
-        int display_position_y;
-		// void (* func)();
-    };
-
-	struct menu_t menu_list[3] = {
-		{"Talk",26,0},
-		{"Setting",26,22},
-		{"Game",26,44}
-	};
-
-    int cursor_index = 0;
+	void start_menu_task(){
+		printf("Start Menu Task...");
+		// xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
+		xTaskCreatePinnedToCore(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
+	}
     
-    void Menu() { 
-        lcd.init();
-        lcd.setRotation(0);
+    static void menu_task(void *pvParameters) {
+
+		struct menu_t {
+			char menu_name[NAME_LENGTH_MAX];
+			int display_position_x;
+			int display_position_y;
+			// void (* func)();
+		};
+
+		struct menu_t menu_list[3] = {
+			{"Talk",26,0},
+			{"Box",26,22},
+			{"Game",26,44}
+		};
+
+		int cursor_index = 0;
+
+        // lcd.init();
+        // lcd.setRotation(0);
         
         Joystick joystick;
         joystick.setup();
 		
 		// メニューから遷移する機能のインスタンス
 		TalkDisplay talk;
+		BoxDisplay box;
 
         Button type_button(GPIO_NUM_4);
         Button enter_button(GPIO_NUM_26);
@@ -336,9 +396,21 @@ class MenuDisplay {
                 printf("Button pushed!\n");
                 printf("Pushing time:%lld\n",type_button_state.pushing_sec);
                 printf("Push type:%c\n",type_button_state.push_type);
-
+				
 				if (cursor_index == 0){
-					talk.Talk();
+					talk.running_flag = true;
+					talk.start_talk_task();	
+					// talkタスクの実行フラグがfalseになるまで待機
+					while(talk.running_flag){
+						vTaskDelay(100 / portTICK_PERIOD_MS);
+					}
+				} else if (cursor_index == 1){
+					box.running_flag = true;
+					box.start_box_task();	
+					// talkタスクの実行フラグがfalseになるまで待機
+					while(box.running_flag){
+						vTaskDelay(100 / portTICK_PERIOD_MS);
+					}
 				}
 
                 type_button.clear_button_state();
@@ -363,7 +435,11 @@ class MenuDisplay {
             
 			sprite.pushSprite(&lcd, 0, 0);
             sprite.fillRect(0, 0, 128, 64, 0);
+
+			esp_task_wdt_reset();
         }
+		
+		vTaskDelete(NULL);
     };
 };
 
@@ -374,92 +450,52 @@ class Oled {
     void BootDisplay() {        
         printf("Booting!!!\n");
         
-        lcd.init();
-        lcd.setRotation(0);
-
-        // 画面が横長になるように回転
-        // if (lcd.width() < lcd.height()) lcd.setRotation(lcd.getRotation() ^ 2);
-
+		lcd.init();
+		// lcd.clearDisplay();
         lcd.setRotation(2);
+		lcd.fillScreen(0x000000u);
 
-        sprite.setColorDepth(8);
-        sprite.setFont(&fonts::FreeSansOblique12pt7b);
-        sprite.setTextWrap(false);  // 右端到達時のカーソル折り返しを禁止
-        sprite.createSprite(lcd.width(), lcd.height());  // 画面幅+１文字分の横幅を用意
+        sprite.createSprite(lcd.width(), lcd.height());
+		sprite.drawPixel(64, 32); 
+
+		sprite.drawBitmap(32, 0, mimocLogo, 64, 64, TFT_WHITE, TFT_BLACK);
+        sprite.pushSprite(&lcd, 0, 0);
+    }
+ 
+	void RecvNotif() {        
+        printf("RecvNotif!!!\n");
+        
+		sprite.fillRect(0, 0, 128, 64, 0);	
+		static constexpr char notif_text[] = "Recv!!";
+
 
         for (int i = 50; i >= 20; i--) {
             sprite.setCursor(25,i);  // カーソル位置を更新 
-            sprite.print(text);  // 1バイトずつ出力
+            sprite.print(notif_text);  // 1バイトずつ出力
             // sprite.scroll(0, 0);  // キャンバスの内容を1ドット上にスクロール
             sprite.pushSprite(&lcd, 0, 0);
         }
         
-        vTaskDelay(1500 / portTICK_PERIOD_MS);
         
         for (int i = 20; i >= -50; i--) {
             sprite.setCursor(25, i);  // カーソル位置を更新 
-            sprite.print(text);  // 1バイトずつ出力
+            sprite.print(notif_text);  // 1バイトずつ出力
             // sprite.scroll(0, 0);  // キャンバスの内容を1ドット上にスクロール
             sprite.pushSprite(&lcd, 0, 0);
         }
     }
 
-    // WIP
     void ShowImage() {         
         lcd.init();
-		lcd.clearDisplay();
-        lcd.setSwapBytes(false);
-        // sprite.setColorDepth(1);
-        // sprite.createSprite(lcd.width(), lcd.height());  // 画面幅+１文字分の横幅を用意
-        // lcd.setRotation(2);
+		// lcd.clearDisplay();
+        lcd.setRotation(2);
+		lcd.fillScreen(0x000000u);
 
-		const uint16_t imgWidth = 64;
-		const uint16_t imgHeight = 64;
+        sprite.createSprite(lcd.width(), lcd.height());
+		sprite.drawPixel(64, 32); 
 
-		const unsigned char img [] PROGMEM = {
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x80, 0xc0, 0x40, 0x60, 0x30, 0x30, 0x18, 0x18, 0x18, 0x08, 0x0c, 0x0c, 0x0c, 0x0c, 
-			0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x08, 0x18, 0x18, 0x10, 0x30, 0x20, 0x60, 0xc0, 0xc0, 0x80, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0, 0xe0, 0x38, 0x1c, 
-			0x06, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x03, 
-			0x0e, 0x1c, 0x70, 0xe0, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf8, 0x3f, 0x03, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0xe0, 0x70, 0x38, 0xfc, 0x7e, 0x3e, 
-			0x0f, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x01, 0x07, 0xfe, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x80, 0xe0, 0x78, 0xfc, 0xfc, 0xf0, 0x3c, 0x0f, 0xc3, 0xf0, 0x3c, 0x02, 0x80, 0xe0, 0x78, 
-			0xb0, 0xf0, 0x60, 0xf0, 0xf0, 0x00, 0xe0, 0x60, 0x30, 0xf0, 0xe0, 0xc0, 0xe0, 0x30, 0x30, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x1e, 0x78, 0xe0, 0x80, 
-			0x00, 0x07, 0x03, 0x00, 0x07, 0x07, 0x01, 0x00, 0x00, 0x03, 0x01, 0x00, 0x00, 0x01, 0x01, 0x00, 
-			0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x01, 0x03, 0x03, 0x01, 0x00, 0x01, 0x03, 0x03, 0x03, 0x03, 
-			0x00, 0x80, 0xe0, 0x38, 0x1f, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 
-			0x07, 0x0e, 0x1c, 0x18, 0x30, 0x60, 0x60, 0xc0, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0xc0, 0x40, 0x60, 0x30, 0x30, 0x18, 0x0c, 0x06, 
-			0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xff, 0xc0, 0x80, 0x80, 0x80, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x80, 0x80, 0x80, 0xf0, 0xff, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x3f, 0x31, 0x2b, 0x2d, 0x2d, 0x6d, 
-			0x6d, 0x2d, 0x2d, 0x2f, 0x31, 0x39, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-		};
-
-		lcd.startWrite();
-		lcd.pushImage(0, 0, imgWidth, imgHeight, img);
-		lcd.endWrite();
-
-        // int x = 0;
-        // int y = 0;
-        // lcd.pushImage(x, y, 32, 13, img);
-        // sprite.pushImage(x, y, imgWidth, imgHeight, img);
-        //sprite.pushSprite(&lcd, 0, 0);
+		sprite.drawBitmap(32, 0, mimocLogo, 64, 64, TFT_WHITE, TFT_BLACK);
+        sprite.pushSprite(&lcd, 0, 0);
     }
 };
 

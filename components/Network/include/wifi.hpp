@@ -20,6 +20,9 @@
 // #define EXAMPLE_ESP_WIFI_SSID      "elecom-3027cf"
 // #define EXAMPLE_ESP_WIFI_PASS      "fvj9r2ki43ku"
 
+// #define EXAMPLE_ESP_WIFI_SSID      "Buffalo-G-0840"
+// #define EXAMPLE_ESP_WIFI_PASS      "g4yf4swm6iaa4"
+
 #define EXAMPLE_ESP_MAXIMUM_RETRY  10
 
 #define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD WIFI_AUTH_WPA2_PSK

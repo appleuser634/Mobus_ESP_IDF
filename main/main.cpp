@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "esp_task_wdt.h"
 #include "driver/gpio.h"
 #include "esp_spi_flash.h"
 #include "esp_system.h"
@@ -13,11 +14,15 @@ static const char *TAG = "mobus cllient";
 #include <string.h>
 #include <map>
 
-#include <http_client.hpp>
-
 #include <joystick.h>
+
+#include <http_client.hpp>
 #include <oled.hpp>
+
+#include <notification.hpp>
+
 #include <wifi.hpp>
+
 
 // #include <ota.hpp>
 
@@ -38,10 +43,12 @@ void app_main(void) {
     // TalkDisplay talk;
 
 	// WIP:起動時のロゴを表示
-    // oled.ShowImage();
-    // vTaskDelay(5000 / portTICK_PERIOD_MS);
-    
 	oled.BootDisplay();
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    
+	
+	// TODO:menuから各機能の画面に遷移するように実装する
+	menu.start_menu_task();
 
     WiFi wifi;
     wifi.main();
@@ -52,14 +59,18 @@ void app_main(void) {
     //    printf("Wifi state:%c\n",wifi_state.state);
     //    vTaskDelay(1000 / portTICK_PERIOD_MS);
     //}
-    
+	
 	HttpClient http;
 	http.start_receiving_wait();
-	
 
-	// TODO:menuから各機能の画面に遷移するように実装する
-    menu.Menu();
+	Notification notif;
+	notif.check_notification();
 
+	// app_mainが終了しないように無限ループ
+	while (1) {
+		esp_task_wdt_reset();
+
+	};
 
     /* Print chip information */
     esp_chip_info_t chip_info;
