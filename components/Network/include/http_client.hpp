@@ -41,12 +41,14 @@
 /* Constants that aren't configurable in menuconfig */
 // #define WEB_SERVER "mimoc.tech"
 
-#define USER_NAME "mimoc"
-#define TO_USER_NAME "mu"
-#define TOKEN "1234"
+#define USER_NAME "mu"
+#define TO_USER_NAME "mimoc"
+#define TOKEN "4321"
 
-#define WEB_SERVER "192.168.10.103"
+#define WEB_SERVER "mimoc.tech"
+// #define WEB_SERVER "192.168.10.103"
 // #define WEB_SERVER "raspberrypi.local"
+
 #define WEB_PORT "3000"
 #define WEB_PATH "/getUserName"
 
@@ -324,7 +326,7 @@ class HttpClient {
 
 		void start_receiving_wait(){
 			printf("Start receiving wait...");
-			xTaskCreate(&receiving_wait, "receiving_wait", 4096, NULL, 5, NULL);
+			xTaskCreate(&receiving_wait, "receiving_wait", 5124, NULL, 5, NULL);
 		}
 	
 	private:
@@ -391,8 +393,8 @@ class HttpClient {
 
 			esp_http_client_handle_t client = esp_http_client_init(&config);
 
-			std::string to = "mimoc";
-			std::string token = "1234";
+			std::string to = "mu";
+			std::string token = "4321";
 
 			
 			while (1) {

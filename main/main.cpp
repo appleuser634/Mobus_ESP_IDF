@@ -54,11 +54,12 @@ void app_main(void) {
     wifi.main();
  
     // FIXME
-    //for (int i = 0; i <= 10; i++) {
-    //    WiFi::wifi_state_t wifi_state = wifi.get_wifi_state();
-    //    printf("Wifi state:%c\n",wifi_state.state);
-    //    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    //}
+    for (int i = 0; i <= 10; i++) {
+       WiFi::wifi_state_t wifi_state = wifi.get_wifi_state();
+       printf("Wifi state:%c\n",wifi_state.state);
+       vTaskDelay(1000 / portTICK_PERIOD_MS);
+	}
+    
 	
 	HttpClient http;
 	http.start_receiving_wait();

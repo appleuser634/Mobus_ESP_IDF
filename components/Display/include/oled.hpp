@@ -145,7 +145,9 @@ class TalkDisplay {
 
 			// モールス信号打ち込みキーの判定ロジック
             Button::button_state_t type_button_state = type_button.get_button_state();
+			
 			Button::button_state_t back_button_state = back_button.get_button_state();
+			Button::button_state_t enter_button_state = enter_button.get_button_state();
 
 			if (type_button_state.push_edge and !back_button_state.pushing){
 				buzzer.buzzer_on();
@@ -175,35 +177,28 @@ class TalkDisplay {
                 }
                 morse_text = "";
             }
-            
 			if (back_button_state.pushing and type_button_state.pushed){
 				if (message_text != ""){
 					message_text.pop_back();
 				}
 				back_button.pushed_same_time();
                 type_button.clear_button_state();
-            } else if (back_button_state.pushed and !back_button_state.pushed_same_time and !type_button_state.pushing){
+            } 
+			else if (back_button_state.pushed and !back_button_state.pushed_same_time and !type_button_state.pushing){
 				break;
-			} else if (joystick_state.left) {
+			} 
+			else if (joystick_state.left) {
 				// FIXME
 				break;
-			} else if (back_button_state.pushed){
+			}
+			else if (joystick_state.up and enter_button_state.pushed) {
+				esp_restart();
+			}
+			else if (back_button_state.pushed){
 				back_button.clear_button_state();
 			}
-               
-            std::string display_text = message_text + morse_text + alphabet_text;
-
-            sprite.fillRect(0, 0, 128, 64, 0);
-            
-            sprite.setCursor(0,cursor_position);
-            sprite.print(display_text.c_str());
-            sprite.pushSprite(&lcd, 0, 0);
-
-            message_text += alphabet_text;
-            alphabet_text = "";
-
+			
 			// Enter(送信)キーの判定ロジック
-			Button::button_state_t enter_button_state = enter_button.get_button_state();
             if (enter_button_state.pushed and message_text != "") {
                 printf("Button pushed!\n");
                 printf("Pushing time:%lld\n",enter_button_state.pushing_sec);
@@ -216,6 +211,18 @@ class TalkDisplay {
 
                 enter_button.clear_button_state();
             }
+               
+            std::string display_text = message_text + morse_text + alphabet_text;
+
+            sprite.fillRect(0, 0, 128, 64, 0);
+            
+            sprite.setCursor(0,cursor_position);
+            sprite.print(display_text.c_str());
+            sprite.pushSprite(&lcd, 0, 0);
+
+            message_text += alphabet_text;
+            alphabet_text = "";
+
 
             // チャタリング防止用に100msのsleep
             vTaskDelay(10 / portTICK_PERIOD_MS);

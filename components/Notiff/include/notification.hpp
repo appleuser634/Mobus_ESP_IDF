@@ -52,6 +52,10 @@ class Notification {
 		}
 		
 		static void notification_task(void *pvParameters){
+			// 通知音を鳴らす
+			Buzzer buzzer;
+			buzzer.recv_sound();
+			// 通知画面を出す
 			Oled oled;
 			oled.RecvNotif();
 			vTaskDelete(NULL);
