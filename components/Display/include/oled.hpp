@@ -4,6 +4,7 @@
 #include <LovyanGFX.hpp>
 #include <button.h>
 #include <buzzer.hpp>
+#include <led.hpp>
 #include <images.hpp>
 
 #pragma once
@@ -114,6 +115,7 @@ class TalkDisplay {
         lcd.setRotation(0);
         
 		Buzzer buzzer;
+		Led led;
 
         Joystick joystick;
         joystick.setup();
@@ -151,6 +153,7 @@ class TalkDisplay {
 
 			if (type_button_state.push_edge and !back_button_state.pushing){
 				buzzer.buzzer_on();
+				led.led_on();
 			}
             
 			if (type_button_state.pushed and !back_button_state.pushing) {
@@ -166,6 +169,7 @@ class TalkDisplay {
 
                 type_button.clear_button_state();
 				buzzer.buzzer_off();
+				led.led_off();
             }
 
             // printf("Release time:%lld\n",button_state.release_sec);
