@@ -1,0 +1,4 @@
+変換用サイト: https://javl.github.io/image2cpp/
+変換設定: 
+Code output format -> Arduino Code
+Draw mode          -> Horizontal - 1bit per pixel

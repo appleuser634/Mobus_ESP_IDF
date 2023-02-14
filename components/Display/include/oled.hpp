@@ -463,7 +463,9 @@ class Oled {
 		lcd.fillScreen(0x000000u);
 
         sprite.createSprite(lcd.width(), lcd.height());
-		sprite.drawPixel(64, 32); 
+		
+		// (64,32)の座標のPixelを光らす
+		// sprite.drawPixel(64, 32); 
 
 		sprite.drawBitmap(32, 0, mimocLogo, 64, 64, TFT_WHITE, TFT_BLACK);
         sprite.pushSprite(&lcd, 0, 0);
@@ -492,16 +494,19 @@ class Oled {
         }
     }
 
-    void ShowImage() {         
-        lcd.init();
+    void ShowImage(const unsigned char img[]) {         
+        // lcd.init();
 		// lcd.clearDisplay();
         lcd.setRotation(2);
-		lcd.fillScreen(0x000000u);
+		// lcd.fillScreen(0x000000u);
 
         sprite.createSprite(lcd.width(), lcd.height());
-		sprite.drawPixel(64, 32); 
+		sprite.fillScreen(0x000000u);
+		// sprite.drawPixel(64, 32); 
 
-		sprite.drawBitmap(32, 0, mimocLogo, 64, 64, TFT_WHITE, TFT_BLACK);
+		sprite.drawBitmap(55, 25, img, 16, 22, TFT_WHITE, TFT_BLACK);
+		// sprite.drawBitmap(32, 0, mimocLogo, 64, 64, TFT_WHITE, TFT_BLACK);
+
         sprite.pushSprite(&lcd, 0, 0);
     }
 };

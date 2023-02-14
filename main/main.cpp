@@ -42,9 +42,18 @@ void app_main(void) {
     MenuDisplay menu;
     // TalkDisplay talk;
 
-	// WIP:起動時のロゴを表示
+	// 起動時のロゴを表示
 	oled.BootDisplay();
     vTaskDelay(2000 / portTICK_PERIOD_MS);
+
+	// キャラクターの挨拶を描画
+	// for (int i = 0; i <= 3; i++){
+	// 	oled.ShowImage(robo1);
+	// 	vTaskDelay(800 / portTICK_PERIOD_MS);
+	// 	
+	// 	oled.ShowImage(robo2);
+	// 	vTaskDelay(800 / portTICK_PERIOD_MS);
+	// }
     
 	
 	// TODO:menuから各機能の画面に遷移するように実装する
