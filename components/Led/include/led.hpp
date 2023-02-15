@@ -5,7 +5,7 @@
 #include "esp_err.h"
 
 #define LEDC_GPIO       16
-#define LEDC_DUTY       50
+#define LEDC_DUTY       10
 
 class Led {
 

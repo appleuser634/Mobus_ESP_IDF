@@ -17,6 +17,9 @@
 #define EXAMPLE_ESP_WIFI_SSID      "aterm-ed83de-g"
 #define EXAMPLE_ESP_WIFI_PASS      "460f07c12aedd"
 
+// #define EXAMPLE_ESP_WIFI_SSID      "kaneyan.diner01"
+// #define EXAMPLE_ESP_WIFI_PASS      "kaneyan222"
+
 // #define EXAMPLE_ESP_WIFI_SSID      "elecom-3027cf"
 // #define EXAMPLE_ESP_WIFI_PASS      "fvj9r2ki43ku"
 

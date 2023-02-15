@@ -129,7 +129,9 @@ class TalkDisplay {
         lcd.setRotation(2);
 
         sprite.setColorDepth(8);
-        sprite.setFont(&fonts::Font4);
+        // sprite.setFont(&fonts::Font4);
+        // sprite.setFont(&fonts::Font2);
+        sprite.setFont(&fonts::FreeMono9pt7b);
         sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
         sprite.createSprite(lcd.width(), lcd.height()); 
 
@@ -246,6 +248,7 @@ std::string TalkDisplay::alphabet_text = "";
 std::string TalkDisplay::long_push_text = "_";
 std::string TalkDisplay::short_push_text = ".";
 
+
 std::map<std::string, std::string> TalkDisplay::morse_code = {
 	{"._","A"},
 	{"_...","B"},
@@ -275,6 +278,9 @@ std::map<std::string, std::string> TalkDisplay::morse_code = {
 	{"__..","Z"},
 	{"....."," "},
 };
+
+// std::map<std::string, std::string> TalkDisplay::morse_code = morse_code;
+
 
 int TalkDisplay::release_time = 0;
 bool TalkDisplay::running_flag = false;
@@ -331,6 +337,150 @@ class BoxDisplay {
 };
 bool BoxDisplay::running_flag = false;
 
+
+class Game {
+    
+    public:   
+
+	static bool running_flag;
+
+	void start_game_task(){
+		printf("Start Game Task...");
+		// xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
+		xTaskCreatePinnedToCore(&game_task, "game_task", 4096, NULL, 6, NULL, 1);
+	}
+
+    static void game_task(void *pvParameters) {
+        lcd.init();
+        lcd.setRotation(0);
+
+		Buzzer buzzer;
+		Led led;
+        
+        Joystick joystick;
+        joystick.setup();
+
+        Button type_button(GPIO_NUM_4);
+        Button back_button(GPIO_NUM_25);
+        Button enter_button(GPIO_NUM_26);
+		
+        lcd.setRotation(2);
+
+        sprite.setColorDepth(8);
+        sprite.setFont(&fonts::Font4);
+        sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
+        sprite.createSprite(lcd.width(), lcd.height()); 
+	
+		sprite.setCursor(0, 0);
+		sprite.print(HttpClient::new_message.c_str());
+		sprite.pushSprite(&lcd, 0, 0);
+
+		std::string randomText = "A";
+		
+		// std::string morse_text;
+		// std::string message_text;
+		// std::string alphabet_text;
+
+		// std::string long_push_text;
+		// std::string short_push_text;
+
+		// std::map<std::string, std::string> morse_code;
+
+        while (true) {
+
+			// Joystickの状態を取得
+			// Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+
+			// // モールス信号打ち込みキーの判定ロジック
+            // Button::button_state_t type_button_state = type_button.get_button_state();			
+			// Button::button_state_t back_button_state = back_button.get_button_state();
+			// Button::button_state_t enter_button_state = enter_button.get_button_state();
+
+			// if (type_button_state.push_edge and !back_button_state.pushing){
+			// 	buzzer.buzzer_on();
+			// 	led.led_on();
+			// }
+            // 
+			// if (type_button_state.pushed and !back_button_state.pushing) {
+            //     printf("Button pushed!\n");
+            //     printf("Pushing time:%lld\n",type_button_state.pushing_sec);
+            //     printf("Push type:%c\n",type_button_state.push_type);
+            //     if (type_button_state.push_type == 's'){
+            //         morse_text += short_push_text;
+            //     }
+            //     else if (type_button_state.push_type == 'l'){
+            //         morse_text += long_push_text;
+            //     }
+
+            //     type_button.clear_button_state();
+			// 	buzzer.buzzer_off();
+			// 	led.led_off();
+            // }
+
+            // // printf("Release time:%lld\n",button_state.release_sec);
+            // if (type_button_state.release_sec > 8){
+            //     // printf("Release time:%lld\n",button_state.release_sec);
+
+            //     if (morse_code.count(morse_text)) {
+            //         alphabet_text = morse_code.at(morse_text);
+            //     }
+            //     morse_text = "";
+            // }
+			// if (back_button_state.pushing and type_button_state.pushed){
+			// 	if (message_text != ""){
+			// 		message_text.pop_back();
+			// 	}
+			// 	back_button.pushed_same_time();
+            //     type_button.clear_button_state();
+            // } 
+			// else if (back_button_state.pushed and !back_button_state.pushed_same_time and !type_button_state.pushing){
+			// 	break;
+			// } 
+			// else if (joystick_state.left) {
+			// 	// FIXME
+			// 	break;
+			// }
+			// else if (joystick_state.up and enter_button_state.pushed) {
+			// 	esp_restart();
+			// }
+			// else if (back_button_state.pushed){
+			// 	back_button.clear_button_state();
+			// }
+			// 
+			// // Enter(送信)キーの判定ロジック
+            // if (enter_button_state.pushed and message_text != "") {
+            //     printf("Button pushed!\n");
+            //     printf("Pushing time:%lld\n",enter_button_state.pushing_sec);
+            //     printf("Push type:%c\n",enter_button_state.push_type);
+			// 	
+			// 	message_text = "";
+
+            //     enter_button.clear_button_state();
+            // }
+            //    
+            // std::string display_text = message_text + morse_text + alphabet_text;
+
+            // sprite.fillRect(0, 0, 128, 64, 0);
+            // 
+            // sprite.setCursor(0,0);
+            // sprite.print(display_text.c_str());
+            // sprite.pushSprite(&lcd, 0, 0);
+
+            // message_text += alphabet_text;
+            // alphabet_text = "";
+
+
+            // // チャタリング防止用に100msのsleep
+            // vTaskDelay(10 / portTICK_PERIOD_MS);
+		}
+		
+		running_flag = false;
+		vTaskDelete(NULL);
+    };
+};
+bool Game::running_flag = false;
+
+
 class MenuDisplay {
     
     #define NAME_LENGTH_MAX 8
@@ -369,6 +519,7 @@ class MenuDisplay {
 		// メニューから遷移する機能のインスタンス
 		TalkDisplay talk;
 		BoxDisplay box;
+		Game game;
 
         Button type_button(GPIO_NUM_4);
         Button enter_button(GPIO_NUM_26);
@@ -420,6 +571,13 @@ class MenuDisplay {
 					box.start_box_task();	
 					// talkタスクの実行フラグがfalseになるまで待機
 					while(box.running_flag){
+						vTaskDelay(100 / portTICK_PERIOD_MS);
+					}
+				} else if (cursor_index == 2){
+					game.running_flag = true;
+					game.start_game_task();	
+					// talkタスクの実行フラグがfalseになるまで待機
+					while(game.running_flag){
 						vTaskDelay(100 / portTICK_PERIOD_MS);
 					}
 				}
