@@ -1,4 +1,5 @@
 #include <iterator>
+#include <string>
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
@@ -135,7 +136,7 @@ class TalkDisplay {
         sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
         sprite.createSprite(lcd.width(), lcd.height()); 
 
-		int cursor_position = 0;
+		// カーソル点滅制御用タイマー
 		long long int t = esp_timer_get_time();
 
         while (true) {
@@ -230,16 +231,14 @@ class TalkDisplay {
 				t = esp_timer_get_time();
 			}
 
-
             sprite.fillRect(0, 0, 128, 64, 0);
             
-            sprite.setCursor(0,cursor_position);
+            sprite.setCursor(0,0);
             sprite.print(display_text.c_str());
             sprite.pushSprite(&lcd, 0, 0);
 
             message_text += alphabet_text;
             alphabet_text = "";
-
 
             // チャタリング防止用に100msのsleep
             vTaskDelay(10 / portTICK_PERIOD_MS);
@@ -415,131 +414,193 @@ class Game {
 
 		char letters[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-
 		srand(esp_timer_get_time());
 		char random_char = letters[rand() % 26];
-		
-		std::string morse_text;
-		std::string message_text;
-		std::string alphabet_text;
 
-		std::string long_push_text = "_";
-		std::string short_push_text = ".";
+		while (1) {
 
-		int n = 10;
-		int c = 0;
+			std::string morse_text = "";
+			std::string message_text = "";
+			std::string alphabet_text = "";
 
-        while (c < n) {
+			std::string long_push_text = "_";
+			std::string short_push_text = ".";
 
-			// Joystickの状態を取得
-			Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+			// 問題数
+			int n = 10;
+			// クリア数
+			int c = 0;
 
-			// モールス信号打ち込みキーの判定ロジック
-            Button::button_state_t type_button_state = type_button.get_button_state();			
-			Button::button_state_t back_button_state = back_button.get_button_state();
-			Button::button_state_t enter_button_state = enter_button.get_button_state();
+			// ゲーム開始時間
+			long long int st = esp_timer_get_time();
 
-			if (type_button_state.push_edge and !back_button_state.pushing){
-				buzzer.buzzer_on();
-				led.led_on();
-			}
-            
-			if (type_button_state.pushed and !back_button_state.pushing) {
-                printf("Button pushed!\n");
-                printf("Pushing time:%lld\n",type_button_state.pushing_sec);
-                printf("Push type:%c\n",type_button_state.push_type);
-                if (type_button_state.push_type == 's'){
-                    morse_text += short_push_text;
-                }
-                else if (type_button_state.push_type == 'l'){
-                    morse_text += long_push_text;
-                }
+			// ゲーム終了フラグ
+			bool break_flag = false;
 
-                type_button.clear_button_state();
-				buzzer.buzzer_off();
-				led.led_off();
-            }
+			// 問題を解き終わるまでループ
+			while (c < n) {
 
-            // printf("Release time:%lld\n",button_state.release_sec);
-            if (type_button_state.release_sec > 8){
-                // printf("Release time:%lld\n",button_state.release_sec);
+				// Joystickの状態を取得
+				Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
 
-                if (morse_code.count(morse_text)) {
-                    alphabet_text = morse_code.at(morse_text);
-                }
-                morse_text = "";
-            }
-			if (back_button_state.pushing and type_button_state.pushed){
-				if (message_text != ""){
-					message_text.pop_back();
+				// モールス信号打ち込みキーの判定ロジック
+				Button::button_state_t type_button_state = type_button.get_button_state();			
+				Button::button_state_t back_button_state = back_button.get_button_state();
+				Button::button_state_t enter_button_state = enter_button.get_button_state();
+
+				if (type_button_state.push_edge and !back_button_state.pushing){
+					buzzer.buzzer_on();
+					led.led_on();
 				}
-				back_button.pushed_same_time();
-                type_button.clear_button_state();
-            } 
-			else if (back_button_state.pushed and !back_button_state.pushed_same_time and !type_button_state.pushing){
-				break;
-			} 
-			else if (joystick_state.left) {
-				// FIXME
-				break;
-			}
-			else if (joystick_state.up and enter_button_state.pushed) {
-				esp_restart();
-			}
-			else if (back_button_state.pushed){
-				back_button.clear_button_state();
-			}
-			
-			// Enter(送信)キーの判定ロジック
-            if (enter_button_state.pushed and message_text != "") {
-                printf("Button pushed!\n");
-                printf("Pushing time:%lld\n",enter_button_state.pushing_sec);
-                printf("Push type:%c\n",enter_button_state.push_type);
 				
+				if (type_button_state.pushed and !back_button_state.pushing) {
+					printf("Button pushed!\n");
+					printf("Pushing time:%lld\n",type_button_state.pushing_sec);
+					printf("Push type:%c\n",type_button_state.push_type);
+					if (type_button_state.push_type == 's'){
+						morse_text += short_push_text;
+					}
+					else if (type_button_state.push_type == 'l'){
+						morse_text += long_push_text;
+					}
+
+					type_button.clear_button_state();
+					buzzer.buzzer_off();
+					led.led_off();
+				}
+
+				// printf("Release time:%lld\n",button_state.release_sec);
+				if (type_button_state.release_sec > 8){
+					// printf("Release time:%lld\n",button_state.release_sec);
+
+					if (morse_code.count(morse_text)) {
+						alphabet_text = morse_code.at(morse_text);
+					}
+					morse_text = "";
+				}
+				if (back_button_state.pushing and type_button_state.pushed){
+					if (message_text != ""){
+						message_text.pop_back();
+					}
+					back_button.pushed_same_time();
+					type_button.clear_button_state();
+				} 
+				else if (back_button_state.pushed and !back_button_state.pushed_same_time and !type_button_state.pushing){
+					break_flag = true;
+					break;
+				} 
+				else if (joystick_state.left) {
+					break_flag = true;
+					break;
+				}
+				else if (joystick_state.up and enter_button_state.pushed) {
+					esp_restart();
+				}
+				else if (back_button_state.pushed){
+					back_button.clear_button_state();
+				}
+				
+				// Enter(送信)キーの判定ロジック
+				if (enter_button_state.pushed and message_text != "") {
+					printf("Button pushed!\n");
+					printf("Pushing time:%lld\n",enter_button_state.pushing_sec);
+					printf("Push type:%c\n",enter_button_state.push_type);
+					
+					message_text = "";
+
+					enter_button.clear_button_state();
+				}
+
+				// 出題の文字と一緒であればcを++
+				if (*message_text.c_str() == random_char){
+					c += 1;
+					random_char = letters[rand() % 26];
+				}
+		
 				message_text = "";
+				   
+				std::string display_text = message_text + morse_text + alphabet_text;
 
-                enter_button.clear_button_state();
-            }
+				std::string strN = std::to_string(n);
+				std::string strC = std::to_string(c);
+				
+				std::string nPerC = strC + "/" + strN;
 
-			// 出題の文字と一緒であればcを++
-			if (*message_text.c_str() == random_char){
-				c += 1;
-				random_char = letters[rand() % 26];
+				sprite.fillRect(0, 0, 128, 64, 0);
+
+
+				sprite.setFont(&fonts::Font2);
+				sprite.setCursor(85,0);
+				sprite.print(nPerC.c_str());
+				
+				sprite.setFont(&fonts::Font4);
+				sprite.setCursor(50,32);
+				sprite.print(display_text.c_str());
+
+				sprite.setCursor(50,0);
+				sprite.print(random_char);
+
+				sprite.pushSprite(&lcd, 0, 0);
+
+				message_text += alphabet_text;
+				alphabet_text = "";
+
+
+				// チャタリング防止用に100msのsleep
+				vTaskDelay(10 / portTICK_PERIOD_MS);
+
+				printf("message_text:%s\n",message_text.c_str());
 			}
-	
-			message_text = "";
-               
-            std::string display_text = message_text + morse_text + alphabet_text;
-
-			std::string strN = std::to_string(n);
-			std::string strC = std::to_string(c);
 			
-			std::string nPerC = strC + "/" + strN;
+			// Play時間を取得	
+			int p_time = (esp_timer_get_time() - st) / 1000000;
 
-            sprite.fillRect(0, 0, 128, 64, 0);
+			// Play時間を表示
+			while (1) {
+				
+				// break_flagが立ってたら終了
+				if (break_flag) {
+					break;
+				}
 
+				Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+				Button::button_state_t type_button_state = type_button.get_button_state();
+				Button::button_state_t back_button_state = back_button.get_button_state();
 
-			sprite.setFont(&fonts::Font2);
-            sprite.setCursor(85,0);
-            sprite.print(nPerC.c_str());
-            
-			sprite.setFont(&fonts::Font4);
-            sprite.setCursor(50,32);
-            sprite.print(display_text.c_str());
+				// ジョイスティック左を押されたらメニューへ戻る
+				// 戻るボタンを押されたらメニューへ戻る
+				if (joystick_state.left) {
+					break_flag = true;
+					break;
+				} else if (back_button_state.pushed) {
+					break_flag = true;
+					break;
+				}
 
-			sprite.setCursor(50,0);
-            sprite.print(random_char);
+				// タイプボタンを押されたら再度ゲームを再開
+				if (type_button_state.pushed) {
+					break_flag = false;
+					type_button.clear_button_state();
+					break;
+				}
 
-            sprite.pushSprite(&lcd, 0, 0);
-
-            message_text += alphabet_text;
-            alphabet_text = "";
-
-
-            // チャタリング防止用に100msのsleep
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-
-			printf("message_text:%s\n",message_text.c_str());
+				std::string t_text = "Time: " + (std::to_string(p_time)) + "s";
+						
+				sprite.fillRect(0, 0, 128, 64, 0);
+				
+				sprite.setFont(&fonts::Font4);
+				sprite.setCursor(32,0);
+				sprite.print("Clear!");
+				
+				sprite.setFont(&fonts::Font2);
+				sprite.setCursor(37,32);
+				sprite.print(t_text.c_str());
+				sprite.pushSprite(&lcd, 0, 0);
+			}
+		
+			if (break_flag){
+				break;
+			}
 		}
 		
 		running_flag = false;
@@ -687,6 +748,7 @@ class MenuDisplay {
 					while(talk.running_flag){
 						vTaskDelay(100 / portTICK_PERIOD_MS);
 					}
+					sprite.setFont(&fonts::Font4);
 				} else if (cursor_index == 1){
 					box.running_flag = true;
 					box.start_box_task();	
@@ -694,6 +756,7 @@ class MenuDisplay {
 					while(box.running_flag){
 						vTaskDelay(100 / portTICK_PERIOD_MS);
 					}
+					sprite.setFont(&fonts::Font4);
 				} else if (cursor_index == 2){
 					game.running_flag = true;
 					game.start_game_task();	
@@ -701,6 +764,7 @@ class MenuDisplay {
 					while(game.running_flag){
 						vTaskDelay(100 / portTICK_PERIOD_MS);
 					}
+					sprite.setFont(&fonts::Font4);
 				}
 
                 type_button.clear_button_state();
