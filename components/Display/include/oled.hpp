@@ -129,13 +129,14 @@ class TalkDisplay {
         lcd.setRotation(2);
 
         sprite.setColorDepth(8);
-        // sprite.setFont(&fonts::Font4);
+		sprite.setFont(&fonts::Font4);
         // sprite.setFont(&fonts::Font2);
-        sprite.setFont(&fonts::FreeMono9pt7b);
+		// sprite.setFont(&fonts::FreeMono9pt7b);
         sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
         sprite.createSprite(lcd.width(), lcd.height()); 
 
-        int cursor_position = 0; 
+		int cursor_position = 0;
+		long long int t = esp_timer_get_time();
 
         while (true) {
         
@@ -220,6 +221,16 @@ class TalkDisplay {
                
             std::string display_text = message_text + morse_text + alphabet_text;
 
+			// カーソルの点滅制御用
+			if (esp_timer_get_time() - t >= 500000) {
+				display_text += "|";
+                printf("Timder!\n");
+			}
+			if (esp_timer_get_time() - t > 1000000){
+				t = esp_timer_get_time();
+			}
+
+
             sprite.fillRect(0, 0, 128, 64, 0);
             
             sprite.setCursor(0,cursor_position);
@@ -277,6 +288,29 @@ std::map<std::string, std::string> TalkDisplay::morse_code = {
 	{"_.__","Y"},
 	{"__..","Z"},
 	{"....."," "},
+
+	{"._____","1"},
+	{"..___","2"},
+	{"...__","3"},
+	{"...._","4"},
+	{".....","5"},
+	{"_....","6"},
+	{"__...","7"},
+	{"___..","8"},
+	{"____.","9"},
+	{"_____","0"},
+
+	{"..__..","?"},
+	{"_._.__","!"},
+	{"._._._","."},
+	{"__..__",","},
+	{"_._._.",";"},
+	{"___...",":"},
+	{"._._.","+"},
+	{"_...._","-"},
+	{"_.._.","/"},
+	{"_..._","="},
+
 };
 
 // std::map<std::string, std::string> TalkDisplay::morse_code = morse_code;
@@ -350,6 +384,10 @@ class Game {
 		xTaskCreatePinnedToCore(&game_task, "game_task", 4096, NULL, 6, NULL, 1);
 	}
 
+	static std::map<std::string, std::string> morse_code;
+
+
+
     static void game_task(void *pvParameters) {
         lcd.init();
         lcd.setRotation(0);
@@ -375,103 +413,133 @@ class Game {
 		sprite.print(HttpClient::new_message.c_str());
 		sprite.pushSprite(&lcd, 0, 0);
 
-		std::string randomText = "A";
+		char letters[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+
+		srand(esp_timer_get_time());
+		char random_char = letters[rand() % 26];
 		
-		// std::string morse_text;
-		// std::string message_text;
-		// std::string alphabet_text;
+		std::string morse_text;
+		std::string message_text;
+		std::string alphabet_text;
 
-		// std::string long_push_text;
-		// std::string short_push_text;
+		std::string long_push_text = "_";
+		std::string short_push_text = ".";
 
-		// std::map<std::string, std::string> morse_code;
+		int n = 10;
+		int c = 0;
 
-        while (true) {
+        while (c < n) {
 
 			// Joystickの状態を取得
-			// Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+			Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
 
-			// // モールス信号打ち込みキーの判定ロジック
-            // Button::button_state_t type_button_state = type_button.get_button_state();			
-			// Button::button_state_t back_button_state = back_button.get_button_state();
-			// Button::button_state_t enter_button_state = enter_button.get_button_state();
+			// モールス信号打ち込みキーの判定ロジック
+            Button::button_state_t type_button_state = type_button.get_button_state();			
+			Button::button_state_t back_button_state = back_button.get_button_state();
+			Button::button_state_t enter_button_state = enter_button.get_button_state();
 
-			// if (type_button_state.push_edge and !back_button_state.pushing){
-			// 	buzzer.buzzer_on();
-			// 	led.led_on();
-			// }
-            // 
-			// if (type_button_state.pushed and !back_button_state.pushing) {
-            //     printf("Button pushed!\n");
-            //     printf("Pushing time:%lld\n",type_button_state.pushing_sec);
-            //     printf("Push type:%c\n",type_button_state.push_type);
-            //     if (type_button_state.push_type == 's'){
-            //         morse_text += short_push_text;
-            //     }
-            //     else if (type_button_state.push_type == 'l'){
-            //         morse_text += long_push_text;
-            //     }
+			if (type_button_state.push_edge and !back_button_state.pushing){
+				buzzer.buzzer_on();
+				led.led_on();
+			}
+            
+			if (type_button_state.pushed and !back_button_state.pushing) {
+                printf("Button pushed!\n");
+                printf("Pushing time:%lld\n",type_button_state.pushing_sec);
+                printf("Push type:%c\n",type_button_state.push_type);
+                if (type_button_state.push_type == 's'){
+                    morse_text += short_push_text;
+                }
+                else if (type_button_state.push_type == 'l'){
+                    morse_text += long_push_text;
+                }
 
-            //     type_button.clear_button_state();
-			// 	buzzer.buzzer_off();
-			// 	led.led_off();
-            // }
+                type_button.clear_button_state();
+				buzzer.buzzer_off();
+				led.led_off();
+            }
 
-            // // printf("Release time:%lld\n",button_state.release_sec);
-            // if (type_button_state.release_sec > 8){
-            //     // printf("Release time:%lld\n",button_state.release_sec);
+            // printf("Release time:%lld\n",button_state.release_sec);
+            if (type_button_state.release_sec > 8){
+                // printf("Release time:%lld\n",button_state.release_sec);
 
-            //     if (morse_code.count(morse_text)) {
-            //         alphabet_text = morse_code.at(morse_text);
-            //     }
-            //     morse_text = "";
-            // }
-			// if (back_button_state.pushing and type_button_state.pushed){
-			// 	if (message_text != ""){
-			// 		message_text.pop_back();
-			// 	}
-			// 	back_button.pushed_same_time();
-            //     type_button.clear_button_state();
-            // } 
-			// else if (back_button_state.pushed and !back_button_state.pushed_same_time and !type_button_state.pushing){
-			// 	break;
-			// } 
-			// else if (joystick_state.left) {
-			// 	// FIXME
-			// 	break;
-			// }
-			// else if (joystick_state.up and enter_button_state.pushed) {
-			// 	esp_restart();
-			// }
-			// else if (back_button_state.pushed){
-			// 	back_button.clear_button_state();
-			// }
-			// 
-			// // Enter(送信)キーの判定ロジック
-            // if (enter_button_state.pushed and message_text != "") {
-            //     printf("Button pushed!\n");
-            //     printf("Pushing time:%lld\n",enter_button_state.pushing_sec);
-            //     printf("Push type:%c\n",enter_button_state.push_type);
-			// 	
-			// 	message_text = "";
+                if (morse_code.count(morse_text)) {
+                    alphabet_text = morse_code.at(morse_text);
+                }
+                morse_text = "";
+            }
+			if (back_button_state.pushing and type_button_state.pushed){
+				if (message_text != ""){
+					message_text.pop_back();
+				}
+				back_button.pushed_same_time();
+                type_button.clear_button_state();
+            } 
+			else if (back_button_state.pushed and !back_button_state.pushed_same_time and !type_button_state.pushing){
+				break;
+			} 
+			else if (joystick_state.left) {
+				// FIXME
+				break;
+			}
+			else if (joystick_state.up and enter_button_state.pushed) {
+				esp_restart();
+			}
+			else if (back_button_state.pushed){
+				back_button.clear_button_state();
+			}
+			
+			// Enter(送信)キーの判定ロジック
+            if (enter_button_state.pushed and message_text != "") {
+                printf("Button pushed!\n");
+                printf("Pushing time:%lld\n",enter_button_state.pushing_sec);
+                printf("Push type:%c\n",enter_button_state.push_type);
+				
+				message_text = "";
 
-            //     enter_button.clear_button_state();
-            // }
-            //    
-            // std::string display_text = message_text + morse_text + alphabet_text;
+                enter_button.clear_button_state();
+            }
 
-            // sprite.fillRect(0, 0, 128, 64, 0);
-            // 
-            // sprite.setCursor(0,0);
-            // sprite.print(display_text.c_str());
-            // sprite.pushSprite(&lcd, 0, 0);
+			// 出題の文字と一緒であればcを++
+			if (*message_text.c_str() == random_char){
+				c += 1;
+				random_char = letters[rand() % 26];
+			}
+	
+			message_text = "";
+               
+            std::string display_text = message_text + morse_text + alphabet_text;
 
-            // message_text += alphabet_text;
-            // alphabet_text = "";
+			std::string strN = std::to_string(n);
+			std::string strC = std::to_string(c);
+			
+			std::string nPerC = strC + "/" + strN;
+
+            sprite.fillRect(0, 0, 128, 64, 0);
 
 
-            // // チャタリング防止用に100msのsleep
-            // vTaskDelay(10 / portTICK_PERIOD_MS);
+			sprite.setFont(&fonts::Font2);
+            sprite.setCursor(85,0);
+            sprite.print(nPerC.c_str());
+            
+			sprite.setFont(&fonts::Font4);
+            sprite.setCursor(50,32);
+            sprite.print(display_text.c_str());
+
+			sprite.setCursor(50,0);
+            sprite.print(random_char);
+
+            sprite.pushSprite(&lcd, 0, 0);
+
+            message_text += alphabet_text;
+            alphabet_text = "";
+
+
+            // チャタリング防止用に100msのsleep
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+
+			printf("message_text:%s\n",message_text.c_str());
 		}
 		
 		running_flag = false;
@@ -479,6 +547,59 @@ class Game {
     };
 };
 bool Game::running_flag = false;
+
+std::map<std::string, std::string> Game::morse_code = {
+	{"._","A"},
+	{"_...","B"},
+	{"_._.","C"},
+	{"_..","D"},
+	{".","E"},
+	{".._.","F"},
+	{"__.","G"},
+	{"....","H"},
+	{"..","I"},
+	{".___","J"},
+	{"_._","K"},
+	{"._..","L"},
+	{"__","M"},
+	{"_.","N"},
+	{"___","O"},
+	{".__.","P"},
+	{"__._","Q"},
+	{"._.","R"},
+	{"...","S"},
+	{"_","T"},
+	{".._","U"},
+	{"..._","V"},
+	{".__","W"},
+	{"_.._","X"},
+	{"_.__","Y"},
+	{"__..","Z"},
+
+	{"._._"," "},
+	
+	{"._____","1"},
+	{"..___","2"},
+	{"...__","3"},
+	{"...._","4"},
+	{".....","5"},
+	{"_....","6"},
+	{"__...","7"},
+	{"___..","8"},
+	{"____.","9"},
+	{"_____","0"},
+
+	{"..__..","?"},
+	{"_._.__","!"},
+	{"._._._","."},
+	{"__..__",","},
+	{"_._._.",";"},
+	{"___...",":"},
+	{"._._.","+"},
+	{"_...._","-"},
+	{"_.._.","/"},
+	{"_..._","="},
+};
 
 
 class MenuDisplay {
