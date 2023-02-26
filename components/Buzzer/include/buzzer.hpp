@@ -176,5 +176,41 @@ class Buzzer {
 			ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0); //duty=0 で消音
 			ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 	}
+
+	void right_sound(void)
+	{
+
+		ledc_timer_config_t ledc_timer = {
+			.duty_resolution = LEDC_TIMER_8_BIT, // resolution of PWM duty
+			.freq_hz = LEDC_FREQ                // frequency of PWM signal
+			// .speed_mode = LEDC_HIGH_SPEED_MODE   // timer mode
+		};
+		ledc_timer_config(&ledc_timer);
+
+		ledc_channel_config_t ledc_channel = {
+				.gpio_num   = LEDC_GPIO,
+				.speed_mode = LEDC_HIGH_SPEED_MODE
+				// .channel    = 0,
+				// .duty       = 0,
+		};
+		ledc_channel_config(&ledc_channel);
+
+		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, LEDC_DUTY);
+		ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
+		vTaskDelay(100 / portTICK_PERIOD_MS);
+
+		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0); //duty=0 で消音
+		ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
+		vTaskDelay(50 / portTICK_PERIOD_MS);
+		
+		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, LEDC_DUTY);
+		ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
+		vTaskDelay(100 / portTICK_PERIOD_MS);
+		
+		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0); //duty=0 で消音
+		ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
+	}
+
+
 };
 

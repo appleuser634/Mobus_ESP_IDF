@@ -286,7 +286,8 @@ std::map<std::string, std::string> TalkDisplay::morse_code = {
 	{"_.._","X"},
 	{"_.__","Y"},
 	{"__..","Z"},
-	{"....."," "},
+
+	{"._._"," "},
 
 	{"._____","1"},
 	{"..___","2"},
@@ -685,9 +686,9 @@ class MenuDisplay {
 		};
 
 		struct menu_t menu_list[3] = {
-			{"Talk",26,0},
-			{"Box",26,22},
-			{"Game",26,44}
+			{"Talk",9,22},
+			{"Box",51,22},
+			{"Game",93,22}
 		};
 
 		int cursor_index = 0;
@@ -717,22 +718,52 @@ class MenuDisplay {
         sprite.createSprite(lcd.width(), lcd.height());
         
         while (1) {
+
+			// 画面上部のステータス表示
+			sprite.drawFastHLine( 0, 12, 128, 0xFFFF); 
+
+			// 電波状況表示
+			int radioLevel = 4;
+			int rx = 4;
+			int ry = 6;
+			int rh = 4;
+			for (; 0 < radioLevel; radioLevel --){
+
+				sprite.fillRect( rx, ry, 2, rh, 0xFFFF);
+				rx += 3;
+				ry -= 2;
+				rh += 2;
+			}
+
+			// 電池残量表示
+			sprite.drawRoundRect(110, 0, 14, 8, 2, 0xFFFF);
+			sprite.fillRect( 111, 0, 8, 8, 0xFFFF);
+			sprite.fillRect( 124, 2, 1, 4, 0xFFFF);
+
+			// Menu選択の表示
+			sprite.fillRoundRect(menu_list[cursor_index].display_position_x - 2, menu_list[cursor_index].display_position_y - 2, 36, 36, 5, 0xFFFF);
         	
 			// Menu項目を表示させる
 			int menu_lists_n = sizeof(menu_list) / sizeof(menu_t);
 			for (int i = 0; i <= menu_lists_n; i++){ 
-				sprite.setCursor(menu_list[i].display_position_x,menu_list[i].display_position_y);
-                sprite.print(menu_list[i].menu_name);  // 1バイトずつ出力
+				// sprite.setCursor(menu_list[i].display_position_x,menu_list[i].display_position_y);
+				// sprite.print(menu_list[i].menu_name);  // 1バイトずつ出力
+				
+				sprite.drawBitmap(menu_list[i].display_position_x, menu_list[i].display_position_y, mail, 32, 32, TFT_WHITE, TFT_BLACK);
+				// sprite.pushSprite(&lcd, 0, 0);
 			}
             
 
             Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
-            printf("C6_Voltage:%d\n",joystick_state.C6_voltage);
-            printf("C7_Voltage:%d\n",joystick_state.C7_voltage);
-            printf("UP:%s\n", joystick_state.up ? "true" : "false");
-            printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
-            printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
-            printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
+            // printf("C6_Voltage:%d\n",joystick_state.C6_voltage);
+            // printf("C7_Voltage:%d\n",joystick_state.C7_voltage);
+            // printf("UP:%s\n", joystick_state.up ? "true" : "false");
+            // printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
+            // printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
+            // printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
+			wifi_ap_record_t ap;
+			esp_wifi_sta_get_ap_info(&ap);
+			printf("%d\n", ap.rssi);
             vTaskDelay(50 / portTICK_PERIOD_MS);
 
             Button::button_state_t type_button_state = type_button.get_button_state();
@@ -770,22 +801,18 @@ class MenuDisplay {
                 type_button.clear_button_state();
             }
 
-            if (joystick_state.pushed_up_edge){
+            if (joystick_state.pushed_left_edge){
                 cursor_index -= 1;
 				if (cursor_index < 0){
 					cursor_index = menu_lists_n - 1;
 				}
             }
-            else if (joystick_state.pushed_down_edge){
+            else if (joystick_state.pushed_right_edge){
                 cursor_index += 1;
 				if (cursor_index >= menu_lists_n){
 					cursor_index = 0;
 				}
             }
-            
-            // Menu選択"->"の表示
-			sprite.setCursor(2, menu_list[cursor_index].display_position_y);  // カーソル位置を更新 
-            sprite.print("->");  // 1バイトずつ出力 
             
 			sprite.pushSprite(&lcd, 0, 0);
             sprite.fillRect(0, 0, 128, 64, 0);
@@ -796,6 +823,7 @@ class MenuDisplay {
 		vTaskDelete(NULL);
     };
 };
+
 
 class Oled {
     

@@ -1,3 +1,4 @@
 LovyanGFX
 build
 *.bin
+.DS_Store

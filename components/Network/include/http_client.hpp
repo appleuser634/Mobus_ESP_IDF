@@ -45,11 +45,11 @@
 #define TO_USER_NAME "mu"
 #define TOKEN "1234"
 
-#define WEB_SERVER "mimoc.tech"
-// #define WEB_SERVER "192.168.10.103"
+// #define WEB_SERVER "mimoc.tech"
+#define WEB_SERVER "192.168.10.122"
 // #define WEB_SERVER "raspberrypi.local"
 
-#define WEB_PORT "6348"
+#define WEB_PORT "3000"
 #define WEB_PATH "/getUserName"
 
 #define MAX_HTTP_RECV_BUFFER 512
@@ -340,7 +340,7 @@ class HttpClient {
 			message = *(std::string *)pvParameters;
 
 			esp_http_client_config_t config = {
-				.url = "http://" WEB_SERVER ":6348/sendMessage",
+				.url = "http://" WEB_SERVER ":" WEB_PORT "/sendMessage",
 				.event_handler = _http_event_handler,
 				.user_data = output_buffer,
 			};
@@ -386,7 +386,7 @@ class HttpClient {
 			int content_length = 0;
 
 			esp_http_client_config_t config = {
-				.url = "http://" WEB_SERVER ":6348/getMessage",
+				.url = "http://" WEB_SERVER ":" WEB_PORT "/getMessage",
 				.event_handler = _http_event_handler,
 				.user_data = output_buffer,
 			};
