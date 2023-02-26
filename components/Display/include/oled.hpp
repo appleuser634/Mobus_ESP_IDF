@@ -717,22 +717,43 @@ class MenuDisplay {
         sprite.setTextWrap(false);  // 右端到達時のカーソル折り返しを禁止
         sprite.createSprite(lcd.width(), lcd.height());
         
+		// 開始時間を取得	
+		long long int st = esp_timer_get_time();
+		// 電波強度の初期値
+		float radioLevel = 4;
+
         while (1) {
 
 			// 画面上部のステータス表示
 			sprite.drawFastHLine( 0, 12, 128, 0xFFFF); 
-
+	
 			// 電波状況表示
-			int radioLevel = 4;
+
 			int rx = 4;
 			int ry = 6;
 			int rh = 4;
-			for (; 0 < radioLevel; radioLevel --){
+			for (int r = radioLevel; 0 < r; r--){
 
 				sprite.fillRect( rx, ry, 2, rh, 0xFFFF);
 				rx += 3;
 				ry -= 2;
 				rh += 2;
+			}
+			
+			// 経過時間を取得
+			int p_time = (esp_timer_get_time() - st) / 1000000;
+			if (p_time > 10){
+				
+				// 電波強度を更新
+				wifi_ap_record_t ap;
+				esp_wifi_sta_get_ap_info(&ap);
+				printf("%d\n", ap.rssi);
+				
+				radioLevel = 4 - (ap.rssi / -20);
+				if (radioLevel < 1){
+					radioLevel = 1;
+				}
+				st = esp_timer_get_time();
 			}
 
 			// 電池残量表示
@@ -761,9 +782,6 @@ class MenuDisplay {
             // printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
             // printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
             // printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
-			wifi_ap_record_t ap;
-			esp_wifi_sta_get_ap_info(&ap);
-			printf("%d\n", ap.rssi);
             vTaskDelay(50 / portTICK_PERIOD_MS);
 
             Button::button_state_t type_button_state = type_button.get_button_state();
