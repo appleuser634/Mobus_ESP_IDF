@@ -392,10 +392,6 @@ class HttpClient {
 			};
 
 			esp_http_client_handle_t client = esp_http_client_init(&config);
-
-			std::string to = "mimoc";
-			std::string token = "1234";
-
 			
 			while (1) {
 				
@@ -408,7 +404,7 @@ class HttpClient {
 				std::string message_id = std::to_string(new_message_id);
 				
 				// POST
-				std::string post_data_str = "{\"id\":\"" + message_id + "\",\"to\":\"" + to + "\",\"token\":\"" + token + "\"}";
+				std::string post_data_str = "{\"id\":\"" + message_id + "\",\"to\":\"" + USER_NAME + "\",\"token\":\"" + TOKEN + "\"}";
 				const char *post_data = post_data_str.c_str();
 				
 				esp_http_client_set_method(client, HTTP_METHOD_POST);

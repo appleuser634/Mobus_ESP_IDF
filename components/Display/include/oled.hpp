@@ -820,6 +820,7 @@ class MenuDisplay {
 						vTaskDelay(100 / portTICK_PERIOD_MS);
 					}
 					sprite.setFont(&fonts::Font4);
+					ft = esp_timer_get_time();
 				} else if (cursor_index == 1){
 					box.running_flag = true;
 					box.start_box_task();	
@@ -828,6 +829,7 @@ class MenuDisplay {
 						vTaskDelay(100 / portTICK_PERIOD_MS);
 					}
 					sprite.setFont(&fonts::Font4);
+					ft = esp_timer_get_time();
 				} else if (cursor_index == 2){
 					game.running_flag = true;
 					game.start_game_task();	
@@ -836,6 +838,7 @@ class MenuDisplay {
 						vTaskDelay(100 / portTICK_PERIOD_MS);
 					}
 					sprite.setFont(&fonts::Font4);
+					ft = esp_timer_get_time();
 				}
 
                 type_button.clear_button_state();
