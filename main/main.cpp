@@ -7,7 +7,10 @@
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "hal/gpio_types.h"
 #include "sdkconfig.h"
+#include "esp_sleep.h"
+#include "driver/rtc_io.h"
 
 static const char *TAG = "mobus cllient";
 
@@ -33,27 +36,38 @@ extern "C" {
 
 void app_main(void) {
     
-    printf("Hello world!!!!\n");
-  
-	Buzzer buzzer;
-	buzzer.boot_sound();
-    
+    printf("Hello world!!!!\n"); 
+
 	Oled oled;
     MenuDisplay menu;
     // TalkDisplay talk;
+			
+	esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+	if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0){
+		// キャラクターの挨拶を描画
+		for (int i = 0; i <= 2; i++){
+			oled.ShowImage(robo1);
+			vTaskDelay(800 / portTICK_PERIOD_MS);
+			
+			oled.ShowImage(robo2);
+			vTaskDelay(800 / portTICK_PERIOD_MS);
+		}
+	} else {
+		// 起動音を鳴らす
+		Buzzer buzzer;
+		buzzer.boot_sound();
+		// 起動時のロゴを表示
+		oled.BootDisplay();
+		vTaskDelay(2000 / portTICK_PERIOD_MS);
+	}
+    
+	const gpio_num_t ext_wakeup_pin_0 = GPIO_NUM_4;
 
-	// 起動時のロゴを表示
-	oled.BootDisplay();
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    printf("Enabling EXT0 wakeup on pin GPIO%d\n", ext_wakeup_pin_0);
+    esp_sleep_enable_ext0_wakeup(ext_wakeup_pin_0, 1);
 
-	// キャラクターの挨拶を描画
-	// for (int i = 0; i <= 3; i++){
-	// 	oled.ShowImage(robo1);
-	// 	vTaskDelay(800 / portTICK_PERIOD_MS);
-	// 	
-	// 	oled.ShowImage(robo2);
-	// 	vTaskDelay(800 / portTICK_PERIOD_MS);
-	// }
+    rtc_gpio_pullup_dis(ext_wakeup_pin_0);
+    rtc_gpio_pulldown_en(ext_wakeup_pin_0);
     
 	
 	// TODO:menuから各機能の画面に遷移するように実装する

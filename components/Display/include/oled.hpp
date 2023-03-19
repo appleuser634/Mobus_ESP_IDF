@@ -723,12 +723,23 @@ class MenuDisplay {
         sprite.setTextWrap(false);  // 右端到達時のカーソル折り返しを禁止
         sprite.createSprite(lcd.width(), lcd.height());
         
-		// 開始時間を取得	
+		// 開始時間を取得 st=start_time	
 		long long int st = esp_timer_get_time();
+		// sleep判定用の時間を取得 ft=free_time
+		long long int ft = esp_timer_get_time();
 		// 電波強度の初期値
 		float radioLevel = 4;
 
         while (1) {
+			
+			// 15秒操作がなければsleep
+			int free_time = (esp_timer_get_time() - ft) / 1000000;
+			if (free_time >= 15){	
+				printf("free_time:%d\n", free_time);
+				sprite.fillRect(0, 0, 128, 64, 0);
+				sprite.pushSprite(&lcd, 0, 0);
+				esp_deep_sleep_start();
+			}
 
 			// 画面上部のステータス表示
 			sprite.drawFastHLine( 0, 12, 128, 0xFFFF); 
@@ -899,7 +910,7 @@ class Oled {
     }
 
     void ShowImage(const unsigned char img[]) {         
-        // lcd.init();
+        lcd.init();
 		// lcd.clearDisplay();
         lcd.setRotation(2);
 		// lcd.fillScreen(0x000000u);
