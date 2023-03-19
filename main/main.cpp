@@ -73,8 +73,8 @@ void app_main(void) {
 	HttpClient http;
 	http.start_receiving_wait();
 
-	Notification notif;
-	notif.check_notification();
+	// Notification notif;
+	// notif.check_notification();
 
 	// app_mainが終了しないように無限ループ
 	while (1) {

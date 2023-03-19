@@ -324,12 +324,13 @@ class BoxDisplay {
     public:   
 
 	static bool running_flag;
+	static HttpClient http;
 
 	void start_box_task(){
 		printf("Start Talk Task...");
 		// xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
 		xTaskCreatePinnedToCore(&box_task, "box_task", 4096, NULL, 6, NULL, 1);
-	}
+	}	
 
     static void box_task(void *pvParameters) {
         lcd.init();
@@ -352,6 +353,9 @@ class BoxDisplay {
 		sprite.setCursor(0, 0);
 		sprite.print(HttpClient::new_message.c_str());
 		sprite.pushSprite(&lcd, 0, 0);
+
+		// 通知を非表示
+		http.notif_flag = false;
 
         while (true) {            
 			Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
@@ -675,6 +679,8 @@ class MenuDisplay {
 		// xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
 		xTaskCreatePinnedToCore(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
 	}
+
+	static HttpClient http;
     
     static void menu_task(void *pvParameters) {
 
@@ -728,7 +734,6 @@ class MenuDisplay {
 			sprite.drawFastHLine( 0, 12, 128, 0xFFFF); 
 	
 			// 電波状況表示
-
 			int rx = 4;
 			int ry = 6;
 			int rh = 4;
@@ -755,6 +760,12 @@ class MenuDisplay {
 				}
 				st = esp_timer_get_time();
 			}
+
+			// メッセージ受信通知の表示
+			if (http.notif_flag) {
+				sprite.drawRoundRect(50, 0, 20, 8, 2, 0xFFFF);
+			}
+
 
 			// 電池残量表示
 			sprite.drawRoundRect(110, 0, 14, 8, 2, 0xFFFF);

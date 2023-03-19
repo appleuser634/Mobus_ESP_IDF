@@ -46,8 +46,10 @@ class Notification {
 				if(http.notif_flag) {
 					Notification::recv_notification();
 					http.notif_flag = false;
+				} 
+				else {
+					vTaskDelay(3000 / portTICK_PERIOD_MS);
 				}
-				vTaskDelay(1000 / portTICK_PERIOD_MS);
 			}			
 		}
 		
