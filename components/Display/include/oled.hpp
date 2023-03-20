@@ -327,7 +327,7 @@ class BoxDisplay {
 	static HttpClient http;
 
 	void start_box_task(){
-		printf("Start Talk Task...");
+		printf("Start Box Task...");
 		// xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
 		xTaskCreatePinnedToCore(&box_task, "box_task", 4096, NULL, 6, NULL, 1);
 	}	
@@ -346,27 +346,64 @@ class BoxDisplay {
         lcd.setRotation(2);
 
         sprite.setColorDepth(8);
-        sprite.setFont(&fonts::Font4);
+        sprite.setFont(&fonts::Font2);
         sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
-        sprite.createSprite(lcd.width(), lcd.height()); 
+        sprite.createSprite(lcd.width(), lcd.height() * 2.5); 
 	
 		sprite.setCursor(0, 0);
-		sprite.print(HttpClient::new_message.c_str());
+		cJSON *message = NULL;
+		printf("Messages Length:%d",cJSON_GetArraySize(HttpClient::messages));
+
+		int messages_n = cJSON_GetArraySize(HttpClient::messages);
+		if (messages_n == 0){
+			sprite.print("No Message...");
+		} else {
+
+			cJSON_ArrayForEach(message, HttpClient::messages)
+			{		
+				int message_id = cJSON_GetObjectItem(message,"ID")->valuedouble;
+				printf("MESSAGE_ID:%d\n",message_id);
+
+				std::string message_from = cJSON_GetObjectItem(message,"MessageFrom")->valuestring;
+				printf("MESSAGE_FROM:%s\n",message_from.c_str());
+
+				std::string message_to = cJSON_GetObjectItem(message,"MessageTo")->valuestring;
+				printf("MESSAGE_TO:%s\n",message_to.c_str());
+
+				std::string message_s = cJSON_GetObjectItem(message,"Message")->valuestring;
+				printf("MESSAGE:%s\n",message_s.c_str());
+				
+				sprite.print((message_s+"\n").c_str());
+			}
+		}
+
 		sprite.pushSprite(&lcd, 0, 0);
 
 		// 通知を非表示
 		http.notif_flag = false;
 
+		int show_y = 0;
         while (true) {            
 			Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
 			Button::button_state_t back_button_state = back_button.get_button_state();
 
 			if (joystick_state.left or back_button_state.pushed) {
 				break;
+			} else if (joystick_state.up and messages_n){
+				show_y += 8;
+			} else if (joystick_state.down and messages_n){
+				show_y -= 8;
+			}
+
+			if (show_y < (lcd.height() * -1.5)){
+				show_y = (lcd.height() * -1.5);
+			} else if (show_y > 0){
+				show_y = 0;
 			}
                
             // チャタリング防止用に100msのsleep
             vTaskDelay(10 / portTICK_PERIOD_MS);
+			sprite.pushSprite(&lcd, 0, show_y);
 		}
 		
 		running_flag = false;
@@ -413,10 +450,6 @@ class Game {
         sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
         sprite.createSprite(lcd.width(), lcd.height()); 
 	
-		sprite.setCursor(0, 0);
-		sprite.print(HttpClient::new_message.c_str());
-		sprite.pushSprite(&lcd, 0, 0);
-
 		char letters[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 		srand(esp_timer_get_time());
@@ -734,7 +767,7 @@ class MenuDisplay {
 			
 			// 15秒操作がなければsleep
 			int free_time = (esp_timer_get_time() - ft) / 1000000;
-			if (free_time >= 15){	
+			if (free_time >= 30){	
 				printf("free_time:%d\n", free_time);
 				sprite.fillRect(0, 0, 128, 64, 0);
 				sprite.pushSprite(&lcd, 0, 0);

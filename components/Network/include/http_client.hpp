@@ -31,7 +31,6 @@
 #include "esp_netif.h"
 #include "protocol_examples_common.h"
 #include "esp_tls.h"
-#include "cJSON.h"
 
 #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
 #include "esp_crt_bundle.h"
@@ -41,9 +40,9 @@
 /* Constants that aren't configurable in menuconfig */
 // #define WEB_SERVER "mimoc.tech"
 
-#define USER_NAME "mimoc"
-#define TO_USER_NAME "mu"
-#define TOKEN "1234"
+#define USER_NAME "mu"
+#define TO_USER_NAME "mimoc"
+#define TOKEN "4321"
 
 // #define WEB_SERVER "mimoc.tech"
 #define WEB_SERVER "192.168.10.122"
@@ -314,9 +313,9 @@ static void http_post_task(void *pvParameters)
 class HttpClient {
 	
 	public:
-		static std::string new_message;
 		static int new_message_id;
 		static bool notif_flag;
+		static cJSON *messages;
 	
 		void post_message(std::string message = ""){
 			xTaskCreate(&http_post_native_task, "http_post_native_task", 4096, &message, 5, NULL);
@@ -399,7 +398,6 @@ class HttpClient {
 				vTaskDelay(5000 / portTICK_PERIOD_MS);
 
 				printf("NEW_MESSAGE_ID:%d\n",new_message_id);
-				printf("NEW_MESSAGE:%s\n",new_message.c_str());
 				
 				std::string message_id = std::to_string(new_message_id);
 				
@@ -433,37 +431,39 @@ class HttpClient {
 				}
 				
 				cJSON *root = cJSON_Parse(output_buffer);
+				cJSON *messages_tmp = NULL;
 				cJSON *message = NULL;
-				cJSON *messages = NULL;
+
 				if (root == NULL){
 					printf("No New Arrivals Message: Json is null");
 					continue;
 				}
-
-				messages = cJSON_GetObjectItemCaseSensitive(root, "messages");
+				
+				messages_tmp = cJSON_GetObjectItemCaseSensitive(root, "messages");
+				
+				if (cJSON_GetArraySize(messages_tmp) == 0){
+					continue;
+				}
+				
+				messages = messages_tmp;
 				cJSON_ArrayForEach(message, messages)
 				{		
 					int message_id = cJSON_GetObjectItem(message,"ID")->valuedouble;
-					printf("MESSAGE_ID:%d\n",message_id);
+					// printf("MESSAGE_ID:%d\n",message_id);
 
-					std::string message_from = cJSON_GetObjectItem(message,"MessageFrom")->valuestring;
-					printf("MESSAGE_FROM:%s\n",message_from.c_str());
+					// std::string message_from = cJSON_GetObjectItem(message,"MessageFrom")->valuestring;
+					// printf("MESSAGE_FROM:%s\n",message_from.c_str());
 
-					std::string message_to = cJSON_GetObjectItem(message,"MessageTo")->valuestring;
-					printf("MESSAGE_TO:%s\n",message_to.c_str());
+					// std::string message_to = cJSON_GetObjectItem(message,"MessageTo")->valuestring;
+					// printf("MESSAGE_TO:%s\n",message_to.c_str());
 
-					std::string message_s = cJSON_GetObjectItem(message,"Message")->valuestring;
-					printf("MESSAGE:%s\n",message_s.c_str());
+					// std::string message_s = cJSON_GetObjectItem(message,"Message")->valuestring;
+					// printf("MESSAGE:%s\n",message_s.c_str());
 
 					if (message_id > new_message_id){
-						new_message = message_s;
 						new_message_id = message_id;
+						notif_flag = true;
 					}
-
-				}
-
-				if (cJSON_GetArraySize(messages)){
-					notif_flag = true;
 				}
 								
 			}
@@ -473,7 +473,7 @@ class HttpClient {
 		}
 };
 
-std::string HttpClient::new_message = "";
 int HttpClient::new_message_id = 50;
+cJSON* HttpClient::messages = NULL;
 bool HttpClient::notif_flag = false;
 

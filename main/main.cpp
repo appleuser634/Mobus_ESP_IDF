@@ -11,6 +11,7 @@
 #include "sdkconfig.h"
 #include "esp_sleep.h"
 #include "driver/rtc_io.h"
+#include "cJSON.h"
 
 static const char *TAG = "mobus cllient";
 
@@ -25,7 +26,6 @@ static const char *TAG = "mobus cllient";
 #include <notification.hpp>
 
 #include <wifi.hpp>
-
 
 // #include <ota.hpp>
 
