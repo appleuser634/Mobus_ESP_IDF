@@ -24,9 +24,9 @@ static const char *TAG = "mobus cllient";
 #include <oled.hpp>
 
 #include <notification.hpp>
-
 #include <wifi.hpp>
 
+// #include <provisioning.h>
 // #include <ota.hpp>
 
 
@@ -60,7 +60,11 @@ void app_main(void) {
 		oled.BootDisplay();
 		vTaskDelay(2000 / portTICK_PERIOD_MS);
 	}
+
     
+	// Provisioning provisioning;
+	// provisioning.main();
+
 	const gpio_num_t ext_wakeup_pin_0 = GPIO_NUM_4;
 
     printf("Enabling EXT0 wakeup on pin GPIO%d\n", ext_wakeup_pin_0);

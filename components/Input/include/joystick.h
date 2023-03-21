@@ -22,6 +22,8 @@ class Joystick {
         bool pushed_right_edge;
         uint32_t C6_voltage;
         uint32_t C7_voltage;
+        long long int release_start_sec;    // release second
+        long long int release_sec;    // release second
     } joystick_state_t;
     
     esp_adc_cal_characteristics_t adcChar;
@@ -111,6 +113,16 @@ class Joystick {
             joystick_state.right = false;
         }
 
+		if (joystick_state.left or joystick_state.right or joystick_state.up or joystick_state.down) {	
+            joystick_state.release_start_sec = esp_timer_get_time();
+		} else {	
+            joystick_state.release_sec = esp_timer_get_time() - joystick_state.release_start_sec;
+		}
+
         return joystick_state;
     }
+
+	void reset_timer() {
+        joystick_state.release_start_sec = esp_timer_get_time();
+	}
 };

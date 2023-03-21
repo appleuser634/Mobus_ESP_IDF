@@ -177,7 +177,7 @@ class TalkDisplay {
             }
 
             // printf("Release time:%lld\n",button_state.release_sec);
-            if (type_button_state.release_sec > 8){
+            if (type_button_state.release_sec > 200000){
                 // printf("Release time:%lld\n",button_state.release_sec);
 
                 if (morse_code.count(morse_text)) {
@@ -508,7 +508,7 @@ class Game {
 				}
 
 				// printf("Release time:%lld\n",button_state.release_sec);
-				if (type_button_state.release_sec > 8){
+				if (type_button_state.release_sec > 200000){
 					// printf("Release time:%lld\n",button_state.release_sec);
 
 					if (morse_code.count(morse_text)) {
@@ -721,7 +721,6 @@ class MenuDisplay {
 			char menu_name[NAME_LENGTH_MAX];
 			int display_position_x;
 			int display_position_y;
-			// void (* func)();
 		};
 
 		struct menu_t menu_list[3] = {
@@ -731,10 +730,7 @@ class MenuDisplay {
 		};
 
 		int cursor_index = 0;
-
-        // lcd.init();
-        // lcd.setRotation(0);
-        
+ 
         Joystick joystick;
         joystick.setup();
 		
@@ -746,9 +742,6 @@ class MenuDisplay {
         Button type_button(GPIO_NUM_4);
         Button enter_button(GPIO_NUM_26);
 
-        // 画面が横長になるように回転
-        // if (lcd.width() < lcd.height()) lcd.setRotation(lcd.getRotation() ^ 2);
-
         lcd.setRotation(2);
 
         sprite.setColorDepth(8);
@@ -758,22 +751,11 @@ class MenuDisplay {
         
 		// 開始時間を取得 st=start_time	
 		long long int st = esp_timer_get_time();
-		// sleep判定用の時間を取得 ft=free_time
-		long long int ft = esp_timer_get_time();
 		// 電波強度の初期値
 		float radioLevel = 4;
 
         while (1) {
 			
-			// 15秒操作がなければsleep
-			int free_time = (esp_timer_get_time() - ft) / 1000000;
-			if (free_time >= 30){	
-				printf("free_time:%d\n", free_time);
-				sprite.fillRect(0, 0, 128, 64, 0);
-				sprite.pushSprite(&lcd, 0, 0);
-				esp_deep_sleep_start();
-			}
-
 			// 画面上部のステータス表示
 			sprite.drawFastHLine( 0, 12, 128, 0xFFFF); 
 	
@@ -782,7 +764,6 @@ class MenuDisplay {
 			int ry = 6;
 			int rh = 4;
 			for (int r = radioLevel; 0 < r; r--){
-
 				sprite.fillRect( rx, ry, 2, rh, 0xFFFF);
 				rx += 3;
 				ry -= 2;
@@ -853,7 +834,6 @@ class MenuDisplay {
 						vTaskDelay(100 / portTICK_PERIOD_MS);
 					}
 					sprite.setFont(&fonts::Font4);
-					ft = esp_timer_get_time();
 				} else if (cursor_index == 1){
 					box.running_flag = true;
 					box.start_box_task();	
@@ -862,7 +842,6 @@ class MenuDisplay {
 						vTaskDelay(100 / portTICK_PERIOD_MS);
 					}
 					sprite.setFont(&fonts::Font4);
-					ft = esp_timer_get_time();
 				} else if (cursor_index == 2){
 					game.running_flag = true;
 					game.start_game_task();	
@@ -871,10 +850,12 @@ class MenuDisplay {
 						vTaskDelay(100 / portTICK_PERIOD_MS);
 					}
 					sprite.setFont(&fonts::Font4);
-					ft = esp_timer_get_time();
 				}
 
                 type_button.clear_button_state();
+
+				type_button.reset_timer();
+				joystick.reset_timer();
             }
 
             if (joystick_state.pushed_left_edge){
@@ -894,6 +875,18 @@ class MenuDisplay {
             sprite.fillRect(0, 0, 128, 64, 0);
 
 			esp_task_wdt_reset();
+			
+			// 30秒操作がなければsleep
+			int button_free_time = type_button_state.release_sec / 1000000;
+			int joystick_free_time = joystick_state.release_sec / 1000000;
+			if (button_free_time >= 30 and joystick_free_time >= 30){
+				printf("button_free_time:%d\n", button_free_time);
+				printf("joystick_free_time:%d\n", joystick_free_time);
+				sprite.fillRect(0, 0, 128, 64, 0);
+				sprite.pushSprite(&lcd, 0, 0);
+				esp_deep_sleep_start();
+			}
+
         }
 		
 		vTaskDelete(NULL);

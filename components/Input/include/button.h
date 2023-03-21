@@ -45,6 +45,7 @@ class Button {
         char push_type; // long or short
         long long int push_start_sec; // push start second
         long long int pushing_sec;    // pushing second
+        long long int release_start_sec;    // release second
         long long int release_sec;    // release second
     } button_state_t;
  
@@ -74,10 +75,10 @@ class Button {
         }
 
         if (button_state.pushing == false){
-            button_state.release_sec += 1;
+            button_state.release_sec = esp_timer_get_time() - button_state.release_start_sec;
         }
         else {
-            button_state.release_sec = 0;
+            button_state.release_start_sec = esp_timer_get_time();
         }
         return button_state;
     }
@@ -96,6 +97,7 @@ class Button {
         button_state.pushing_sec = 0;
     }
 
-    // void setup(){
-    // }
+    void reset_timer() {
+        button_state.release_start_sec = esp_timer_get_time();
+	}
 };
