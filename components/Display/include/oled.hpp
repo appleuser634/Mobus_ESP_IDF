@@ -566,17 +566,21 @@ class Game {
 
 				sprite.fillRect(0, 0, 128, 64, 0);
 
-
 				sprite.setFont(&fonts::Font2);
-				sprite.setCursor(85,0);
+				sprite.setCursor(88,0);
 				sprite.print(nPerC.c_str());
 				
-				sprite.setFont(&fonts::Font4);
-				sprite.setCursor(50,32);
+				//sprite.setFont(&fonts::Font4);
+				sprite.setFont(&fonts::FreeMono12pt7b);
+				sprite.setCursor(50,36);
 				sprite.print(display_text.c_str());
 
-				sprite.setCursor(50,0);
+				sprite.setCursor(50,5);
 				sprite.print(random_char);
+				
+				sprite.drawFastHLine( 0, 16, 43, 0xFFFF); 
+				sprite.drawFastHLine( 75, 16, 128, 0xFFFF); 
+				sprite.drawRect(46, 2, 26, 26, 0xFFFF);
 
 				sprite.pushSprite(&lcd, 0, 0);
 

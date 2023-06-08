@@ -45,10 +45,10 @@
 #define TOKEN "4321"
 
 // #define WEB_SERVER "mimoc.tech"
-#define WEB_SERVER "192.168.10.122"
+#define WEB_SERVER "192.168.10.108"
 // #define WEB_SERVER "raspberrypi.local"
 
-#define WEB_PORT "3000"
+#define WEB_PORT "3001"
 #define WEB_PATH "/getUserName"
 
 #define MAX_HTTP_RECV_BUFFER 512
