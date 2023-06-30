@@ -27,7 +27,7 @@ class Joystick {
     } joystick_state_t;
     
     esp_adc_cal_characteristics_t adcChar;
-    joystick_state_t joystick_state = {false, false, false, false, false, false, false, false,  false, false, false, false, 0, 0};
+    joystick_state_t joystick_state = {false, false, false, false, false, false, false, false, false, false, false, false, 0, 0, 0, 0};
  
     void setup(){
         printf("Setup Joystick.... ");
