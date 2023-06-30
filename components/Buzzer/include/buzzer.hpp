@@ -4,8 +4,8 @@
 #include "driver/ledc.h"
 #include "esp_err.h"
 
-#define LEDC_GPIO       18
-#define LEDC_DUTY       128
+#define BUZZER_GPIO       18
+#define BUZZER_DUTY       128
 
 class Buzzer {
 
@@ -26,7 +26,7 @@ class Buzzer {
 		ledc_timer_config(&ledc_timer);
 
 		ledc_channel_config_t ledc_channel = {
-				.gpio_num   = LEDC_GPIO,
+				.gpio_num   = BUZZER_GPIO,
 				.speed_mode = LEDC_HIGH_SPEED_MODE
 				// .channel    = 0,
 				// .duty       = 0,
@@ -34,7 +34,7 @@ class Buzzer {
 		ledc_channel_config(&ledc_channel);
 	}
 
-	void ring_sound(u_int32_t freq, int time, int duty=LEDC_DUTY)
+	void ring_sound(u_int32_t freq, int time, int duty=BUZZER_DUTY)
 	{
 		ledc_timer_config_t ledc_timer = {
 			.duty_resolution = LEDC_TIMER_8_BIT, // resolution of PWM duty
@@ -44,14 +44,14 @@ class Buzzer {
 		ledc_timer_config(&ledc_timer);
 
 		ledc_channel_config_t ledc_channel = {
-				.gpio_num   = LEDC_GPIO,
+				.gpio_num   = BUZZER_GPIO,
 				.speed_mode = LEDC_HIGH_SPEED_MODE
 				// .channel    = 0,
 				// .duty       = 0,
 		};
 		ledc_channel_config(&ledc_channel);
 
-		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, LEDC_DUTY);
+		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, BUZZER_DUTY);
 		ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 		vTaskDelay(time / portTICK_PERIOD_MS);
 	}
@@ -66,7 +66,7 @@ class Buzzer {
 		ledc_timer_config(&ledc_timer);
 
 		ledc_channel_config_t ledc_channel = {
-				.gpio_num   = LEDC_GPIO,
+				.gpio_num   = BUZZER_GPIO,
 				.speed_mode = LEDC_HIGH_SPEED_MODE
 				// .channel    = 0,
 				// .duty       = 0,
@@ -74,7 +74,7 @@ class Buzzer {
 		ledc_channel_config(&ledc_channel);
 
 		// 指定の周波数でPWM
-		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, LEDC_DUTY);
+		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, BUZZER_DUTY);
 		ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 	}
 	
@@ -87,7 +87,7 @@ class Buzzer {
 		ledc_timer_config(&ledc_timer);
 
 		ledc_channel_config_t ledc_channel = {
-				.gpio_num   = LEDC_GPIO,
+				.gpio_num   = BUZZER_GPIO,
 				.speed_mode = LEDC_HIGH_SPEED_MODE
 				// .channel    = 0,
 				// .duty       = 0,
@@ -113,14 +113,14 @@ class Buzzer {
 		ledc_timer_config(&ledc_timer);
 
 		ledc_channel_config_t ledc_channel = {
-				.gpio_num   = LEDC_GPIO,
+				.gpio_num   = BUZZER_GPIO,
 				.speed_mode = LEDC_HIGH_SPEED_MODE
 				// .channel    = 0,
 				// .duty       = 0,
 		};
 		ledc_channel_config(&ledc_channel);
 
-		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, LEDC_DUTY);
+		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, BUZZER_DUTY);
 		ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 		vTaskDelay(100 / portTICK_PERIOD_MS);
 
@@ -128,7 +128,7 @@ class Buzzer {
 		ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 		vTaskDelay(50 / portTICK_PERIOD_MS);
 		
-		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, LEDC_DUTY);
+		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, BUZZER_DUTY);
 		ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 		vTaskDelay(100 / portTICK_PERIOD_MS);
 		
@@ -147,7 +147,7 @@ class Buzzer {
 			ledc_timer_config(&ledc_timer);
 
 			ledc_channel_config_t ledc_channel = {
-					.gpio_num   = LEDC_GPIO,
+					.gpio_num   = BUZZER_GPIO,
 					.speed_mode = LEDC_HIGH_SPEED_MODE
 					// .channel    = 0,
 					// .duty       = 0,
@@ -188,14 +188,14 @@ class Buzzer {
 		ledc_timer_config(&ledc_timer);
 
 		ledc_channel_config_t ledc_channel = {
-				.gpio_num   = LEDC_GPIO,
+				.gpio_num   = BUZZER_GPIO,
 				.speed_mode = LEDC_HIGH_SPEED_MODE
 				// .channel    = 0,
 				// .duty       = 0,
 		};
 		ledc_channel_config(&ledc_channel);
 
-		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, LEDC_DUTY);
+		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, BUZZER_DUTY);
 		ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 		vTaskDelay(100 / portTICK_PERIOD_MS);
 
@@ -203,7 +203,7 @@ class Buzzer {
 		ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 		vTaskDelay(50 / portTICK_PERIOD_MS);
 		
-		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, LEDC_DUTY);
+		ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, BUZZER_DUTY);
 		ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 		vTaskDelay(100 / portTICK_PERIOD_MS);
 		
