@@ -459,6 +459,8 @@ class MessageMenue {
 			{"Chibi",4}
 		};
 
+		int select_y = 0;
+
 		while (1) {
 
 			// Joystickの状態を取得
@@ -477,17 +479,31 @@ class MessageMenue {
 			int cur_y_offset = 13;
 			for (int i = length; i >= 0; i--){
 				sprite.setCursor(10, cur_y_offset * i);
+				if (i == select_y) {
+  				lcd.setColor(0x000000u);
+				} else {
+  				lcd.setColor(0xFFFFFFu);
+				}
 				sprite.print(contacts[i].name);
-			}	
+			}		
 
-			sprite.pushSprite(&lcd, 0, 0);
-			vTaskDelay(100 / portTICK_PERIOD_MS);
+			if (joystick_state.pushed_up_edge) {
+				select_y -= 13;
+			} 
+			else if (joystick_state.pushed_down_edge) {
+				select_y += 13;
+			}
+
+			sprite.fillRect( 0, select_y, 128, 13, 0xFFFF);
 
 			// ジョイスティック左を押されたらメニューへ戻る
 			// 戻るボタンを押されたらメニューへ戻る
 			if (joystick_state.left || back_button_state.pushed) {
 				break;
 			}
+			
+			sprite.pushSprite(&lcd, 0, 0);
+			vTaskDelay(100 / portTICK_PERIOD_MS);
 
 		}	
 		
