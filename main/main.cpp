@@ -28,7 +28,7 @@ static const char *TAG = "mobus cllient";
 #include <wifi.hpp>
 
 // #include <provisioning.h>
-// #include <ota.hpp>
+#include <ota.hpp>
 
 
 extern "C" {    
@@ -41,7 +41,6 @@ void app_main(void) {
 
 	Oled oled;
     MenuDisplay menu;
-    // TalkDisplay talk;
 			
 	esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
 	if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0){
@@ -80,6 +79,10 @@ void app_main(void) {
 
     WiFi wifi;
     wifi.main();
+
+    Ota ota;
+    // Start ota task.
+    ota.main();
  
     // FIXME
     for (int i = 0; i <= 10; i++) {

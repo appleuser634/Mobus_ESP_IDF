@@ -11,20 +11,8 @@
 #include "lwip/err.h"
 #include "lwip/sys.h"
 
-// #define EXAMPLE_ESP_WIFI_SSID      "elecom-3e6943_24"
-// #define EXAMPLE_ESP_WIFI_PASS      "7ku65wjwx8fv"
-
-#define EXAMPLE_ESP_WIFI_SSID      "aterm-ed83de-g"
-#define EXAMPLE_ESP_WIFI_PASS      "460f07c12aedd"
-
-// #define EXAMPLE_ESP_WIFI_SSID      "kaneyan.diner01"
-// #define EXAMPLE_ESP_WIFI_PASS      "kaneyan222"
-
-// #define EXAMPLE_ESP_WIFI_SSID      "elecom-3027cf"
-// #define EXAMPLE_ESP_WIFI_PASS      "fvj9r2ki43ku"
-
-// #define EXAMPLE_ESP_WIFI_SSID      "Buffalo-G-0840"
-// #define EXAMPLE_ESP_WIFI_PASS      "g4yf4swm6iaa4"
+#define EXAMPLE_ESP_WIFI_SSID      "elecom-3e6943_24"
+#define EXAMPLE_ESP_WIFI_PASS      "7ku65wjwx8fv"
 
 #define EXAMPLE_ESP_MAXIMUM_RETRY  10
 
