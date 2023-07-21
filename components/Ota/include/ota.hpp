@@ -38,7 +38,7 @@ void simple_ota_example_task(void *pvParameter)
 
     esp_http_client_config_t config = {
         .url = CONFIG_EXAMPLE_FIRMWARE_UPGRADE_URL,
-        // .cert_pem = (char *)server_cert_pem_start,
+        .cert_pem = (char *)server_cert_pem_start,
         .event_handler = _http_event_handler,
         .keep_alive_enable = true,
     };
