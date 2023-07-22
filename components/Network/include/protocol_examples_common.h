@@ -1,4 +1,5 @@
-/* Common functions for protocol examples, to establish Wi-Fi or Ethernet connection.
+/* Common functions for protocol examples, to establish Wi-Fi or Ethernet
+   connection.
 
    This example code is in the Public Domain (or CC0 licensed, at your option.)
 
@@ -9,9 +10,9 @@
 
 #pragma once
 
-#include "sdkconfig.h"
 #include "esp_err.h"
 #include "esp_netif.h"
+#include "sdkconfig.h"
 #if CONFIG_EXAMPLE_CONNECT_ETHERNET
 #include "esp_eth.h"
 #endif
@@ -28,7 +29,8 @@ extern "C" {
 #define EXAMPLE_NETIF_DESC_ETH "example_netif_eth"
 #endif
 
-/* Example default interface, prefer the ethernet one if running in example-test (CI) configuration */
+/* Example default interface, prefer the ethernet one if running in example-test
+ * (CI) configuration */
 #if CONFIG_EXAMPLE_CONNECT_ETHERNET
 #define EXAMPLE_INTERFACE get_example_netif_from_desc(EXAMPLE_NETIF_DESC_ETH)
 #define get_example_netif() get_example_netif_from_desc(EXAMPLE_NETIF_DESC_ETH)

@@ -1,3 +1,3 @@
 #! /bin/bash
 
-clang-format -i -style="{BasedOnStyle: Google, IndentWidth: 4}" ./main/main.cpp
+find components -iname "*.h*" -o -iname "*.c*"  | xargs clang-format -i
