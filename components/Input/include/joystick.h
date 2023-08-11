@@ -20,8 +20,8 @@ class Joystick {
         bool pushed_down_edge;
         bool pushed_left_edge;
         bool pushed_right_edge;
-        uint32_t C6_voltage;
-        uint32_t C7_voltage;
+        uint32_t x_voltage;
+        uint32_t y_voltage;
         long long int release_start_sec;    // release second
         long long int release_sec;    // release second
     } joystick_state_t;
@@ -58,8 +58,8 @@ class Joystick {
 
     joystick_state_t get_joystick_state() {
         
-        joystick_state.C6_voltage = get_joystick_value(ADC_CHANNEL_6);
-        joystick_state.C7_voltage = get_joystick_value(ADC_CHANNEL_7);
+        joystick_state.x_voltage = get_joystick_value(ADC_CHANNEL_7);
+        joystick_state.y_voltage = get_joystick_value(ADC_CHANNEL_6);
 
         joystick_state.pushed_up = false;
         joystick_state.pushed_down = false;
@@ -71,12 +71,12 @@ class Joystick {
         joystick_state.pushed_left_edge = false;
         joystick_state.pushed_right_edge = false;
         
-        if (joystick_state.C6_voltage <= 700){
+        if (joystick_state.x_voltage <= 700){
 			if (not joystick_state.down) {
 				joystick_state.pushed_down_edge = true;
 			}
             joystick_state.down = true;
-        } else if (joystick_state.C6_voltage >= 3000){
+        } else if (joystick_state.x_voltage >= 3000){
 			if (not joystick_state.up) {
 				joystick_state.pushed_up_edge = true;
 			}
@@ -92,12 +92,12 @@ class Joystick {
             joystick_state.down = false;
         }
         
-        if (joystick_state.C7_voltage >= 3000){
+        if (joystick_state.y_voltage >= 3000){
 			if (not joystick_state.left) {
 				joystick_state.pushed_left_edge = true;
 			}
             joystick_state.left = true;
-        } else if (joystick_state.C7_voltage <= 700){
+        } else if (joystick_state.y_voltage <= 700){
 			if (not joystick_state.right) {
 				joystick_state.pushed_right_edge = true;
 			}

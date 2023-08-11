@@ -142,8 +142,6 @@ class TalkDisplay {
         while (true) {
         
             Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
-            //printf("C6_Voltage:%d\n",joystick_state.C6_voltage);
-            //printf("C7_Voltage:%d\n",joystick_state.C7_voltage);
             //printf("UP:%s\n", joystick_state.up ? "true" : "false");
             //printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
             //printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
@@ -923,8 +921,6 @@ class MenuDisplay {
             
 
         Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
-        // printf("C6_Voltage:%d\n",joystick_state.C6_voltage);
-        // printf("C7_Voltage:%d\n",joystick_state.C7_voltage);
         // printf("UP:%s\n", joystick_state.up ? "true" : "false");
         // printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
         // printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
