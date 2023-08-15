@@ -911,12 +911,17 @@ class MenuDisplay {
         	
 			// Menu項目を表示させる
 			int menu_lists_n = sizeof(menu_list) / sizeof(menu_t);
-			for (int i = 0; i <= menu_lists_n; i++){ 
-				// sprite.setCursor(menu_list[i].display_position_x,menu_list[i].display_position_y);
-				// sprite.print(menu_list[i].menu_name);  // 1バイトずつ出力
+			for (int i = 0; i <= menu_lists_n; i++){
 				
-				sprite.drawBitmap(menu_list[i].display_position_x, menu_list[i].display_position_y, mail, 32, 32, TFT_WHITE, TFT_BLACK);
-				// sprite.pushSprite(&lcd, 0, 0);
+				const unsigned char* icon_image = mail_icon;
+
+				if (i == 1) {
+					icon_image = setting_icon;
+				}
+				else if (i == 2) {
+					icon_image = game_icon;
+				}
+				sprite.drawBitmap(menu_list[i].display_position_x, menu_list[i].display_position_y, icon_image, 32, 32, TFT_WHITE, TFT_BLACK);	
 			}
             
 
