@@ -428,8 +428,8 @@ class MessageMenue {
     lcd.init();
     lcd.setRotation(0);
 
-		Buzzer buzzer;
-		Led led;
+    Buzzer buzzer;
+    Led led;
         
     Joystick joystick;
     joystick.setup();
@@ -445,68 +445,103 @@ class MessageMenue {
     sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
     sprite.createSprite(lcd.width(), lcd.height()); 
 
-		typedef struct {
-			char name[255];
-			int user_id;
-		} contact_t;
+    typedef struct {
+        char name[255];
+        int user_id;
+    } contact_t;
 
-		contact_t contacts[4] = {
-			{"Musashi",1},
-			{"Hazuki",2},
-			{"Kiki",3},
-			{"Chibi",4}
-		};
+    contact_t contacts[4] = {
+        {"Musashi",1},
+        {"Hazuki",2},
+        {"Kiki",3},
+        {"Chibi",4}
+    };
 
-		int select_y = 0;
+    int select_y = 0;
+    int select_index = 0;
 
-		while (1) {
+    while (1) {
 
-			// Joystickの状態を取得
-			Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+        // Joystickの状態を取得
+        Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
 
-			// スイッチの状態を取得
-			Button::button_state_t type_button_state = type_button.get_button_state();			
-			Button::button_state_t back_button_state = back_button.get_button_state();
-			Button::button_state_t enter_button_state = enter_button.get_button_state();
-			
-			sprite.fillRect(0, 0, 128, 64, 0);
-			
-			sprite.setFont(&fonts::Font2);
+        // スイッチの状態を取得
+        Button::button_state_t type_button_state = type_button.get_button_state();			
+        Button::button_state_t back_button_state = back_button.get_button_state();
+        Button::button_state_t enter_button_state = enter_button.get_button_state();
+        
+        sprite.fillRect(0, 0, 128, 64, 0);
+        
+        sprite.setFont(&fonts::Font2);
 
-			int length = sizeof(contacts) / sizeof(contact_t) - 1;
-			int cur_y_offset = 13;
-			for (int i = length; i >= 0; i--){
-				sprite.setCursor(10, cur_y_offset * i);
-				if (i == select_y) {
-  				lcd.setColor(0x000000u);
-				} else {
-  				lcd.setColor(0xFFFFFFu);
-				}
-				sprite.print(contacts[i].name);
-			}		
+        int contacts_length = sizeof(contacts) / sizeof(contact_t) - 1;
+        int cur_y_offset = 13;
 
-			if (joystick_state.pushed_up_edge) {
-				select_y -= 13;
-			} 
-			else if (joystick_state.pushed_down_edge) {
-				select_y += 13;
-			}
+        // 選択している連絡先を矩形で囲む
+        sprite.fillRect( 0, select_y, 128, cur_y_offset, 0xFFFF);
 
-			sprite.fillRect( 0, select_y, 128, 13, 0xFFFF);
+        for (int i = contacts_length; i >= 0; i--){
+            sprite.setCursor(10, cur_y_offset * i);
 
-			// ジョイスティック左を押されたらメニューへ戻る
-			// 戻るボタンを押されたらメニューへ戻る
-			if (joystick_state.left || back_button_state.pushed) {
-				break;
-			}
-			
-			sprite.pushSprite(&lcd, 0, 0);
-			vTaskDelay(100 / portTICK_PERIOD_MS);
+            if (i == select_index) {
+            sprite.setTextColor(0x000000u);
+            } else {
+            sprite.setTextColor(0xFFFFFFu);
+            }
+            sprite.print(contacts[i].name);
+        }		
 
-		}	
-		
-		running_flag = false;
-		vTaskDelete(NULL);
+        if (joystick_state.pushed_up_edge) {
+            select_index -= 1;
+        } 
+        else if (joystick_state.pushed_down_edge) {
+            select_index += 1;
+        }
+
+        select_y = select_index * cur_y_offset;
+
+
+        if (type_button_state.pushed) {
+            while (1) {
+                sprite.fillRect(0, 0, 128, 64, 0);
+                
+                sprite.setCursor(0, 0);
+                sprite.setTextColor(0xFFFFFFu);
+
+                // header
+                sprite.print(contacts[select_index].name);
+                sprite.drawFastHLine( 0, 13, 128, 0xFFFF); 
+
+                // Joystickの状態を取得
+                Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+
+                // スイッチの状態を取得
+                Button::button_state_t type_button_state = type_button.get_button_state();			
+                Button::button_state_t back_button_state = back_button.get_button_state();
+                Button::button_state_t enter_button_state = enter_button.get_button_state(); 
+
+                if (back_button_state.pushed) {
+                    break;
+                }
+
+                sprite.pushSprite(&lcd, 0, 0);
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+            }
+        }
+
+        // ジョイスティック左を押されたらメニューへ戻る
+        // 戻るボタンを押されたらメニューへ戻る
+        if (joystick_state.left || back_button_state.pushed) {
+            break;
+        }
+        
+        sprite.pushSprite(&lcd, 0, 0);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+
+    running_flag = false;
+    vTaskDelete(NULL);
+
     };
 };
 bool MessageMenue::running_flag = false;
@@ -814,31 +849,31 @@ class MenuDisplay {
     
     static void menu_task(void *pvParameters) {
 
-		struct menu_t {
-			char menu_name[NAME_LENGTH_MAX];
-			int display_position_x;
-			int display_position_y;
-		};
+    struct menu_t {
+        char menu_name[NAME_LENGTH_MAX];
+        int display_position_x;
+        int display_position_y;
+    };
 
-		struct menu_t menu_list[3] = {
-			{"Talk",9,22},
-			{"Box",51,22},
-			{"Game",93,22}
-		};
+    struct menu_t menu_list[3] = {
+        {"Talk",9,22},
+        {"Box",51,22},
+        {"Game",93,22}
+    };
 
-		int cursor_index = 0;
+    int cursor_index = 0;
  
     Joystick joystick;
     joystick.setup();
 
-		PowerMonitor power;
-		power.setup();
+    PowerMonitor power;
+    power.setup();
 
-		// メニューから遷移する機能のインスタンス
-		TalkDisplay talk;
-		BoxDisplay box;
-		Game game;
-		MessageMenue messageMenue;
+    // メニューから遷移する機能のインスタンス
+    TalkDisplay talk;
+    BoxDisplay box;
+    Game game;
+    MessageMenue messageMenue;
 
   	Button type_button(GPIO_NUM_4);
   	Button enter_button(GPIO_NUM_26);
@@ -849,80 +884,80 @@ class MenuDisplay {
   	sprite.setFont(&fonts::Font4);
   	sprite.setTextWrap(false);  // 右端到達時のカーソル折り返しを禁止
   	sprite.createSprite(lcd.width(), lcd.height());
-        
-		// 開始時間を取得 st=start_time	
-		long long int st = esp_timer_get_time();
-		// 電波強度の初期値
-		float radioLevel = 4;
+            
+    // 開始時間を取得 st=start_time	
+    long long int st = esp_timer_get_time();
+    // 電波強度の初期値
+    float radioLevel = 4;
 
     while (1) {
 			
-			// 画面上部のステータス表示
-			sprite.drawFastHLine( 0, 12, 128, 0xFFFF); 
-	
-			// 電波状況表示
-			int rx = 4;
-			int ry = 6;
-			int rh = 4;
-			for (int r = radioLevel; 0 < r; r--){
-				sprite.fillRect( rx, ry, 2, rh, 0xFFFF);
-				rx += 3;
-				ry -= 2;
-				rh += 2;
-			}
-			
-			// 経過時間を取得
-			int p_time = (esp_timer_get_time() - st) / 1000000;
-			if (p_time > 10){
-				
-				// 電波強度を更新
-				wifi_ap_record_t ap;
-				esp_wifi_sta_get_ap_info(&ap);
-				printf("%d\n", ap.rssi);
-				
-				radioLevel = 4 - (ap.rssi / -20);
-				if (radioLevel < 1){
-					radioLevel = 1;
-				}
-				st = esp_timer_get_time();
-			}
+        // 画面上部のステータス表示
+        sprite.drawFastHLine( 0, 12, 128, 0xFFFF); 
 
-			// メッセージ受信通知の表示
-			if (http.notif_flag) {
-				sprite.drawRoundRect(50, 0, 20, 8, 2, 0xFFFF);
-			}
+        // 電波状況表示
+        int rx = 4;
+        int ry = 6;
+        int rh = 4;
+        for (int r = radioLevel; 0 < r; r--){
+            sprite.fillRect( rx, ry, 2, rh, 0xFFFF);
+            rx += 3;
+            ry -= 2;
+            rh += 2;
+        }
+        
+        // 経過時間を取得
+        int p_time = (esp_timer_get_time() - st) / 1000000;
+        if (p_time > 10){
+            
+            // 電波強度を更新
+            wifi_ap_record_t ap;
+            esp_wifi_sta_get_ap_info(&ap);
+            printf("%d\n", ap.rssi);
+            
+            radioLevel = 4 - (ap.rssi / -20);
+            if (radioLevel < 1){
+                radioLevel = 1;
+            }
+            st = esp_timer_get_time();
+        }
 
-      PowerMonitor::power_state_t power_state = power.get_power_state();
-      printf("Power Voltage:%d\n",power_state.power_voltage);
+        // メッセージ受信通知の表示
+        if (http.notif_flag) {
+            sprite.drawRoundRect(50, 0, 20, 8, 2, 0xFFFF);
+        }
 
-			float power_per = power_state.power_voltage / 25.5;
-			int power_per_pix = (int)(0.14 * power_per);
+        PowerMonitor::power_state_t power_state = power.get_power_state();
+        printf("Power Voltage:%d\n",power_state.power_voltage);
+
+		float power_per = power_state.power_voltage / 25.5;
+		int power_per_pix = (int)(0.14 * power_per);
       
-      printf("Power Per:%d\n",power_per_pix);
+        printf("Power Per:%d\n",power_per_pix);
 
-			// 電池残量表示
-			sprite.drawRoundRect(110, 0, 14, 8, 2, 0xFFFF);
-			sprite.fillRect( 111, 0, power_per_pix, 8, 0xFFFF);
+        // 電池残量表示
+        sprite.drawRoundRect(110, 0, 14, 8, 2, 0xFFFF);
+        sprite.fillRect( 111, 0, power_per_pix, 8, 0xFFFF);
 
-			sprite.fillRect( 124, 2, 1, 4, 0xFFFF);
-      
-			// Menu選択の表示
-			sprite.fillRoundRect(menu_list[cursor_index].display_position_x - 2, menu_list[cursor_index].display_position_y - 2, 36, 36, 5, 0xFFFF);
-        	
-			// Menu項目を表示させる
-			int menu_lists_n = sizeof(menu_list) / sizeof(menu_t);
-			for (int i = 0; i <= menu_lists_n; i++){
-				
-				const unsigned char* icon_image = mail_icon;
+        sprite.fillRect( 124, 2, 1, 4, 0xFFFF);
+  
+        // Menu選択の表示
+        sprite.fillRoundRect(menu_list[cursor_index].display_position_x - 2, menu_list[cursor_index].display_position_y - 2, 36, 36, 5, 0xFFFF);
+        
+        // Menu項目を表示させる
+        int menu_lists_n = sizeof(menu_list) / sizeof(menu_t);
+        for (int i = 0; i <= menu_lists_n; i++){
+            
+            const unsigned char* icon_image = mail_icon;
 
-				if (i == 1) {
-					icon_image = setting_icon;
-				}
-				else if (i == 2) {
-					icon_image = game_icon;
-				}
-				sprite.drawBitmap(menu_list[i].display_position_x, menu_list[i].display_position_y, icon_image, 32, 32, TFT_WHITE, TFT_BLACK);	
-			}
+            if (i == 1) {
+                icon_image = setting_icon;
+            }
+            else if (i == 2) {
+                icon_image = game_icon;
+            }
+            sprite.drawBitmap(menu_list[i].display_position_x, menu_list[i].display_position_y, icon_image, 32, 32, TFT_WHITE, TFT_BLACK);	
+        }
             
 
         Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
@@ -938,78 +973,76 @@ class MenuDisplay {
             printf("Pushing time:%lld\n",type_button_state.pushing_sec);
             printf("Push type:%c\n",type_button_state.push_type);
 		
-				if (cursor_index == 0){
-					talk.running_flag = true;
-					talk.start_talk_task();	
-					// talkタスクの実行フラグがfalseになるまで待機
-					while(talk.running_flag){
-						vTaskDelay(100 / portTICK_PERIOD_MS);
-					}
-					sprite.setFont(&fonts::Font4);
-				} else if (cursor_index == 1){
-					messageMenue.running_flag = true;
-					messageMenue.start_message_menue_task();	
-					// talkタスクの実行フラグがfalseになるまで待機
-					while(messageMenue.running_flag){
-						vTaskDelay(100 / portTICK_PERIOD_MS);
-					}
-					sprite.setFont(&fonts::Font4);
+            if (cursor_index == 0){
+                talk.running_flag = true;
+                talk.start_talk_task();	
+                // talkタスクの実行フラグがfalseになるまで待機
+                while(talk.running_flag){
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                }
+                sprite.setFont(&fonts::Font4);
+            } else if (cursor_index == 1){
+                messageMenue.running_flag = true;
+                messageMenue.start_message_menue_task();	
+                // talkタスクの実行フラグがfalseになるまで待機
+                while(messageMenue.running_flag){
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                }
+                sprite.setFont(&fonts::Font4);
 
-					// box.running_flag = true;
-					// box.start_box_task();	
-					// // talkタスクの実行フラグがfalseになるまで待機
-					// while(box.running_flag){
-					// 	vTaskDelay(100 / portTICK_PERIOD_MS);
-					// }
-					// sprite.setFont(&fonts::Font4);
-				} else if (cursor_index == 2){
-					game.running_flag = true;
-					game.start_game_task();	
-					// talkタスクの実行フラグがfalseになるまで待機
-					while(game.running_flag){
-						vTaskDelay(100 / portTICK_PERIOD_MS);
-					}
-					sprite.setFont(&fonts::Font4);
-				}
-
-        type_button.clear_button_state();
-
-				type_button.reset_timer();
-				joystick.reset_timer();
+                // box.running_flag = true;
+                // box.start_box_task();	
+                // // talkタスクの実行フラグがfalseになるまで待機
+                // while(box.running_flag){
+                // 	vTaskDelay(100 / portTICK_PERIOD_MS);
+                // }
+                // sprite.setFont(&fonts::Font4);
+            } else if (cursor_index == 2){
+                game.running_flag = true;
+                game.start_game_task();	
+                // talkタスクの実行フラグがfalseになるまで待機
+                while(game.running_flag){
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                }
+                sprite.setFont(&fonts::Font4);
             }
 
+            type_button.clear_button_state();
+
+            type_button.reset_timer();
+            joystick.reset_timer();
+        }
+
         if (joystick_state.pushed_left_edge){
-          cursor_index -= 1;
-					if (cursor_index < 0){
-						cursor_index = menu_lists_n - 1;
-					}
+            cursor_index -= 1;
+                if (cursor_index < 0){
+                    cursor_index = menu_lists_n - 1;
+                }
         }
         else if (joystick_state.pushed_right_edge){
-          cursor_index += 1;
-					if (cursor_index >= menu_lists_n){
-						cursor_index = 0;
-					}
+            cursor_index += 1;
+                if (cursor_index >= menu_lists_n){
+                    cursor_index = 0;
+                }
         }
             
-			sprite.pushSprite(&lcd, 0, 0);
-      sprite.fillRect(0, 0, 128, 64, 0);
+		sprite.pushSprite(&lcd, 0, 0);
+        sprite.fillRect(0, 0, 128, 64, 0);
 
-			esp_task_wdt_reset();
-			
-			// 30秒操作がなければsleep
-			int button_free_time = type_button_state.release_sec / 1000000;
-			int joystick_free_time = joystick_state.release_sec / 1000000;
-			if (button_free_time >= 30 and joystick_free_time >= 30){
-				printf("button_free_time:%d\n", button_free_time);
-				printf("joystick_free_time:%d\n", joystick_free_time);
-				sprite.fillRect(0, 0, 128, 64, 0);
-				sprite.pushSprite(&lcd, 0, 0);
-				esp_deep_sleep_start();
-			}
-
+        esp_task_wdt_reset();
+        
+        // 30秒操作がなければsleep
+        int button_free_time = type_button_state.release_sec / 1000000;
+        int joystick_free_time = joystick_state.release_sec / 1000000;
+        if (button_free_time >= 30 and joystick_free_time >= 30){
+            printf("button_free_time:%d\n", button_free_time);
+            printf("joystick_free_time:%d\n", joystick_free_time);
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.pushSprite(&lcd, 0, 0);
+            esp_deep_sleep_start();
         }
-		
-		vTaskDelete(NULL);
+    }		
+	vTaskDelete(NULL);
     };
 };
 
