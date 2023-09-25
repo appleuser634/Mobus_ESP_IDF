@@ -39,28 +39,27 @@ void app_main(void) {
     
     printf("Hello world!!!!\n"); 
 
+	Buzzer buzzer;
+
 	Oled oled;
     MenuDisplay menu;
 			
 	esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
 	if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0){
+		// 起動音を鳴らす
+		buzzer.boot_sound();
 		// キャラクターの挨拶を描画
-		for (int i = 0; i <= 2; i++){
-			oled.ShowImage(robo1);
-			vTaskDelay(800 / portTICK_PERIOD_MS);
-			
-			oled.ShowImage(robo2);
-			vTaskDelay(800 / portTICK_PERIOD_MS);
-		}
+        oled.ShowImage(robo2);
+        vTaskDelay(800 / portTICK_PERIOD_MS);
+        oled.ShowImage(robo1);
+        vTaskDelay(800 / portTICK_PERIOD_MS);	
 	} else {
 		// 起動音を鳴らす
-		Buzzer buzzer;
 		buzzer.boot_sound();
 		// 起動時のロゴを表示
 		oled.BootDisplay();
 		vTaskDelay(2000 / portTICK_PERIOD_MS);
 	}
-
     
 	// Provisioning provisioning;
 	// provisioning.main();
