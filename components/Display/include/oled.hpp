@@ -74,18 +74,81 @@ static constexpr char text[] = "MoBus!!";
 static constexpr size_t textlen = sizeof(text) / sizeof(text[0]);
 size_t textpos = 0;
 
+class Morse {
+public:
+  std::map<std::string, std::string> morse_code = {
+      {"._", "A"},     {"_...", "B"},   {"_._.", "C"},   {"_..", "D"},
+      {".", "E"},      {".._.", "F"},   {"__.", "G"},    {"....", "H"},
+      {"..", "I"},     {".___", "J"},   {"_._", "K"},    {"._..", "L"},
+      {"__", "M"},     {"_.", "N"},     {"___", "O"},    {".__.", "P"},
+      {"__._", "Q"},   {"._.", "R"},    {"...", "S"},    {"_", "T"},
+      {".._", "U"},    {"..._", "V"},   {".__", "W"},    {"_.._", "X"},
+      {"_.__", "Y"},   {"__..", "Z"},
+
+      {"._._", " "},
+
+      {"._____", "1"}, {"..___", "2"},  {"...__", "3"},  {"...._", "4"},
+      {".....", "5"},  {"_....", "6"},  {"__...", "7"},  {"___..", "8"},
+      {"____.", "9"},  {"_____", "0"},
+
+      {"..__..", "?"}, {"_._.__", "!"}, {"._._._", "."}, {"__..__", ","},
+      {"_._._.", ";"}, {"___...", ":"}, {"._._.", "+"},  {"_...._", "-"},
+      {"_.._.", "/"},  {"_..._", "="},
+
+  };
+
+  std::string morse_text = "";
+  std::string alphabet_text = "";
+
+  std::string long_push_text = "_";
+  std::string short_push_text = ".";
+
+  std::tuple<std::string, std::string>
+  get_morse(Button::button_state_t type_button_state,
+            Button::button_state_t back_button_state, Buzzer buzzer, Led led) {
+
+    alphabet_text = "";
+
+    if (type_button_state.push_edge and !back_button_state.pushing) {
+      buzzer.buzzer_on();
+      led.led_on();
+    }
+
+    if (type_button_state.pushed and !back_button_state.pushing) {
+      printf("Button pushed!\n");
+      printf("Pushing time:%lld\n", type_button_state.pushing_sec);
+      printf("Push type:%c\n", type_button_state.push_type);
+      if (type_button_state.push_type == 's') {
+        morse_text += short_push_text;
+      } else if (type_button_state.push_type == 'l') {
+        morse_text += long_push_text;
+      }
+
+      buzzer.buzzer_off();
+      led.led_off();
+    }
+
+    // printf("Release time:%lld\n",button_state.release_sec);
+    if (type_button_state.release_sec > 200000) {
+      // printf("Release time:%lld\n",button_state.release_sec);
+
+      if (morse_code.count(morse_text)) {
+        alphabet_text = morse_code.at(morse_text);
+      }
+      morse_text = "";
+    }
+
+    return std::forward_as_tuple(morse_text, alphabet_text);
+  }
+};
+
 class TalkDisplay {
 public:
   static int cursor_point;
 
-  static std::string morse_text;
   static std::string message_text;
   static std::string alphabet_text;
-
-  static std::string long_push_text;
-  static std::string short_push_text;
-
-  static std::map<std::string, std::string> morse_code;
+  static std::string morse_text;
 
   static int release_time;
 
@@ -114,6 +177,8 @@ public:
     Buzzer buzzer;
     Led led;
 
+    Morse morse;
+
     Joystick joystick;
     joystick.setup();
 
@@ -136,48 +201,27 @@ public:
     long long int t = esp_timer_get_time();
 
     while (true) {
+
+      Button::button_state_t type_button_state = type_button.get_button_state();
+      Button::button_state_t back_button_state = back_button.get_button_state();
+      Button::button_state_t enter_button_state =
+          enter_button.get_button_state();
+
       Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
       // printf("UP:%s\n", joystick_state.up ? "true" : "false");
       // printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
       // printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
       // printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
 
-      // モールス信号打ち込みキーの判定ロジック
-      Button::button_state_t type_button_state = type_button.get_button_state();
+      // モールス入力の取得
+      std::tie(morse_text, alphabet_text) =
+          morse.get_morse(type_button_state, back_button_state, buzzer, led);
 
-      Button::button_state_t back_button_state = back_button.get_button_state();
-      Button::button_state_t enter_button_state =
-          enter_button.get_button_state();
-
-      if (type_button_state.push_edge and !back_button_state.pushing) {
-        buzzer.buzzer_on();
-        led.led_on();
-      }
-
+      // FIXME モールス入力の取得時に以下のブロックを入れなくても動くようにする
       if (type_button_state.pushed and !back_button_state.pushing) {
-        printf("Button pushed!\n");
-        printf("Pushing time:%lld\n", type_button_state.pushing_sec);
-        printf("Push type:%c\n", type_button_state.push_type);
-        if (type_button_state.push_type == 's') {
-          morse_text += short_push_text;
-        } else if (type_button_state.push_type == 'l') {
-          morse_text += long_push_text;
-        }
-
         type_button.clear_button_state();
-        buzzer.buzzer_off();
-        led.led_off();
       }
 
-      // printf("Release time:%lld\n",button_state.release_sec);
-      if (type_button_state.release_sec > 200000) {
-        // printf("Release time:%lld\n",button_state.release_sec);
-
-        if (morse_code.count(morse_text)) {
-          alphabet_text = morse_code.at(morse_text);
-        }
-        morse_text = "";
-      }
       if (back_button_state.pushing and type_button_state.pushed) {
         if (message_text != "") {
           message_text.pop_back();
@@ -189,7 +233,6 @@ public:
                  !type_button_state.pushing) {
         break;
       } else if (joystick_state.left) {
-        // FIXME
         break;
       } else if (joystick_state.up and enter_button_state.pushed) {
         esp_restart();
@@ -229,7 +272,6 @@ public:
       sprite.pushSprite(&lcd, 0, 0);
 
       message_text += alphabet_text;
-      alphabet_text = "";
 
       // チャタリング防止用に100msのsleep
       vTaskDelay(10 / portTICK_PERIOD_MS);
@@ -242,35 +284,9 @@ public:
 };
 
 int TalkDisplay::cursor_point = 2;
-
 std::string TalkDisplay::morse_text = "";
 std::string TalkDisplay::message_text = "";
 std::string TalkDisplay::alphabet_text = "";
-std::string TalkDisplay::long_push_text = "_";
-std::string TalkDisplay::short_push_text = ".";
-
-std::map<std::string, std::string> TalkDisplay::morse_code = {
-    {"._", "A"},     {"_...", "B"},   {"_._.", "C"},   {"_..", "D"},
-    {".", "E"},      {".._.", "F"},   {"__.", "G"},    {"....", "H"},
-    {"..", "I"},     {".___", "J"},   {"_._", "K"},    {"._..", "L"},
-    {"__", "M"},     {"_.", "N"},     {"___", "O"},    {".__.", "P"},
-    {"__._", "Q"},   {"._.", "R"},    {"...", "S"},    {"_", "T"},
-    {".._", "U"},    {"..._", "V"},   {".__", "W"},    {"_.._", "X"},
-    {"_.__", "Y"},   {"__..", "Z"},
-
-    {"._._", " "},
-
-    {"._____", "1"}, {"..___", "2"},  {"...__", "3"},  {"...._", "4"},
-    {".....", "5"},  {"_....", "6"},  {"__...", "7"},  {"___..", "8"},
-    {"____.", "9"},  {"_____", "0"},
-
-    {"..__..", "?"}, {"_._.__", "!"}, {"._._._", "."}, {"__..__", ","},
-    {"_._._.", ";"}, {"___...", ":"}, {"._._.", "+"},  {"_...._", "-"},
-    {"_.._.", "/"},  {"_..._", "="},
-
-};
-
-// std::map<std::string, std::string> TalkDisplay::morse_code = morse_code;
 
 int TalkDisplay::release_time = 0;
 bool TalkDisplay::running_flag = false;
@@ -449,7 +465,7 @@ public:
       select_y = select_index * cur_y_offset;
 
       if (type_button_state.pushed) {
-	// チャット画面
+        // チャット画面
         while (1) {
           sprite.fillRect(0, 0, 128, 64, 0);
 
@@ -507,10 +523,11 @@ public:
     xTaskCreatePinnedToCore(&game_task, "game_task", 4096, NULL, 6, NULL, 1);
   }
 
-  static std::map<std::string, std::string> morse_code;
   static void game_task(void *pvParameters) {
     lcd.init();
     lcd.setRotation(0);
+
+    Morse morse;
 
     Buzzer buzzer;
     Led led;
@@ -534,13 +551,11 @@ public:
     srand(esp_timer_get_time());
     char random_char = letters[rand() % 26];
 
-    while (1) {
-      std::string morse_text = "";
-      std::string message_text = "";
-      std::string alphabet_text = "";
+    std::string morse_text = "";
+    std::string message_text = "";
+    std::string alphabet_text = "";
 
-      std::string long_push_text = "_";
-      std::string short_push_text = ".";
+    while (1) {
 
       // 問題数
       int n = 10;
@@ -567,35 +582,15 @@ public:
         Button::button_state_t enter_button_state =
             enter_button.get_button_state();
 
-        if (type_button_state.push_edge and !back_button_state.pushing) {
-          buzzer.buzzer_on();
-          led.led_on();
-        }
-
+        // モールス入力の取得
+        std::tie(morse_text, alphabet_text) =
+            morse.get_morse(type_button_state, back_button_state, buzzer, led);
+        // FIXME
+        // モールス入力の取得時に以下のブロックを入れなくても動くようにする
         if (type_button_state.pushed and !back_button_state.pushing) {
-          printf("Button pushed!\n");
-          printf("Pushing time:%lld\n", type_button_state.pushing_sec);
-          printf("Push type:%c\n", type_button_state.push_type);
-          if (type_button_state.push_type == 's') {
-            morse_text += short_push_text;
-          } else if (type_button_state.push_type == 'l') {
-            morse_text += long_push_text;
-          }
-
           type_button.clear_button_state();
-          buzzer.buzzer_off();
-          led.led_off();
         }
 
-        // printf("Release time:%lld\n",button_state.release_sec);
-        if (type_button_state.release_sec > 200000) {
-          // printf("Release time:%lld\n",button_state.release_sec);
-
-          if (morse_code.count(morse_text)) {
-            alphabet_text = morse_code.at(morse_text);
-          }
-          morse_text = "";
-        }
         if (back_button_state.pushing and type_button_state.pushed) {
           if (message_text != "") {
             message_text.pop_back();
@@ -663,7 +658,6 @@ public:
         sprite.pushSprite(&lcd, 0, 0);
 
         message_text += alphabet_text;
-        alphabet_text = "";
 
         // チャタリング防止用に100msのsleep
         vTaskDelay(10 / portTICK_PERIOD_MS);
@@ -726,26 +720,6 @@ public:
   };
 };
 bool Game::running_flag = false;
-
-std::map<std::string, std::string> Game::morse_code = {
-    {"._", "A"},     {"_...", "B"},   {"_._.", "C"},   {"_..", "D"},
-    {".", "E"},      {".._.", "F"},   {"__.", "G"},    {"....", "H"},
-    {"..", "I"},     {".___", "J"},   {"_._", "K"},    {"._..", "L"},
-    {"__", "M"},     {"_.", "N"},     {"___", "O"},    {".__.", "P"},
-    {"__._", "Q"},   {"._.", "R"},    {"...", "S"},    {"_", "T"},
-    {".._", "U"},    {"..._", "V"},   {".__", "W"},    {"_.._", "X"},
-    {"_.__", "Y"},   {"__..", "Z"},
-
-    {"._._", " "},
-
-    {"._____", "1"}, {"..___", "2"},  {"...__", "3"},  {"...._", "4"},
-    {".....", "5"},  {"_....", "6"},  {"__...", "7"},  {"___..", "8"},
-    {"____.", "9"},  {"_____", "0"},
-
-    {"..__..", "?"}, {"_._.__", "!"}, {"._._._", "."}, {"__..__", ","},
-    {"_._._.", ";"}, {"___...", ":"}, {"._._.", "+"},  {"_...._", "-"},
-    {"_.._.", "/"},  {"_..._", "="},
-};
 
 class MenuDisplay {
 #define NAME_LENGTH_MAX 8
