@@ -19,7 +19,7 @@ static const char *TAG = "mobus cllient";
 
 #include <LovyanGFX.hpp>
 #include <joystick.h>
-// #include <power_monitor.h>
+#include <power_monitor.h>
 
 // #include <http_client.hpp>
 // #include <oled.hpp>

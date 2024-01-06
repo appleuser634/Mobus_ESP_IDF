@@ -1,39 +1,52 @@
-#include "driver/adc.h"
-#include "esp_adc_cal.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_system.h"
-#include "sdkconfig.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
+#include "esp_adc/adc_oneshot.h"
+#include "esp_log.h"
+#include "hal/adc_types.h"
+
+#define EXAMPLE_ADC_ATTEN ADC_ATTEN_DB_11
 
 class PowerMonitor {
-    public:
-    typedef struct {
-        uint32_t power_voltage;
-    } power_state_t;
-    
-    esp_adc_cal_characteristics_t adcChar;
-    power_state_t power_state = {123};
- 
-    void setup(){
-        printf("Setup PowerMonitor.... ");
-        // ADC1_CH6を初期化
-        adc_gpio_init(ADC_UNIT_1, ADC_CHANNEL_3);
-        // ADC1の解像度を12bit（0~4095）に設定
-        adc1_config_width(ADC_WIDTH_BIT_12);
-        // ADC1の減衰を11dBに設定
-        adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_DB_11);
-        // 電圧値に変換するための情報をaddCharに格納
-        esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adcChar);
-    }
-    
-    power_state_t get_power_state() {
-        
-        uint32_t voltage;
-        // ADC1_CH0の電圧値を取得
-        esp_adc_cal_get_voltage(ADC_CHANNEL_3, &adcChar, &voltage);
-        
-        power_state.power_voltage = voltage;
 
-        return power_state;
-    }
+public:
+  typedef struct {
+    uint32_t power_voltage;
+  } power_state_t;
+
+  adc_oneshot_unit_handle_t adc1_handle;
+  adc_oneshot_unit_init_cfg_t init_config1;
+  adc_cali_handle_t adc1_cali_chan0_handle = NULL;
+
+  PowerMonitor() {
+
+    init_config1 = {
+        .unit_id = ADC_UNIT_1,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+    };
+
+    adc_oneshot_new_unit(&init_config1, &adc1_handle);
+    //-------------ADC1 Config---------------//
+    adc_oneshot_chan_cfg_t config = {
+        .atten = EXAMPLE_ADC_ATTEN,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_3, &config);
+  }
+
+  // esp_adc_cal_characteristics_t adcChar;
+  power_state_t power_state = {123};
+
+  power_state_t get_power_state() {
+
+    int row;
+    int voltage;
+
+    // ADC1_CH0の電圧値を取得
+    adc_oneshot_read(adc1_handle, ADC_CHANNEL_3, &row);
+
+    adc_cali_raw_to_voltage(adc1_cali_chan0_handle, row, &voltage);
+    power_state.power_voltage = voltage;
+
+    return power_state;
+  }
 };
