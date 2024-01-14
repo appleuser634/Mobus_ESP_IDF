@@ -10,7 +10,7 @@ class PowerMonitor {
 
 public:
   typedef struct {
-    uint32_t power_voltage;
+    int power_voltage;
   } power_state_t;
 
   adc_oneshot_unit_handle_t adc1_handle;
@@ -39,13 +39,13 @@ public:
   power_state_t get_power_state() {
 
     int row;
-    int voltage;
+    // int voltage;
 
     // ADC1_CH0の電圧値を取得
     adc_oneshot_read(adc1_handle, ADC_CHANNEL_3, &row);
 
-    adc_cali_raw_to_voltage(adc1_cali_chan0_handle, row, &voltage);
-    power_state.power_voltage = voltage;
+    // adc_cali_raw_to_voltage(adc1_cali_chan0_handle, row, &voltage);
+    power_state.power_voltage = row;
 
     return power_state;
   }

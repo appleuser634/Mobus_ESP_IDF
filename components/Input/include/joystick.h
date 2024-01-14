@@ -97,7 +97,7 @@ public:
   Joystick() {
 
     init_config1 = {
-        .unit_id = ADC_UNIT_1,
+        .unit_id = ADC_UNIT_2,
         .ulp_mode = ADC_ULP_MODE_DISABLE,
     };
 
@@ -120,21 +120,20 @@ public:
   }
 
   int get_joystick_value(adc_channel_t channel) {
-    int adc_raw[2][10];
-    int voltage[2][10];
+    int adc_raw;
+    int voltage;
 
-    adc_oneshot_read(adc1_handle, channel, &adc_raw[0][0]);
+    adc_oneshot_read(adc1_handle, channel, &adc_raw);
     ESP_LOGI(TAG, "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1, channel,
-             adc_raw[0][0]);
+             adc_raw);
     if (do_calibration1_chan0) {
-      adc_cali_raw_to_voltage(adc1_cali_chan0_handle, adc_raw[0][0],
-                              &voltage[0][0]);
+      adc_cali_raw_to_voltage(adc1_cali_chan0_handle, adc_raw, &voltage);
       ESP_LOGI(TAG, "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_1 + 1,
-               channel, voltage[0][0]);
+               channel, voltage);
     }
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    return voltage[0][0];
+    return voltage;
   }
 
   joystick_state_t get_joystick_state() {
