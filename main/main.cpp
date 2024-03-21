@@ -13,7 +13,7 @@
 #include "hal/gpio_types.h"
 #include "sdkconfig.h"
 
-static const char *TAG = "mobus cllient";
+static const char *TAG = "Mobus v3.14";
 
 #include <map>
 #include <string.h>
@@ -38,7 +38,6 @@ void app_main();
 void app_main(void) {
 
   printf("Hello world!!!!\n");
-  printf("v3.14\n");
 
   Oled oled;
   MenuDisplay menu;
