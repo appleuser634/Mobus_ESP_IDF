@@ -64,7 +64,7 @@ void app_main(void) {
   // Provisioning provisioning;
   // provisioning.main();
 
-  const gpio_num_t ext_wakeup_pin_0 = GPIO_NUM_4;
+  const gpio_num_t ext_wakeup_pin_0 = GPIO_NUM_46;
 
   printf("Enabling EXT0 wakeup on pin GPIO%d\n", ext_wakeup_pin_0);
   esp_sleep_enable_ext0_wakeup(ext_wakeup_pin_0, 1);
