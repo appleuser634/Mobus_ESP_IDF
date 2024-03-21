@@ -14,9 +14,9 @@ class Button {
 	gpio_num_t gpio_num;
 	
 	Button(gpio_num_t gpio_n = GPIO_NUM_4) {
-		#define GPIO_INPUT_IO_0     GPIO_NUM_4
-		#define GPIO_INPUT_IO_1     GPIO_NUM_25
-		#define GPIO_INPUT_IO_2     GPIO_NUM_26
+		#define GPIO_INPUT_IO_0     GPIO_NUM_46
+		#define GPIO_INPUT_IO_1     GPIO_NUM_3
+		#define GPIO_INPUT_IO_2     GPIO_NUM_5
 		#define GPIO_INPUT_PIN_SEL  (1ULL<<(gpio_n))
 		#define ESP_INTR_FLAG_DEFAULT 0
 

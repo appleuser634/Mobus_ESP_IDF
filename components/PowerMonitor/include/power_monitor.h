@@ -20,7 +20,7 @@ public:
   PowerMonitor() {
 
     init_config1 = {
-        .unit_id = ADC_UNIT_1,
+        .unit_id = ADC_UNIT_2,
         .ulp_mode = ADC_ULP_MODE_DISABLE,
     };
 

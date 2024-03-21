@@ -4,7 +4,7 @@
 #include "freertos/task.h"
 #include <stdio.h>
 
-#define LEDC_GPIO 16
+#define LEDC_GPIO 45
 #define LEDC_DUTY 10
 
 class Led {

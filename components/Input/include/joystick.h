@@ -3,9 +3,10 @@
 #include "esp_adc/adc_oneshot.h"
 #include "esp_log.h"
 
+
 #define EXAMPLE_ADC_ATTEN ADC_ATTEN_DB_11
-#define EXAMPLE_ADC1_CHAN0 ADC_CHANNEL_6
-#define EXAMPLE_ADC1_CHAN1 ADC_CHANNEL_7
+#define EXAMPLE_ADC1_CHAN0 ADC_CHANNEL_5
+#define EXAMPLE_ADC1_CHAN1 ADC_CHANNEL_6
 
 class Joystick {
 public:
@@ -82,26 +83,29 @@ public:
     return calibrated;
   }
 
-  // esp_adc_cal_characteristics_t adcChar;
   joystick_state_t joystick_state = {false, false, false, false, false, false,
                                      false, false, false, false, false, false,
                                      0,     0,     0,     0};
 
-  adc_oneshot_unit_handle_t adc1_handle;
-  adc_oneshot_unit_init_cfg_t init_config1;
   bool do_calibration1_chan0;
   bool do_calibration1_chan1;
   adc_cali_handle_t adc1_cali_chan0_handle = NULL;
   adc_cali_handle_t adc1_cali_chan1_handle = NULL;
 
+  static adc_oneshot_unit_init_cfg_t init_config1;
+  static adc_oneshot_unit_handle_t adc1_handle;
+
+  static void adc_init_unit() {
+    static bool has_init = false;
+    if (!has_init) {
+      adc_oneshot_new_unit(&init_config1, &adc1_handle);
+      has_init = true;
+    }
+  }
+
   Joystick() {
 
-    init_config1 = {
-        .unit_id = ADC_UNIT_2,
-        .ulp_mode = ADC_ULP_MODE_DISABLE,
-    };
-
-    adc_oneshot_new_unit(&init_config1, &adc1_handle);
+    adc_init_unit();
     //-------------ADC1 Config---------------//
     adc_oneshot_chan_cfg_t config = {
         .atten = EXAMPLE_ADC_ATTEN,
@@ -124,22 +128,21 @@ public:
     int voltage;
 
     adc_oneshot_read(adc1_handle, channel, &adc_raw);
-    ESP_LOGI(TAG, "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1, channel,
-             adc_raw);
+    // ESP_LOGI(TAG, "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1, channel,
+    //          adc_raw);
     if (do_calibration1_chan0) {
       adc_cali_raw_to_voltage(adc1_cali_chan0_handle, adc_raw, &voltage);
-      ESP_LOGI(TAG, "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_1 + 1,
-               channel, voltage);
+      // ESP_LOGI(TAG, "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_1 + 1,
+      //         channel, voltage);
     }
-    vTaskDelay(pdMS_TO_TICKS(1000));
 
     return voltage;
   }
 
   joystick_state_t get_joystick_state() {
 
-    joystick_state.x_voltage = get_joystick_value(ADC_CHANNEL_7);
-    joystick_state.y_voltage = get_joystick_value(ADC_CHANNEL_6);
+    joystick_state.x_voltage = get_joystick_value(ADC_CHANNEL_6);
+    joystick_state.y_voltage = get_joystick_value(ADC_CHANNEL_5);
 
     joystick_state.pushed_up = false;
     joystick_state.pushed_down = false;
@@ -208,3 +211,10 @@ public:
     joystick_state.release_start_sec = esp_timer_get_time();
   }
 };
+
+adc_oneshot_unit_init_cfg_t Joystick::init_config1 = {
+    .unit_id = ADC_UNIT_1,
+    .ulp_mode = ADC_ULP_MODE_DISABLE,
+};
+
+adc_oneshot_unit_handle_t Joystick::adc1_handle = 0;

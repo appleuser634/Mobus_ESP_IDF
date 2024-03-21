@@ -21,8 +21,8 @@ public:
       cfg.i2c_port = 0;        // 使用するI2Cポートを選択 (0 or 1)
       cfg.freq_write = 400000; // 送信時のクロック
       cfg.freq_read = 400000;  // 受信時のクロック
-      cfg.pin_sda = 21;        // SDAを接続しているピン番号
-      cfg.pin_scl = 45;        // SCLを接続しているピン番号
+      cfg.pin_sda = 1;        // SDAを接続しているピン番号
+      cfg.pin_scl = 2;        // SCLを接続しているピン番号
       cfg.i2c_addr = 0x3C;     // I2Cデバイスのアドレス
 
       _bus_instance.config(cfg); // 設定値をバスに反映します。
@@ -114,11 +114,11 @@ public:
     Buzzer buzzer;
     Led led;
 
-    Joystick joystick;
+    // Joystick joystick;
 
-    Button type_button(GPIO_NUM_4);
-    Button back_button(GPIO_NUM_5);
-    Button enter_button(GPIO_NUM_6);
+    Button type_button(GPIO_NUM_46);
+    Button back_button(GPIO_NUM_3);
+    Button enter_button(GPIO_NUM_5);
 
     // HttpClient http;
 
@@ -136,7 +136,7 @@ public:
 
     while (true) {
 
-      Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+      // Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
       // printf("UP:%s\n", joystick_state.up ? "true" : "false");
       // printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
       // printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
@@ -188,10 +188,10 @@ public:
                  !back_button_state.pushed_same_time and
                  !type_button_state.pushing) {
         break;
-      } else if (joystick_state.left) {
-        // FIXME
-        break;
-      } else if (joystick_state.up and enter_button_state.pushed) {
+      // } else if (joystick_state.left) {
+      //   // FIXME
+      //   break;
+      } else if (enter_button_state.pushed) {
         esp_restart();
       } else if (back_button_state.pushed) {
         back_button.clear_button_state();
@@ -293,9 +293,9 @@ public:
 
     Joystick joystick;
 
-    Button type_button(GPIO_NUM_4);
-    Button back_button(GPIO_NUM_5);
-    Button enter_button(GPIO_NUM_6);
+    Button type_button(GPIO_NUM_46);
+    Button back_button(GPIO_NUM_3);
+    Button enter_button(GPIO_NUM_5);
 
     lcd.setRotation(2);
 
@@ -392,9 +392,9 @@ public:
 
     Joystick joystick;
 
-    Button type_button(GPIO_NUM_4);
-    Button back_button(GPIO_NUM_5);
-    Button enter_button(GPIO_NUM_6);
+    Button type_button(GPIO_NUM_46);
+    Button back_button(GPIO_NUM_3);
+    Button enter_button(GPIO_NUM_5);
 
     lcd.setRotation(2);
 
@@ -485,9 +485,9 @@ public:
 
     Joystick joystick;
 
-    Button type_button(GPIO_NUM_4);
-    Button back_button(GPIO_NUM_5);
-    Button enter_button(GPIO_NUM_6);
+    Button type_button(GPIO_NUM_46);
+    Button back_button(GPIO_NUM_3);
+    Button enter_button(GPIO_NUM_5);
 
     lcd.setRotation(2);
 
@@ -753,8 +753,8 @@ public:
     Game game;
     MessageMenue messageMenue;
 
-    Button type_button(GPIO_NUM_4);
-    Button enter_button(GPIO_NUM_26);
+    Button type_button(GPIO_NUM_46);
+    Button enter_button(GPIO_NUM_5);
 
     lcd.setRotation(2);
 
@@ -806,12 +806,12 @@ public:
       // }
 
       PowerMonitor::power_state_t power_state = power.get_power_state();
-      printf("Power Voltage:%d\n", power_state.power_voltage);
+      // printf("Power Voltage:%d\n", power_state.power_voltage);
 
       float power_per = power_state.power_voltage / 25.5;
       int power_per_pix = (int)(0.14 * power_per);
 
-      printf("Power Per:%d\n", power_per_pix);
+      // printf("Power Per:%d\n", power_per_pix);
 
       // 電池残量表示
       sprite.drawRoundRect(110, 0, 14, 8, 2, 0xFFFF);
@@ -841,10 +841,10 @@ public:
       }
 
       Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
-      // printf("UP:%s\n", joystick_state.up ? "true" : "false");
-      // printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
-      // printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
-      // printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
+      printf("UP:%s\n", joystick_state.up ? "true" : "false");
+      printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
+      printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
+      printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
       vTaskDelay(50 / portTICK_PERIOD_MS);
 
       Button::button_state_t type_button_state = type_button.get_button_state();

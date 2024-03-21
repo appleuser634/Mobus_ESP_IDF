@@ -4,7 +4,7 @@
 #include "freertos/task.h"
 #include <stdio.h>
 
-#define BUZZER_GPIO 18
+#define BUZZER_GPIO 21
 #define BUZZER_DUTY 128
 
 class Buzzer {

@@ -22,7 +22,7 @@ static const char *TAG = "mobus cllient";
 #include <joystick.h>
 #include <power_monitor.h>
 
-// #include <http_client.hpp>
+#include <http_client.hpp>
 #include <oled.hpp>
 
 // #include <notification.hpp>
@@ -38,6 +38,7 @@ void app_main();
 void app_main(void) {
 
   printf("Hello world!!!!\n");
+  printf("v3.14\n");
 
   Oled oled;
   MenuDisplay menu;
@@ -78,9 +79,12 @@ void app_main(void) {
   WiFi wifi;
   wifi.main();
 
+  // HttpClient http_client;
+  // http_client.main();
+
   // Start ota task.
-  Ota ota;
-  ota.main();
+  // Ota ota;
+  // ota.main();
 
   // FIXME
   // for (int i = 0; i <= 10; i++) {

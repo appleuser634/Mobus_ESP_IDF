@@ -122,15 +122,15 @@ void simple_ota_example_task(void *pvParameter) {
   esp_https_ota_config_t ota_config = {
       .http_config = &config,
   };
-  ESP_LOGI(TAG, "Attempting to download update from %s", config.url);
-  esp_err_t ret = esp_https_ota(&ota_config);
-  if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "OTA Succeed, Rebooting...");
-    esp_restart();
-  } else {
-    ESP_LOGE(TAG, "Firmware upgrade failed");
-  }
   while (1) {
+    ESP_LOGI(TAG, "Attempting to download update from %s", config.url);
+    esp_err_t ret = esp_https_ota(&ota_config);
+    if (ret == ESP_OK) {
+      ESP_LOGI(TAG, "OTA Succeed, Rebooting...");
+      esp_restart();
+    } else {
+      ESP_LOGE(TAG, "Firmware upgrade failed");
+    }
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 }
