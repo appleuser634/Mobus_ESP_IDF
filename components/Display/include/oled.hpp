@@ -269,15 +269,13 @@ std::map<std::string, std::string> TalkDisplay::morse_code = {
     {"_.._.", "/"},  {"_..._", "="},
 
 };
-
 // std::map<std::string, std::string> TalkDisplay::morse_code = morse_code;
-
 int TalkDisplay::release_time = 0;
 bool TalkDisplay::running_flag = false;
 
 class BoxDisplay {
 
-public:
+  public:
   static bool running_flag;
   // static HttpClient http;
 
@@ -371,13 +369,14 @@ public:
 };
 bool BoxDisplay::running_flag = false;
 
-class MessageMenue {
 
-public:
+class MessageMenu {
+
+  public:
   static bool running_flag;
 
   void start_message_menue_task() {
-    printf("Start MessageMenue Task...");
+    printf("Start MessageMenu Task...");
     xTaskCreatePinnedToCore(&message_menue_task, "message_menue_task", 4096,
                             NULL, 6, NULL, 1);
   }
@@ -408,8 +407,100 @@ public:
       int user_id;
     } contact_t;
 
-    contact_t contacts[4] = {
-        {"Musashi", 1}, {"Hazuki", 2}, {"Kiki", 3}, {"Chibi", 4}};
+    contact_t contacts[4] = {{"Musashi", 1}, {"Hazuki", 2}, {"Kiki", 3}, {"Chibi", 4}};
+
+    int select_index = 0;
+    int font_height = 13;
+
+    while (1) {
+
+      // Joystickの状態を取得
+      Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+
+      // スイッチの状態を取得
+      Button::button_state_t type_button_state = type_button.get_button_state();
+      Button::button_state_t back_button_state = back_button.get_button_state();
+      Button::button_state_t enter_button_state =
+          enter_button.get_button_state();
+
+      sprite.fillRect(0, 0, 128, 64, 0); 
+      sprite.fillRect(0, select_index * font_height + 3, 128, font_height, 0xFFFF);
+      
+      sprite.setFont(&fonts::Font2);
+
+      int length = sizeof(contacts) / sizeof(contact_t) - 1;
+      for (int i = length; i >= 0; i--) {
+        sprite.setCursor(10, font_height * i);
+
+        if (i == select_index) {
+          sprite.setTextColor(0x000000u,0xFFFFFFu);
+        } else {
+          sprite.setTextColor(0xFFFFFFu,0x000000u);
+        }
+        sprite.print(contacts[i].name);
+      }
+
+      if (joystick_state.pushed_up_edge) {
+        select_index -= 1;
+      } else if (joystick_state.pushed_down_edge) {
+        select_index += 1;
+      }
+
+
+      // ジョイスティック左を押されたらメニューへ戻る
+      // 戻るボタンを押されたらメニューへ戻る
+      if (joystick_state.left || back_button_state.pushed) {
+        break;
+      }
+
+      sprite.pushSprite(&lcd, 0, 0);
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+
+    running_flag = false;
+    vTaskDelete(NULL);
+  };
+};
+bool MessageMenu::running_flag = false;
+
+class SettingMenu {
+
+  public:
+  static bool running_flag;
+
+  void start_message_menue_task() {
+    printf("Start MessageMenu Task...");
+    xTaskCreatePinnedToCore(&message_menue_task, "message_menue_task", 4096,
+                            NULL, 6, NULL, 1);
+  }
+
+  static void message_menue_task(void *pvParameters) {
+
+    lcd.init();
+    lcd.setRotation(0);
+
+    Buzzer buzzer;
+    Led led;
+
+    Joystick joystick;
+
+    Button type_button(GPIO_NUM_46);
+    Button back_button(GPIO_NUM_3);
+    Button enter_button(GPIO_NUM_5);
+
+    lcd.setRotation(2);
+
+    sprite.setColorDepth(8);
+    sprite.setFont(&fonts::Font4);
+    sprite.setTextWrap(true); // 右端到達時のカーソル折り返しを禁止
+    sprite.createSprite(lcd.width(), lcd.height());
+
+    typedef struct {
+      char name[255];
+      int user_id;
+    } contact_t;
+
+    contact_t contacts[4] = {{"Profile", 1}, {"WiFi", 2}, {"Sound", 3}, {"Light", 4}};
 
     int select_y = 0;
 
@@ -448,7 +539,7 @@ public:
 
       sprite.fillRect(0, select_y, 128, 13, 0xFFFF);
 
-      // ジョイスティック左を押されたらメニューへ戻る
+      // ジョスティック左を押されたらメニューへ戻る
       // 戻るボタンを押されたらメニューへ戻る
       if (joystick_state.left || back_button_state.pushed) {
         break;
@@ -462,11 +553,11 @@ public:
     vTaskDelete(NULL);
   };
 };
-bool MessageMenue::running_flag = false;
+bool SettingMenu::running_flag = false;
 
 class Game {
 
-public:
+  public:
   static bool running_flag;
 
   void start_game_task() {
@@ -520,6 +611,9 @@ public:
 
       // ゲーム終了フラグ
       bool break_flag = false;
+      
+      // Play時間を取得
+      float p_time = 0;
 
       // 問題を解き終わるまでループ
       while (c < n) {
@@ -612,8 +706,21 @@ public:
         std::string nPerC = strC + "/" + strN;
 
         sprite.fillRect(0, 0, 128, 64, 0);
+        
+        // Play時間を取得
+        p_time = round((esp_timer_get_time() - st) / 10000) / 100;
 
+        char b_p_time[50];
+   
+        std::sprintf(b_p_time, "%.2f", p_time);
+        std::string s_p_time(b_p_time);
+
+        // Play時間を表示
         sprite.setFont(&fonts::Font2);
+        sprite.setCursor(0, 0);
+        sprite.print(s_p_time.c_str());
+
+        // 回答進捗を表示
         sprite.setCursor(88, 0);
         sprite.print(nPerC.c_str());
 
@@ -622,12 +729,12 @@ public:
         sprite.setCursor(50, 36);
         sprite.print(display_text.c_str());
 
-        sprite.setCursor(50, 5);
+        sprite.setCursor(55, 5);
         sprite.print(random_char);
 
-        sprite.drawFastHLine(0, 16, 43, 0xFFFF);
-        sprite.drawFastHLine(75, 16, 128, 0xFFFF);
-        sprite.drawRect(46, 2, 26, 26, 0xFFFF);
+        sprite.drawFastHLine(0, 16, 48, 0xFFFF);
+        sprite.drawFastHLine(78, 16, 128, 0xFFFF);
+        sprite.drawRect(50, 2, 26, 26, 0xFFFF);
 
         sprite.pushSprite(&lcd, 0, 0);
 
@@ -641,7 +748,10 @@ public:
       }
 
       // Play時間を取得
-      int p_time = (esp_timer_get_time() - st) / 1000000;
+      p_time = round((esp_timer_get_time() - st) / 10000) / 100;
+      char b_p_time[50];  
+      std::sprintf(b_p_time, "%.2f", p_time);
+      std::string s_p_time(b_p_time);
 
       // Play時間を表示
       while (1) {
@@ -672,7 +782,6 @@ public:
           break;
         }
 
-        std::string t_text = "Time: " + (std::to_string(p_time)) + "s";
 
         sprite.fillRect(0, 0, 128, 64, 0);
 
@@ -681,7 +790,8 @@ public:
         sprite.print("Clear!");
 
         sprite.setFont(&fonts::Font2);
-        sprite.setCursor(37, 32);
+        sprite.setCursor(28, 32);
+        std::string t_text = "Time: " + s_p_time + "s";
         sprite.print(t_text.c_str());
         sprite.pushSprite(&lcd, 0, 0);
       }
@@ -719,9 +829,9 @@ std::map<std::string, std::string> Game::morse_code = {
 
 class MenuDisplay {
 
-#define NAME_LENGTH_MAX 8
+  #define NAME_LENGTH_MAX 8
 
-public:
+  public:
   void start_menu_task() {
     printf("Start Menu Task...");
     // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
@@ -751,7 +861,8 @@ public:
     TalkDisplay talk;
     BoxDisplay box;
     Game game;
-    MessageMenue messageMenue;
+    MessageMenu messageMenu;
+    SettingMenu settingMenu;
 
     Button type_button(GPIO_NUM_46);
     Button enter_button(GPIO_NUM_5);
@@ -854,18 +965,18 @@ public:
         printf("Push type:%c\n", type_button_state.push_type);
 
         if (cursor_index == 0) {
-          talk.running_flag = true;
-          talk.start_talk_task();
+          messageMenu.running_flag = true;
+          messageMenu.start_message_menue_task();
           // talkタスクの実行フラグがfalseになるまで待機
-          while (talk.running_flag) {
+          while (messageMenu.running_flag) {
             vTaskDelay(100 / portTICK_PERIOD_MS);
           }
           sprite.setFont(&fonts::Font4);
         } else if (cursor_index == 1) {
-          messageMenue.running_flag = true;
-          messageMenue.start_message_menue_task();
+          settingMenu.running_flag = true;
+          settingMenu.start_message_menue_task();
           // talkタスクの実行フラグがfalseになるまで待機
-          while (messageMenue.running_flag) {
+          while (settingMenu.running_flag) {
             vTaskDelay(100 / portTICK_PERIOD_MS);
           }
           sprite.setFont(&fonts::Font4);
@@ -928,7 +1039,7 @@ public:
 
 class Oled {
 
-public:
+  public:
   void BootDisplay() {
     printf("Booting!!!\n");
 
