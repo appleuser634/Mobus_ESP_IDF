@@ -114,7 +114,7 @@ public:
     Buzzer buzzer;
     Led led;
 
-    // Joystick joystick;
+    Joystick joystick;
 
     Button type_button(GPIO_NUM_46);
     Button back_button(GPIO_NUM_3);
@@ -136,7 +136,7 @@ public:
 
     while (true) {
 
-      // Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+      Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
       // printf("UP:%s\n", joystick_state.up ? "true" : "false");
       // printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
       // printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
@@ -188,9 +188,8 @@ public:
                  !back_button_state.pushed_same_time and
                  !type_button_state.pushing) {
         break;
-      // } else if (joystick_state.left) {
-      //   // FIXME
-      //   break;
+      } else if (joystick_state.left) {
+        break;
       } else if (enter_button_state.pushed) {
         esp_restart();
       } else if (back_button_state.pushed) {
@@ -370,13 +369,13 @@ class BoxDisplay {
 bool BoxDisplay::running_flag = false;
 
 
-class MessageMenu {
+class ContactBook {
 
   public:
   static bool running_flag;
 
   void start_message_menue_task() {
-    printf("Start MessageMenu Task...");
+    printf("Start ContactBook Task...");
     xTaskCreatePinnedToCore(&message_menue_task, "message_menue_task", 4096,
                             NULL, 6, NULL, 1);
   }
@@ -411,6 +410,8 @@ class MessageMenu {
 
     int select_index = 0;
     int font_height = 13;
+ 
+    TalkDisplay talk;
 
     while (1) {
 
@@ -424,16 +425,16 @@ class MessageMenu {
           enter_button.get_button_state();
 
       sprite.fillRect(0, 0, 128, 64, 0); 
-      sprite.fillRect(0, select_index * font_height + 3, 128, font_height, 0xFFFF);
       
       sprite.setFont(&fonts::Font2);
 
       int length = sizeof(contacts) / sizeof(contact_t) - 1;
-      for (int i = length; i >= 0; i--) {
+      for (int i = 0; i <= length; i++) {
         sprite.setCursor(10, font_height * i);
 
         if (i == select_index) {
           sprite.setTextColor(0x000000u,0xFFFFFFu);
+          sprite.fillRect(0, select_index * font_height, 128, font_height, 0xFFFF);
         } else {
           sprite.setTextColor(0xFFFFFFu,0x000000u);
         }
@@ -446,11 +447,22 @@ class MessageMenu {
         select_index += 1;
       }
 
-
       // ジョイスティック左を押されたらメニューへ戻る
       // 戻るボタンを押されたらメニューへ戻る
       if (joystick_state.left || back_button_state.pushed) {
         break;
+      }
+
+      if (type_button_state.pushed) {
+        talk.running_flag = true;
+        talk.start_talk_task();
+        while (talk.running_flag) {
+          vTaskDelay(100 / portTICK_PERIOD_MS);
+        }
+
+        type_button.clear_button_state();
+        type_button.reset_timer();
+        joystick.reset_timer();
       }
 
       sprite.pushSprite(&lcd, 0, 0);
@@ -461,7 +473,7 @@ class MessageMenu {
     vTaskDelete(NULL);
   };
 };
-bool MessageMenu::running_flag = false;
+bool ContactBook::running_flag = false;
 
 class SettingMenu {
 
@@ -469,7 +481,7 @@ class SettingMenu {
   static bool running_flag;
 
   void start_message_menue_task() {
-    printf("Start MessageMenu Task...");
+    printf("Start ContactBook Task...");
     xTaskCreatePinnedToCore(&message_menue_task, "message_menue_task", 4096,
                             NULL, 6, NULL, 1);
   }
@@ -858,10 +870,9 @@ class MenuDisplay {
     PowerMonitor power;
 
     // メニューから遷移する機能のインスタンス
-    TalkDisplay talk;
     BoxDisplay box;
     Game game;
-    MessageMenu messageMenu;
+    ContactBook contactBook;
     SettingMenu settingMenu;
 
     Button type_button(GPIO_NUM_46);
@@ -965,17 +976,15 @@ class MenuDisplay {
         printf("Push type:%c\n", type_button_state.push_type);
 
         if (cursor_index == 0) {
-          messageMenu.running_flag = true;
-          messageMenu.start_message_menue_task();
-          // talkタスクの実行フラグがfalseになるまで待機
-          while (messageMenu.running_flag) {
+          contactBook.running_flag = true;
+          contactBook.start_message_menue_task();
+          while (contactBook.running_flag) {
             vTaskDelay(100 / portTICK_PERIOD_MS);
           }
           sprite.setFont(&fonts::Font4);
         } else if (cursor_index == 1) {
           settingMenu.running_flag = true;
           settingMenu.start_message_menue_task();
-          // talkタスクの実行フラグがfalseになるまで待機
           while (settingMenu.running_flag) {
             vTaskDelay(100 / portTICK_PERIOD_MS);
           }
@@ -991,7 +1000,6 @@ class MenuDisplay {
         } else if (cursor_index == 2) {
           game.running_flag = true;
           game.start_game_task();
-          // talkタスクの実行フラグがfalseになるまで待機
           while (game.running_flag) {
             vTaskDelay(100 / portTICK_PERIOD_MS);
           }

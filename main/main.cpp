@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 #include "cJSON.h"
+#include <ArduinoJson.h>
 #include "driver/gpio.h"
 #include "driver/rtc_io.h"
 #include "esp_sleep.h"
@@ -78,8 +79,9 @@ void app_main(void) {
   WiFi wifi;
   wifi.main();
 
-  // HttpClient http_client;
-  // http_client.main();
+  HttpClient http_client;
+  http_client.get_message();
+  http_client.post_message();
 
   // Start ota task.
   // Ota ota;
@@ -111,4 +113,6 @@ void app_main(void) {
   printf("Restarting now.\n");
   fflush(stdout);
   esp_restart();
+
+
 }

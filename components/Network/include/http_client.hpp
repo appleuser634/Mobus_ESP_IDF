@@ -141,7 +141,7 @@ esp_err_t _http_client_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
-void http_rest_with_hostname_path(void)
+void http_get_message_task(void *pvParameters)
 {
     char local_response_buffer[MAX_HTTP_OUTPUT_BUFFER + 1] = {0};
 
@@ -154,6 +154,8 @@ void http_rest_with_hostname_path(void)
         .user_data = local_response_buffer,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
+
+    // std::string chat_to = *(std::string *)pvParameters;
 
     // GET 
     esp_http_client_set_header(client, "chat_from", "musashi");
@@ -170,33 +172,62 @@ void http_rest_with_hostname_path(void)
     ESP_LOG_BUFFER_HEX(TAG, local_response_buffer, strlen(local_response_buffer));
     printf("///////////// buffer ////////////");
     printf(local_response_buffer);
+    std::string str_res(local_response_buffer);
+    const char* json = str_res.c_str(); // const char* へのポインタを取得
 
-    // POST
-    // const char *post_data = "field1=value1&field2=value2";
-    // esp_http_client_set_url(client, "/post");
-    // esp_http_client_set_method(client, HTTP_METHOD_POST);
-    // esp_http_client_set_post_field(client, post_data, strlen(post_data));
-    // err = esp_http_client_perform(client);
-    // if (err == ESP_OK) {
-    //     ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %"PRId64,
-    //             esp_http_client_get_status_code(client),
-    //             esp_http_client_get_content_length(client));
-    // } else {
-    //     ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
-    // }
+    JsonDocument doc;
+    deserializeJson(doc, json);
 
-    esp_http_client_cleanup(client);
+    const char* message = doc["messages"][0];
+    printf("///////////// message ////////////");
+    printf(message);
+    vTaskDelete(NULL);
 }
 
-void http_test_task(void *pvParameters)
+void http_post_message_task(void *pvParameters)
 {
-    http_rest_with_hostname_path();
+    char local_response_buffer[MAX_HTTP_OUTPUT_BUFFER + 1] = {0};
+
+    esp_http_client_config_t config = {
+        .host = HTTP_ENDPOINT,
+        .port = 3000,
+        .path = "/messages",
+        .event_handler = _http_client_event_handler,
+        .transport_type = HTTP_TRANSPORT_OVER_TCP,
+        .user_data = local_response_buffer,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+
+    // POST
+    JsonDocument doc;
+    doc["message"] = "Hello! from mobus"; 
+    doc["from"] = "musashi";
+    doc["to"] = "hazuki";
+
+    char post_data[255];
+    serializeJson(doc, post_data, sizeof(post_data));
+
+    esp_http_client_set_url(client, "/messages");
+    esp_http_client_set_method(client, HTTP_METHOD_POST);
+    esp_http_client_set_post_field(client, post_data, strlen(post_data));
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %"PRId64,
+                esp_http_client_get_status_code(client),
+                esp_http_client_get_content_length(client));
+    } else {
+        ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
+    }
+
+    esp_http_client_cleanup(client); 
+    vTaskDelete(NULL);
 }
 
 class HttpClient {
   public:
-  void main(void)
-  {
+
+  HttpClient(void) {
       esp_err_t ret = nvs_flash_init();
       if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -214,6 +245,15 @@ class HttpClient {
       // ESP_ERROR_CHECK(example_connect());
       ESP_LOGI(TAG, "Connected to AP, begin http example");
 
-      xTaskCreate(&http_test_task, "http_test_task", 8192, NULL, 5, NULL);
+  }
+
+  void post_message(void)
+  {
+      xTaskCreatePinnedToCore(&http_post_message_task, "http_post_message_task", 8192, NULL, 5, NULL, 0);
+  }
+  
+  void get_message(void)
+  {
+      xTaskCreatePinnedToCore(&http_get_message_task, "http_get_message_task", 8192, NULL, 5, NULL, 0);
   }
 };
