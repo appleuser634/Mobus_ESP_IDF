@@ -79,9 +79,10 @@ void app_main(void) {
   WiFi wifi;
   wifi.main();
 
-  HttpClient http_client;
-  http_client.get_message();
-  http_client.post_message();
+  // HttpClient http_client;
+  // std::string chat_to = "hazuki";
+  // http_client.get_message(chat_to);
+  // http_client.post_message();
 
   // Start ota task.
   // Ota ota;

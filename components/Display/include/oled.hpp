@@ -272,16 +272,16 @@ std::map<std::string, std::string> TalkDisplay::morse_code = {
 int TalkDisplay::release_time = 0;
 bool TalkDisplay::running_flag = false;
 
-class BoxDisplay {
+class MessageBox {
 
   public:
   static bool running_flag;
   // static HttpClient http;
 
-  void start_box_task() {
+  void start_box_task(std::string chat_to) {
     printf("Start Box Task...");
     // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
-    xTaskCreatePinnedToCore(&box_task, "box_task", 4096, NULL, 6, NULL, 1);
+    xTaskCreatePinnedToCore(&box_task, "box_task", 4096, &chat_to, 6, NULL, 1);
   }
 
   static void box_task(void *pvParameters) {
@@ -293,6 +293,10 @@ class BoxDisplay {
     Button type_button(GPIO_NUM_46);
     Button back_button(GPIO_NUM_3);
     Button enter_button(GPIO_NUM_5);
+    
+    HttpClient http_client;
+    std::string chat_to = *(std::string *)pvParameters;
+    JsonDocument res = http_client.get_message(chat_to);
 
     lcd.setRotation(2);
 
@@ -300,73 +304,50 @@ class BoxDisplay {
     sprite.setFont(&fonts::Font2);
     sprite.setTextWrap(true); // 右端到達時のカーソル折り返しを禁止
     sprite.createSprite(lcd.width(), lcd.height() * 2.5);
-
-    sprite.setCursor(0, 0);
-    cJSON *message = NULL;
-    // printf("Messages Length:%d", cJSON_GetArraySize(HttpClient::messages));
-
-    // TODO: 正しいメッセージ件数を入れるようにする
-    int messages_n = 0;
-
-    // int messages_n = cJSON_GetArraySize(HttpClient::messages);
-    // if (messages_n == 0) {
-    //   sprite.print("No Message...");
-    // } else {
-
-    //   cJSON_ArrayForEach(message, HttpClient::messages) {
-    //     int message_id = cJSON_GetObjectItem(message, "ID")->valuedouble;
-    //     printf("MESSAGE_ID:%d\n", message_id);
-
-    //     std::string message_from =
-    //         cJSON_GetObjectItem(message, "MessageFrom")->valuestring;
-    //     printf("MESSAGE_FROM:%s\n", message_from.c_str());
-
-    //     std::string message_to =
-    //         cJSON_GetObjectItem(message, "MessageTo")->valuestring;
-    //     printf("MESSAGE_TO:%s\n", message_to.c_str());
-
-    //     std::string message_s =
-    //         cJSON_GetObjectItem(message, "Message")->valuestring;
-    //     printf("MESSAGE:%s\n", message_s.c_str());
-
-    //     sprite.print((message_s + "\n").c_str());
-    //   }
-    // }
-
-    sprite.pushSprite(&lcd, 0, 0);
-
+ 
     // 通知を非表示
     // http.notif_flag = false;
 
-    int show_y = 0;
+    int offset_y = 0;
     while (true) {
+      sprite.fillRect(0, 0, 128, 64, 0);
       Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
       Button::button_state_t back_button_state = back_button.get_button_state();
 
       if (joystick_state.left or back_button_state.pushed) {
         break;
-      } else if (joystick_state.up and messages_n) {
-        show_y += 8;
-      } else if (joystick_state.down and messages_n) {
-        show_y -= 8;
+      } else if (joystick_state.up) {
+        offset_y += 3;
+      } else if (joystick_state.down) {
+        offset_y -= 3;
+      }
+    
+      const char* message = "";
+      int cursor_y = 0;
+      for (int i = 0; i < res["messages"].size(); i++) {
+          message = res["messages"][i];
+          printf("message:%s\n",message);
+          cursor_y = offset_y + (20*(i+1));
+          sprite.setCursor(0, cursor_y);
+          sprite.print(message);
       }
 
-      if (show_y < (lcd.height() * -1.5)) {
-        show_y = (lcd.height() * -1.5);
-      } else if (show_y > 0) {
-        show_y = 0;
-      }
+      sprite.fillRect(0, 0, 128, 14, 0);
+      sprite.setCursor(0, 0);
+      sprite.print(chat_to.c_str());
+      sprite.drawFastHLine( 0, 14, 128, 0xFFFF); 
+
+      sprite.pushSprite(&lcd, 0, 0);
 
       // チャタリング防止用に100msのsleep
       vTaskDelay(10 / portTICK_PERIOD_MS);
-      sprite.pushSprite(&lcd, 0, show_y);
     }
 
     running_flag = false;
     vTaskDelete(NULL);
   };
 };
-bool BoxDisplay::running_flag = false;
+bool MessageBox::running_flag = false;
 
 
 class ContactBook {
@@ -402,7 +383,7 @@ class ContactBook {
     sprite.createSprite(lcd.width(), lcd.height());
 
     typedef struct {
-      char name[255];
+      std::string name;
       int user_id;
     } contact_t;
 
@@ -411,7 +392,7 @@ class ContactBook {
     int select_index = 0;
     int font_height = 13;
  
-    TalkDisplay talk;
+    MessageBox box;
 
     while (1) {
 
@@ -438,7 +419,7 @@ class ContactBook {
         } else {
           sprite.setTextColor(0xFFFFFFu,0x000000u);
         }
-        sprite.print(contacts[i].name);
+        sprite.print(contacts[i].name.c_str());
       }
 
       if (joystick_state.pushed_up_edge) {
@@ -454,9 +435,11 @@ class ContactBook {
       }
 
       if (type_button_state.pushed) {
-        talk.running_flag = true;
-        talk.start_talk_task();
-        while (talk.running_flag) {
+        // talk.running_flag = true;
+        // talk.start_talk_task(contacts[i].name);
+        box.running_flag = true;
+        box.start_box_task(contacts[select_index].name);
+        while (box.running_flag) {
           vTaskDelay(100 / portTICK_PERIOD_MS);
         }
 
@@ -870,7 +853,7 @@ class MenuDisplay {
     PowerMonitor power;
 
     // メニューから遷移する機能のインスタンス
-    BoxDisplay box;
+    MessageBox box;
     Game game;
     ContactBook contactBook;
     SettingMenu settingMenu;

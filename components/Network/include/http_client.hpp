@@ -141,6 +141,8 @@ esp_err_t _http_client_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
+JsonDocument res;
+int res_flag = 0;
 void http_get_message_task(void *pvParameters)
 {
     char local_response_buffer[MAX_HTTP_OUTPUT_BUFFER + 1] = {0};
@@ -155,11 +157,11 @@ void http_get_message_task(void *pvParameters)
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
 
-    // std::string chat_to = *(std::string *)pvParameters;
+    std::string chat_from = *(std::string *)pvParameters;
 
     // GET 
-    esp_http_client_set_header(client, "chat_from", "musashi");
-    esp_http_client_set_header(client, "chat_to", "hazuki");
+    esp_http_client_set_header(client, "chat_from", chat_from.c_str());
+    esp_http_client_set_header(client, "chat_to", "musashi");
     esp_err_t err = esp_http_client_perform(client);
 
     if (err == ESP_OK) {
@@ -175,12 +177,11 @@ void http_get_message_task(void *pvParameters)
     std::string str_res(local_response_buffer);
     const char* json = str_res.c_str(); // const char* へのポインタを取得
 
-    JsonDocument doc;
-    deserializeJson(doc, json);
+    deserializeJson(res, json);
+    printf("///////////// res size: %d ////////////",res["messages"].size());
+    printf(local_response_buffer);
+    res_flag = 1;
 
-    const char* message = doc["messages"][0];
-    printf("///////////// message ////////////");
-    printf(message);
     vTaskDelete(NULL);
 }
 
@@ -252,8 +253,13 @@ class HttpClient {
       xTaskCreatePinnedToCore(&http_post_message_task, "http_post_message_task", 8192, NULL, 5, NULL, 0);
   }
   
-  void get_message(void)
+  JsonDocument get_message(std::string chat_from)
   {
-      xTaskCreatePinnedToCore(&http_get_message_task, "http_get_message_task", 8192, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(&http_get_message_task, "http_get_message_task", 8192, &chat_from, 5, NULL, 0);
+    while (!res_flag) {
+      vTaskDelay(1);
+    }
+    res_flag = 0;
+    return res;
   }
 };
