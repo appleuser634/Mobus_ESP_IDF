@@ -2,7 +2,6 @@
 #include <stdlib.h>
 
 #include "cJSON.h"
-#include <ArduinoJson.h>
 #include "driver/gpio.h"
 #include "driver/rtc_io.h"
 #include "esp_sleep.h"
@@ -13,6 +12,7 @@
 #include "freertos/task.h"
 #include "hal/gpio_types.h"
 #include "sdkconfig.h"
+#include <ArduinoJson.h>
 
 static const char *TAG = "Mobus v3.14";
 
@@ -45,14 +45,21 @@ void app_main(void) {
 
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
   if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
-    // キャラクターの挨拶を描画
-    for (int i = 0; i <= 2; i++) {
-      oled.ShowImage(robo1);
-      vTaskDelay(800 / portTICK_PERIOD_MS);
+    //// キャラクターの挨拶を描画
+    // for (int i = 0; i <= 2; i++) {
+    //   oled.ShowImage(robo1);
+    //   vTaskDelay(800 / portTICK_PERIOD_MS);
 
-      oled.ShowImage(robo2);
-      vTaskDelay(800 / portTICK_PERIOD_MS);
-    }
+    //  oled.ShowImage(robo2);
+    //  vTaskDelay(800 / portTICK_PERIOD_MS);
+    //}
+
+    // 起動音を鳴らす
+    Buzzer buzzer;
+    buzzer.boot_sound();
+    // 起動時のロゴを表示
+    oled.BootDisplay();
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
   } else {
     // 起動音を鳴らす
     Buzzer buzzer;
@@ -114,6 +121,4 @@ void app_main(void) {
   printf("Restarting now.\n");
   fflush(stdout);
   esp_restart();
-
-
 }
