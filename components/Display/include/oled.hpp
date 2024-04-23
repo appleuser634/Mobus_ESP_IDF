@@ -101,10 +101,10 @@ public:
 
   static bool running_flag;
 
-  void start_talk_task() {
+  void start_talk_task(std::string chat_to) {
     printf("Start Talk Task...");
     // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
-    xTaskCreatePinnedToCore(&talk_task, "talk_task", 4096, NULL, 6, NULL, 1);
+    xTaskCreatePinnedToCore(&talk_task, "talk_task", 4096, &chat_to, 6, NULL, 1);
   }
 
   static void talk_task(void *pvParameters) {
@@ -115,12 +115,14 @@ public:
     Led led;
 
     Joystick joystick;
+		
+		HttpClient http_client;
 
     Button type_button(GPIO_NUM_46);
     Button back_button(GPIO_NUM_3);
     Button enter_button(GPIO_NUM_5);
 
-    // HttpClient http;
+    std::string chat_to = *(std::string *)pvParameters;
 
     lcd.setRotation(2);
 
@@ -137,10 +139,6 @@ public:
     while (true) {
 
       Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
-      // printf("UP:%s\n", joystick_state.up ? "true" : "false");
-      // printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
-      // printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
-      // printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
 
       // モールス信号打ち込みキーの判定ロジック
       Button::button_state_t type_button_state = type_button.get_button_state();
@@ -190,8 +188,6 @@ public:
         break;
       } else if (joystick_state.left) {
         break;
-      } else if (enter_button_state.pushed) {
-        esp_restart();
       } else if (back_button_state.pushed) {
         back_button.clear_button_state();
       }
@@ -202,7 +198,9 @@ public:
         printf("Pushing time:%lld\n", enter_button_state.pushing_sec);
         printf("Push type:%c\n", enter_button_state.push_type);
 
-        // http.post_message(message_text);
+        std::string chat_to_data[] = {chat_to, message_text};
+        // std::string chat_to_data = message_text;
+        http_client.post_message(chat_to_data);
         message_text = "";
 
         SendAnimation();
@@ -276,7 +274,6 @@ class MessageBox {
 
   public:
   static bool running_flag;
-  // static HttpClient http;
 
   void start_box_task(std::string chat_to) {
     printf("Start Box Task...");
@@ -288,13 +285,14 @@ class MessageBox {
     lcd.init();
     lcd.setRotation(0);
 
+    TalkDisplay talk;
     Joystick joystick;
 
     Button type_button(GPIO_NUM_46);
     Button back_button(GPIO_NUM_3);
     Button enter_button(GPIO_NUM_5);
     
-    HttpClient http_client;
+		HttpClient http_client;
     std::string chat_to = *(std::string *)pvParameters;
     JsonDocument res = http_client.get_message(chat_to);
 
@@ -312,8 +310,10 @@ class MessageBox {
     while (true) {
       sprite.fillRect(0, 0, 128, 64, 0);
       Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+      Button::button_state_t type_button_state = type_button.get_button_state();
       Button::button_state_t back_button_state = back_button.get_button_state();
 
+      // 入力イベント
       if (joystick_state.left or back_button_state.pushed) {
         break;
       } else if (joystick_state.up) {
@@ -321,7 +321,22 @@ class MessageBox {
       } else if (joystick_state.down) {
         offset_y -= 3;
       }
+      if (type_button_state.pushed) {
+        talk.running_flag = true;
+        talk.start_talk_task(chat_to);
+        
+        while (talk.running_flag) {
+          vTaskDelay(100 / portTICK_PERIOD_MS);
+        }
+
+        sprite.setColorDepth(8);
+        sprite.setFont(&fonts::Font2);
+        type_button.clear_button_state();
+        type_button.reset_timer();
+        joystick.reset_timer();
+      }
     
+      // 描画処理
       const char* message = "";
       int cursor_y = 0;
       for (int i = 0; i < res["messages"].size(); i++) {
@@ -449,7 +464,7 @@ class ContactBook {
       }
 
       sprite.pushSprite(&lcd, 0, 0);
-      vTaskDelay(100 / portTICK_PERIOD_MS);
+      vTaskDelay(1);
     }
 
     running_flag = false;

@@ -185,6 +185,8 @@ void http_get_message_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
+std::string chat_to = "";
+std::string message = "";
 void http_post_message_task(void *pvParameters)
 {
     char local_response_buffer[MAX_HTTP_OUTPUT_BUFFER + 1] = {0};
@@ -199,11 +201,17 @@ void http_post_message_task(void *pvParameters)
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
 
+    // std::string* chat_to_data = static_cast<std::string*>(pvParameters);;
+    // std::string chat_to_data[] = (std::string *)pvParameters;
+    // std::string chat_to = chat_to_data[0];
+    // std::string message = chat_to_data[1];
+    //std::string message = *(std::string *)pvParameters;
+
     // POST
     JsonDocument doc;
-    doc["message"] = "Hello! from mobus"; 
+    doc["message"] = message; 
     doc["from"] = "musashi";
-    doc["to"] = "hazuki";
+    doc["to"] = "Hazuki";
 
     char post_data[255];
     serializeJson(doc, post_data, sizeof(post_data));
@@ -248,9 +256,11 @@ class HttpClient {
 
   }
 
-  void post_message(void)
+  void post_message(const std::string* chat_to_data)
   {
-      xTaskCreatePinnedToCore(&http_post_message_task, "http_post_message_task", 8192, NULL, 5, NULL, 0);
+			chat_to = chat_to_data[0];
+			message = chat_to_data[1];
+      xTaskCreatePinnedToCore(&http_post_message_task, "http_post_message_task", 8192, &chat_to_data, 5, NULL, 0);
   }
   
   JsonDocument get_message(std::string chat_from)
