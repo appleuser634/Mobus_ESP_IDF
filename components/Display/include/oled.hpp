@@ -511,19 +511,23 @@ class SettingMenu {
 
     lcd.setRotation(2);
 
+    int MAX_SETTINGS = 20;
+    int ITEM_PER_PAGE = 4;
+
     sprite.setColorDepth(8);
     sprite.setFont(&fonts::Font4);
     sprite.setTextWrap(true); // 右端到達時のカーソル折り返しを禁止
-    sprite.createSprite(lcd.width(), lcd.height());
+    sprite.createSprite(lcd.width(), lcd.height()*(MAX_SETTINGS/ITEM_PER_PAGE));
 
     typedef struct {
-      char name[255];
-      int user_id;
-    } contact_t;
+      std::string setting_name;
+    } setting_t;
 
-    contact_t contacts[4] = {{"Profile", 1}, {"WiFi", 2}, {"Sound", 3}, {"Light", 4}};
+    setting_t settings[4] = {{"Profile"}, {"Wi-Fi"}, {"Sound"}, {"Notif"}};
 
-    int select_y = 0;
+    int select_index = 0;
+    int font_height = 13;
+    int margin = 3;
 
     while (1) {
 
@@ -536,38 +540,56 @@ class SettingMenu {
       Button::button_state_t enter_button_state =
           enter_button.get_button_state();
 
-      sprite.fillRect(0, 0, 128, 64, 0);
-
+      sprite.fillScreen(0); 
+      
       sprite.setFont(&fonts::Font2);
 
-      int length = sizeof(contacts) / sizeof(contact_t) - 1;
-      int cur_y_offset = 13;
-      for (int i = length; i >= 0; i--) {
-        sprite.setCursor(10, cur_y_offset * i);
-        if (i == select_y) {
-          lcd.setColor(0x000000u);
+      int length = sizeof(settings) / sizeof(setting_t) - 1;
+      for (int i = 0; i <= length; i++) {
+        sprite.setCursor(10, (font_height+margin) * i);
+
+        if (i == select_index) {
+          sprite.setTextColor(0x000000u,0xFFFFFFu);
+          sprite.fillRect(0, (font_height+margin) * select_index, 128, font_height + 3, 0xFFFF);
         } else {
-          lcd.setColor(0xFFFFFFu);
+          sprite.setTextColor(0xFFFFFFu,0x000000u);
         }
-        sprite.print(contacts[i].name);
+        sprite.print(settings[i].setting_name.c_str());
       }
 
       if (joystick_state.pushed_up_edge) {
-        select_y -= 13;
+        select_index -= 1;
       } else if (joystick_state.pushed_down_edge) {
-        select_y += 13;
+        select_index += 1;
       }
 
-      sprite.fillRect(0, select_y, 128, 13, 0xFFFF);
+      if (select_index < 0) {
+        select_index = 0;
+      } else if (select_index >= length) {
+        select_index = length;
+      }
 
-      // ジョスティック左を押されたらメニューへ戻る
+      sprite.pushSprite(&lcd, 0, (int)(select_index/ITEM_PER_PAGE)*-64);
+      
+      // ジョイスティック左を押されたらメニューへ戻る
       // 戻るボタンを押されたらメニューへ戻る
       if (joystick_state.left || back_button_state.pushed) {
         break;
       }
 
-      sprite.pushSprite(&lcd, 0, 0);
-      vTaskDelay(100 / portTICK_PERIOD_MS);
+      if (type_button_state.pushed) {
+        // box.running_flag = true;
+        // box.start_box_task(contacts[select_index].name);
+        // while (box.running_flag) {
+        //   vTaskDelay(100 / portTICK_PERIOD_MS);
+        // }
+
+        type_button.clear_button_state();
+        type_button.reset_timer();
+        joystick.reset_timer();
+      }
+
+      vTaskDelay(1);
     }
 
     running_flag = false;
