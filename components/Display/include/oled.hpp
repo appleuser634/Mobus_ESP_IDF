@@ -127,7 +127,8 @@ public:
     lcd.setRotation(2);
 
     sprite.setColorDepth(8);
-    sprite.setFont(&fonts::Font4);
+    sprite.setFont(&fonts::Font2);
+
     // sprite.setFont(&fonts::Font2);
     // sprite.setFont(&fonts::FreeMono9pt7b);
     sprite.setTextWrap(true); // 右端到達時のカーソル折り返しを禁止
@@ -392,23 +393,26 @@ class ContactBook {
 
     lcd.setRotation(2);
 
+    int MAX_CONTACTS = 20;
+    int CONTACT_PER_PAGE = 4;
+
     sprite.setColorDepth(8);
     sprite.setFont(&fonts::Font4);
     sprite.setTextWrap(true); // 右端到達時のカーソル折り返しを禁止
-    sprite.createSprite(lcd.width(), lcd.height());
+    sprite.createSprite(lcd.width(), lcd.height()*(MAX_CONTACTS/CONTACT_PER_PAGE));
 
     typedef struct {
       std::string name;
       int user_id;
     } contact_t;
 
-    contact_t contacts[4] = {{"Musashi", 1}, {"Hazuki", 2}, {"Kiki", 3}, {"Chibi", 4}};
+    contact_t contacts[6] = {{"Musashi", 1}, {"Hazuki", 2}, {"Kiki", 3}, {"Chibi", 4}, {"Saku", 5}, {"Buncha", 6}};
 
     int select_index = 0;
     int font_height = 13;
- 
-    MessageBox box;
+    int margin = 3;
 
+    MessageBox box;
     while (1) {
 
       // Joystickの状態を取得
@@ -420,17 +424,17 @@ class ContactBook {
       Button::button_state_t enter_button_state =
           enter_button.get_button_state();
 
-      sprite.fillRect(0, 0, 128, 64, 0); 
+      sprite.fillScreen(0); 
       
       sprite.setFont(&fonts::Font2);
 
       int length = sizeof(contacts) / sizeof(contact_t) - 1;
       for (int i = 0; i <= length; i++) {
-        sprite.setCursor(10, font_height * i);
+        sprite.setCursor(10, (font_height+margin) * i);
 
         if (i == select_index) {
           sprite.setTextColor(0x000000u,0xFFFFFFu);
-          sprite.fillRect(0, select_index * font_height, 128, font_height, 0xFFFF);
+          sprite.fillRect(0, (font_height+margin) * select_index, 128, font_height + 3, 0xFFFF);
         } else {
           sprite.setTextColor(0xFFFFFFu,0x000000u);
         }
@@ -443,6 +447,14 @@ class ContactBook {
         select_index += 1;
       }
 
+      if (select_index < 0) {
+        select_index = 0;
+      } else if (select_index >= length) {
+        select_index = length;
+      }
+
+      sprite.pushSprite(&lcd, 0, (int)(select_index/CONTACT_PER_PAGE)*-64);
+      
       // ジョイスティック左を押されたらメニューへ戻る
       // 戻るボタンを押されたらメニューへ戻る
       if (joystick_state.left || back_button_state.pushed) {
@@ -463,7 +475,6 @@ class ContactBook {
         joystick.reset_timer();
       }
 
-      sprite.pushSprite(&lcd, 0, 0);
       vTaskDelay(1);
     }
 
