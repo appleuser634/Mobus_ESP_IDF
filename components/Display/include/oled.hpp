@@ -501,35 +501,72 @@ class WiFiSetting {
     xTaskCreatePinnedToCore(&wifi_setting_task, "wifi_setting_task", 4096, NULL, 6, NULL, 1);
   }
 
-  static void set_wifi_info() {
+  static std::string get_omitted_ssid(uint8_t* uint_ssid) {
+    if (uint_ssid == 0) {
+      return "";
+    }
+
+    char char_ssid[33];
+    sprintf(char_ssid, "%s", uint_ssid);
+    std::string ssid(char_ssid);
+
+    // SSIDが12文字以内に収まるように加工
+    if (ssid.length() >= 12) {
+      return ssid.substr(0, 6) + "..." + ssid.substr(ssid.length() - 3);
+    }
+    return ssid;
+  }
+
+  static void set_wifi_info(uint8_t* ssid = 0) {
+    int select_index = 0;
+    int font_height = 13;
+    int margin = 3;
+    while(1) {
       sprite.fillRect(0, 0, 128, 64, 0);
 
+      Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+      Button::button_state_t type_button_state = type_button.get_button_state();
+      Button::button_state_t back_button_state = back_button.get_button_state();
 
-      int select_index = 0;
-
-      while(1) {
-
-        Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
-        Button::button_state_t type_button_state = type_button.get_button_state();
-        Button::button_state_t back_button_state = back_button.get_button_state();
-
-        // 入力イベント
-        if (joystick_state.left or back_button_state.pushed) {
-          break;
-        } else if (joystick_state.pushed_up_edge) {
-          select_index -= 1;
-        } else if (joystick_state.pushed_down_edge) {
-          select_index += 1;
-        }
-
-        sprite.setCursor(0, 0);
-        sprite.print("input wifi info");
-        sprite.pushSprite(&lcd, 0, 0);
-
-        // チャタリング防止用に100msのsleep
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+      // 入力イベント
+      if (joystick_state.left or back_button_state.pushed) {
+        break;
+      } else if (joystick_state.pushed_up_edge) {
+        select_index -= 1;
+      } else if (joystick_state.pushed_down_edge) {
+        select_index += 1;
       }
 
+      if (select_index > 1) {
+        select_index = 1;
+      } else if (select_index < 0) {
+        select_index = 0;
+      }
+
+      sprite.setCursor(0, 0);
+      if (select_index == 0) {
+        sprite.fillRect(0, (font_height+margin) * select_index, 128, font_height + 3, 0xFFFF);
+        sprite.setTextColor(0x000000u,0xFFFFFFu);
+      } else {
+        sprite.setTextColor(0xFFFFFFu,0x000000u);
+      }
+      std::string disp_ssid = "SSID: " + get_omitted_ssid(ssid);
+      sprite.print(disp_ssid.c_str());
+
+      sprite.setCursor(0, font_height+margin);
+      if (select_index == 1) {
+        sprite.fillRect(0, (font_height+margin) * select_index, 128, font_height + 3, 0xFFFF);
+        sprite.setTextColor(0x000000u,0xFFFFFFu);
+      } else {
+        sprite.setTextColor(0xFFFFFFu,0x000000u);
+      }
+      sprite.print("PASSWORD: ****"); 
+
+      sprite.pushSprite(&lcd, 0, 0);
+
+      // チャタリング防止用に100msのsleep
+      vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
   }
 
   static void wifi_setting_task(void *pvParameters) {
@@ -608,14 +645,7 @@ class WiFiSetting {
           sprite.print(disp_ssid.c_str());
         } else {
           // スキャンの結果取得できたSSIDを表示
-          char ssid[33];
-          sprintf(ssid, "%s", ap_info[i].ssid);
-          std::string disp_ssid(ssid);
-          // SSIDが10文字以内に収まるように加工
-          if (disp_ssid.length() >= 12) {
-            disp_ssid = disp_ssid.substr(0, 6) + "..." + disp_ssid.substr(disp_ssid.length() - 3);
-          }
-          sprite.print(disp_ssid.c_str());
+          sprite.print(get_omitted_ssid(ap_info[i].ssid).c_str());
         }
       }
 
@@ -623,11 +653,16 @@ class WiFiSetting {
 
       // 個別のWiFi設定画面へ遷移
       if (type_button_state.pushed) {
+        if (ssid_n == select_index) {
+          set_wifi_info();
+        } else {
+          set_wifi_info(ap_info[select_index].ssid);
+        }
         type_button.clear_button_state();
         type_button.reset_timer();
+        back_button.clear_button_state();
+        back_button.reset_timer();
         joystick.reset_timer();
-
-        set_wifi_info();
       }
 
       // チャタリング防止用に100msのsleep
