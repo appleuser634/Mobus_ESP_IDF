@@ -484,6 +484,125 @@ class ContactBook {
 };
 bool ContactBook::running_flag = false;
 
+class WiFiSetting {
+
+  public:
+  static bool running_flag;
+
+  void start_wifi_setting_task() {
+    printf("Start WiFi Setting Task...");
+    // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
+    xTaskCreatePinnedToCore(&wifi_setting_task, "wifi_setting_task", 4096, NULL, 6, NULL, 1);
+  }
+
+  static void wifi_setting_task(void *pvParameters) {
+    lcd.init();
+
+    Joystick joystick;
+
+    Button type_button(GPIO_NUM_46);
+    Button back_button(GPIO_NUM_3);
+    Button enter_button(GPIO_NUM_5);
+    
+    lcd.setRotation(2);
+
+    sprite.setColorDepth(8);
+    sprite.setFont(&fonts::Font2);
+    sprite.setTextWrap(true); // 右端到達時のカーソル折り返しを禁止
+    sprite.createSprite(lcd.width(), lcd.height());
+
+    sprite.fillRect(0, 0, 128, 64, 0);
+    sprite.setCursor(30, 20);
+    sprite.print("Scanning...");
+    sprite.pushSprite(&lcd, 0, 0);
+    
+    WiFi wifi;
+
+    uint16_t ssid_n = DEFAULT_SCAN_LIST_SIZE;
+    wifi_ap_record_t ap_info[DEFAULT_SCAN_LIST_SIZE];
+    wifi.wifi_scan(&ssid_n,ap_info);
+
+    int select_index = 0;
+    int font_height = 13;
+    int margin = 3;
+ 
+    while (true) {
+
+      sprite.fillRect(0, 0, 128, 64, 0);
+
+      Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+      Button::button_state_t type_button_state = type_button.get_button_state();
+      Button::button_state_t back_button_state = back_button.get_button_state();
+
+      // 入力イベント
+      if (joystick_state.left or back_button_state.pushed) {
+        break;
+      } else if (joystick_state.pushed_up_edge) {
+        select_index -= 1;
+      } else if (joystick_state.pushed_down_edge) {
+        select_index += 1;
+      }
+
+      if (select_index < 0) {
+        select_index = 0;
+      } else if (select_index > ssid_n) {
+        select_index = ssid_n;
+      }
+
+
+      if (type_button_state.pushed) {
+        sprite.setColorDepth(8);
+        sprite.setFont(&fonts::Font2);
+        type_button.clear_button_state();
+        type_button.reset_timer();
+        joystick.reset_timer();
+      }
+    
+      for (int i = 0; i <= ssid_n; i++) {
+        sprite.setCursor(10, (font_height+margin) * i);
+
+        ESP_LOGI(TAG, "SSID \t\t%s", ap_info[i].ssid);
+        ESP_LOGI(TAG, "RSSI \t\t%d", ap_info[i].rssi);
+        ESP_LOGI(TAG, "Channel \t\t%d", ap_info[i].primary);
+
+        if (i == select_index) {
+          sprite.setTextColor(0x000000u,0xFFFFFFu);
+          sprite.fillRect(0, (font_height+margin) * select_index, 128, font_height + 3, 0xFFFF);
+        } else {
+          sprite.setTextColor(0xFFFFFFu,0x000000u);
+        }
+
+
+        if (ssid_n == i) {
+          // 手動入力のためのOtherを表示
+          std::string disp_ssid = "Other";
+          sprite.print(disp_ssid.c_str());
+        } else {
+          // スキャンの結果取得できたSSIDを表示
+          char ssid[33];
+          sprintf(ssid, "%s", ap_info[i].ssid);
+          std::string disp_ssid(ssid);
+          // SSIDが10文字以内に収まるように加工
+          if (disp_ssid.length() >= 12) {
+            disp_ssid = disp_ssid.substr(0, 6) + "..." + disp_ssid.substr(disp_ssid.length() - 3);
+          }
+          sprite.print(disp_ssid.c_str());
+        }
+      }
+
+      sprite.pushSprite(&lcd, 0, 0);
+
+      // チャタリング防止用に100msのsleep
+      vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+
+    running_flag = false;
+    vTaskDelete(NULL);
+  };
+};
+bool WiFiSetting::running_flag = false;
+
+
 class SettingMenu {
 
   public:
@@ -499,6 +618,8 @@ class SettingMenu {
 
     lcd.init();
     lcd.setRotation(0);
+
+    WiFiSetting wifi_setting;
 
     Buzzer buzzer;
     Led led;
@@ -577,13 +698,12 @@ class SettingMenu {
         break;
       }
 
-      if (type_button_state.pushed) {
-        // box.running_flag = true;
-        // box.start_box_task(contacts[select_index].name);
-        // while (box.running_flag) {
-        //   vTaskDelay(100 / portTICK_PERIOD_MS);
-        // }
-
+      if (type_button_state.pushed && settings[select_index].setting_name == "Wi-Fi") {
+        wifi_setting.running_flag = true;
+        wifi_setting.start_wifi_setting_task();
+        while (wifi_setting.running_flag) {
+          vTaskDelay(100 / portTICK_PERIOD_MS);
+        }
         type_button.clear_button_state();
         type_button.reset_timer();
         joystick.reset_timer();

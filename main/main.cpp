@@ -23,11 +23,11 @@ static const char *TAG = "Mobus v3.14";
 #include <joystick.h>
 #include <power_monitor.h>
 
+#include <wifi.hpp>
 #include <http_client.hpp>
 #include <oled.hpp>
 
 // #include <notification.hpp>
-#include <wifi.hpp>
 
 // #include <provisioning.h>
 #include <ota.hpp>

@@ -13,6 +13,7 @@
 
 #define EXAMPLE_ESP_WIFI_SSID      "elecom-3e6943_24"
 #define EXAMPLE_ESP_WIFI_PASS      "7ku65wjwx8fv"
+#define DEFAULT_SCAN_LIST_SIZE 10
 
 #define EXAMPLE_ESP_MAXIMUM_RETRY  10
 
@@ -140,6 +141,18 @@ class WiFi {
 
     wifi_state_t get_wifi_state() {
         return wifi_state;
+    }
+
+    static void wifi_scan(uint16_t *number, wifi_ap_record_t *ap_info) {
+        uint16_t ap_count = 0;
+        memset(ap_info, 0, sizeof(*ap_info));
+
+        esp_wifi_scan_start(NULL, true);
+
+        ESP_LOGI(TAG, "Max AP number ap_info can hold = %u", *number);
+        ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(number, ap_info));
+        ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
+        ESP_LOGI(TAG, "Total APs scanned = %u, actual AP number ap_info holds = %u", ap_count, *number);
     }
 
     void main(void)
