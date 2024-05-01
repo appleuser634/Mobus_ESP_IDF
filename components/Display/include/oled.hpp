@@ -10,6 +10,12 @@
 
 #pragma once
 
+Joystick joystick;
+
+Button type_button(GPIO_NUM_46);
+Button back_button(GPIO_NUM_3);
+Button enter_button(GPIO_NUM_5);
+
 class LGFX : public lgfx::LGFX_Device {
   lgfx::Panel_SH110x _panel_instance;
   lgfx::Bus_I2C _bus_instance;
@@ -495,15 +501,39 @@ class WiFiSetting {
     xTaskCreatePinnedToCore(&wifi_setting_task, "wifi_setting_task", 4096, NULL, 6, NULL, 1);
   }
 
+  static void set_wifi_info() {
+      sprite.fillRect(0, 0, 128, 64, 0);
+
+
+      int select_index = 0;
+
+      while(1) {
+
+        Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+        Button::button_state_t type_button_state = type_button.get_button_state();
+        Button::button_state_t back_button_state = back_button.get_button_state();
+
+        // 入力イベント
+        if (joystick_state.left or back_button_state.pushed) {
+          break;
+        } else if (joystick_state.pushed_up_edge) {
+          select_index -= 1;
+        } else if (joystick_state.pushed_down_edge) {
+          select_index += 1;
+        }
+
+        sprite.setCursor(0, 0);
+        sprite.print("input wifi info");
+        sprite.pushSprite(&lcd, 0, 0);
+
+        // チャタリング防止用に100msのsleep
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+      }
+
+  }
+
   static void wifi_setting_task(void *pvParameters) {
     lcd.init();
-
-    Joystick joystick;
-
-    Button type_button(GPIO_NUM_46);
-    Button back_button(GPIO_NUM_3);
-    Button enter_button(GPIO_NUM_5);
-    
     lcd.setRotation(2);
 
     sprite.setColorDepth(8);
@@ -572,7 +602,6 @@ class WiFiSetting {
           sprite.setTextColor(0xFFFFFFu,0x000000u);
         }
 
-
         if (ssid_n == i) {
           // 手動入力のためのOtherを表示
           std::string disp_ssid = "Other";
@@ -592,6 +621,15 @@ class WiFiSetting {
 
       sprite.pushSprite(&lcd, 0, 0);
 
+      // 個別のWiFi設定画面へ遷移
+      if (type_button_state.pushed) {
+        type_button.clear_button_state();
+        type_button.reset_timer();
+        joystick.reset_timer();
+
+        set_wifi_info();
+      }
+
       // チャタリング防止用に100msのsleep
       vTaskDelay(10 / portTICK_PERIOD_MS);
     }
@@ -609,7 +647,7 @@ class SettingMenu {
   static bool running_flag;
 
   void start_message_menue_task() {
-    printf("Start ContactBook Task...");
+    printf("Start MessageMenue Task...");
     xTaskCreatePinnedToCore(&message_menue_task, "message_menue_task", 4096,
                             NULL, 6, NULL, 1);
   }
