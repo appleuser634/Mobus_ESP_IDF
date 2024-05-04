@@ -517,6 +517,98 @@ class WiFiSetting {
     return ssid;
   }
 
+  static void input_info() {
+    int select_x_index = 0;
+    int select_y_index = 0;
+
+ 		// 文字列の配列を作成
+    char char_set[7][35];
+
+    sprintf(char_set[0], "0123456789");
+    sprintf(char_set[1], "abcdefghijklmn");
+		sprintf(char_set[2], "opqrstuvwxyz");
+    sprintf(char_set[3], "ABCDEFGHIJKLMN");
+		sprintf(char_set[4], "OPQRSTUVWXYZ");
+    sprintf(char_set[5], "!\"#$%%&\\'()*+,");
+		sprintf(char_set[6], "-./:;<=>?@[]^_`{|}~");
+
+    int font_ = 13;
+    int margin = 3;
+
+		std::string type_text = "";
+
+    while(1) {
+      sprite.fillRect(0, 0, 128, 64, 0);
+
+      sprite.setCursor(0, 0);
+      sprite.print("SSID");
+      sprite.drawFastHLine(0, 14, 128, 0xFFFF);
+      sprite.drawFastHLine(0, 45, 128, 0xFFFF);
+
+      Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
+      Button::button_state_t type_button_state = type_button.get_button_state();
+      Button::button_state_t back_button_state = back_button.get_button_state();
+
+      // 入力イベント
+      if (back_button_state.pushed) {
+        break;
+      } else if (joystick_state.pushed_left_edge) {
+        select_x_index -= 1;
+      } else if (joystick_state.pushed_right_edge) {
+        select_x_index += 1;
+      } else if (joystick_state.pushed_up_edge) {
+        select_y_index -= 1;
+      } else if (joystick_state.pushed_down_edge) {
+        select_y_index += 1;
+      } else if (type_button_state.pushed) {
+				type_text = type_text + char_set[select_y_index][select_x_index];
+				type_button.clear_button_state();
+        type_button.reset_timer();
+			}
+
+			// 文字種のスクロールの設定
+			int char_set_length = sizeof(char_set)/sizeof(char_set[0]);
+			if (select_y_index >= char_set_length){
+				select_y_index = 0;
+			} else if (select_y_index < 0){
+				select_y_index = char_set_length - 1;
+			}
+
+			// 文字選択のスクロールの設定
+			if (char_set[select_y_index][select_x_index] == '\0'){
+				// 一番右へ行ったら左へ戻る
+				select_x_index = 0;
+			} else if (select_y_index < 0){
+				// 一番左へ行ったら右へ戻る
+				select_x_index = 0;
+				for (int i = 0; char_set[select_y_index][i] != '\0'; i++){
+					select_x_index += 1;
+				}
+			}
+
+			int draw_x = 0;
+			for (int i = 0; char_set[select_y_index][i] != '\0'; i++) {
+				sprite.setCursor(draw_x, 46);
+				if (select_x_index == i) {
+        	sprite.setTextColor(0x000000u,0xFFFFFFu);
+				} else {
+        	sprite.setTextColor(0xFFFFFFu,0x000000u);
+				}
+				sprite.print(char_set[select_y_index][i]);
+		    char c = char_set[select_y_index][i];
+   		 	const char* c_ptr = &c;
+				draw_x += sprite.textWidth(c_ptr);
+			}
+			
+			// 入力された文字の表示
+      sprite.setTextColor(0xFFFFFFu,0x000000u);
+      sprite.setCursor(0, 15);
+      sprite.print(type_text.c_str());
+
+      sprite.pushSprite(&lcd, 0, 0);
+    }
+  }
+
   static void set_wifi_info(uint8_t* ssid = 0) {
     int select_index = 0;
     int font_height = 13;
@@ -563,6 +655,16 @@ class WiFiSetting {
       sprite.print("PASSWORD: ****"); 
 
       sprite.pushSprite(&lcd, 0, 0);
+
+      // 個別の情報入力画面へ遷移
+      if (type_button_state.pushed) {
+        type_button.clear_button_state();
+        type_button.reset_timer();
+        back_button.clear_button_state();
+        back_button.reset_timer();
+        joystick.reset_timer();
+        input_info();
+      }
 
       // チャタリング防止用に100msのsleep
       vTaskDelay(10 / portTICK_PERIOD_MS);
