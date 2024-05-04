@@ -65,8 +65,15 @@ class WiFi {
     }
 
 
-    void wifi_init_sta(void)
+    void wifi_init_sta(std::string WIFI_SSID = "",std::string WIFI_PASS = "")
     {
+        if (WIFI_SSID == ""){
+          WIFI_SSID = EXAMPLE_ESP_WIFI_SSID;
+        } 
+        if (WIFI_PASS == ""){
+          WIFI_PASS = EXAMPLE_ESP_WIFI_PASS;
+        } 
+        
         s_wifi_event_group = xEventGroupCreate();
 
         ESP_ERROR_CHECK(esp_netif_init());
@@ -90,23 +97,11 @@ class WiFi {
                                                             NULL,
                                                             &instance_got_ip));
 
-        //wifi_config_t wifi_config = {
-        //    .sta = {
-        //        .ssid = EXAMPLE_ESP_WIFI_SSID,
-        //        .password = EXAMPLE_ESP_WIFI_PASS,
-        //        /* Setting a password implies station will connect to all security modes including WEP/WPA.
-        //         * However these modes are deprecated and not advisable to be used. Incase your Access point
-        //         * doesn't support WPA2, these mode can be enabled by commenting below line */
-        //         .threshold.authmode = ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD,
-        //         .sae_pwe_h2e = 2,
-        //    },
-        //};
-        
-        // wifi_config_t wifi_config;
         wifi_config_t wifi_config = {};
 
-        strcpy((char *) wifi_config.sta.ssid, EXAMPLE_ESP_WIFI_SSID);
-        strcpy((char *) wifi_config.sta.password, EXAMPLE_ESP_WIFI_PASS);
+        strcpy((char *) wifi_config.sta.ssid, WIFI_SSID.c_str());
+        strcpy((char *) wifi_config.sta.password, WIFI_PASS.c_str());
+
 
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
@@ -126,12 +121,12 @@ class WiFi {
          * happened. */
         if (bits & WIFI_CONNECTED_BIT) {
             ESP_LOGI(TAG, "connected to ap SSID:%s password:%s",
-                     EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
+                     WIFI_SSID.c_str(), WIFI_PASS.c_str());
             wifi_state.connected = true;
             wifi_state.state = 's';
         } else if (bits & WIFI_FAIL_BIT) {
             ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s",
-                     EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
+                     WIFI_SSID.c_str(), WIFI_PASS.c_str());
             wifi_state.connected = false;
             wifi_state.state = 'f';
         } else {

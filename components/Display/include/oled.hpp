@@ -501,14 +501,20 @@ class WiFiSetting {
     xTaskCreatePinnedToCore(&wifi_setting_task, "wifi_setting_task", 4096, NULL, 6, NULL, 1);
   }
 
+	static std::string char_to_string_ssid(uint8_t* uint_ssid) {
+    char char_ssid[33];
+    sprintf(char_ssid, "%s", uint_ssid);
+    std::string ssid(char_ssid);
+
+		return ssid;
+	}
+
   static std::string get_omitted_ssid(uint8_t* uint_ssid) {
     if (uint_ssid == 0) {
       return "";
     }
 
-    char char_ssid[33];
-    sprintf(char_ssid, "%s", uint_ssid);
-    std::string ssid(char_ssid);
+		std::string ssid = char_to_string_ssid(uint_ssid);
 
     // SSIDが12文字以内に収まるように加工
     if (ssid.length() >= 12) {
@@ -517,7 +523,7 @@ class WiFiSetting {
     return ssid;
   }
 
-  static void input_info() {
+  static std::string input_info(std::string input_type = "SSID",std::string type_text = "") {
     int select_x_index = 0;
     int select_y_index = 0;
 
@@ -535,13 +541,12 @@ class WiFiSetting {
     int font_ = 13;
     int margin = 3;
 
-		std::string type_text = "";
-
     while(1) {
       sprite.fillRect(0, 0, 128, 64, 0);
+      sprite.setTextColor(0xFFFFFFu,0x000000u);
 
       sprite.setCursor(0, 0);
-      sprite.print("SSID");
+      sprite.print(input_type.c_str());
       sprite.drawFastHLine(0, 14, 128, 0xFFFF);
       sprite.drawFastHLine(0, 45, 128, 0xFFFF);
 
@@ -607,12 +612,20 @@ class WiFiSetting {
 
       sprite.pushSprite(&lcd, 0, 0);
     }
+
+		return type_text;
   }
 
   static void set_wifi_info(uint8_t* ssid = 0) {
+
+		WiFi wifi;
+
     int select_index = 0;
     int font_height = 13;
     int margin = 3;
+		std::string input_ssid = "";
+		std::string input_pass = "";
+
     while(1) {
       sprite.fillRect(0, 0, 128, 64, 0);
 
@@ -629,8 +642,8 @@ class WiFiSetting {
         select_index += 1;
       }
 
-      if (select_index > 1) {
-        select_index = 1;
+      if (select_index > 2) {
+        select_index = 2;
       } else if (select_index < 0) {
         select_index = 0;
       }
@@ -653,6 +666,14 @@ class WiFiSetting {
         sprite.setTextColor(0xFFFFFFu,0x000000u);
       }
       sprite.print("PASSWORD: ****"); 
+      
+			sprite.setCursor(35, 40);
+      if (select_index == 2) {
+        sprite.setTextColor(0x000000u,0xFFFFFFu);
+      } else {
+        sprite.setTextColor(0xFFFFFFu,0x000000u);
+      }
+      sprite.print("CONNECT"); 
 
       sprite.pushSprite(&lcd, 0, 0);
 
@@ -663,7 +684,20 @@ class WiFiSetting {
         back_button.clear_button_state();
         back_button.reset_timer();
         joystick.reset_timer();
-        input_info();
+
+				if (select_index == 0){
+        	input_ssid = input_info("SSID",char_to_string_ssid(ssid));
+				} else if (select_index == 1){
+        	input_pass = input_info("PASSWORD",input_pass);
+				} else if (select_index == 2){
+					wifi.wifi_init_sta(input_ssid,input_pass);
+				}
+
+        type_button.clear_button_state();
+        type_button.reset_timer();
+        back_button.clear_button_state();
+        back_button.reset_timer();
+        joystick.reset_timer();
       }
 
       // チャタリング防止用に100msのsleep
