@@ -161,7 +161,7 @@ void http_get_message_task(void *pvParameters)
 
     // GET 
     esp_http_client_set_header(client, "chat_from", chat_from.c_str());
-    esp_http_client_set_header(client, "chat_to", "musashi");
+    esp_http_client_set_header(client, "chat_to", "Musashi");
     esp_err_t err = esp_http_client_perform(client);
 
     if (err == ESP_OK) {
@@ -210,7 +210,7 @@ void http_post_message_task(void *pvParameters)
     // POST
     JsonDocument doc;
     doc["message"] = message; 
-    doc["from"] = "musashi";
+    doc["from"] = "Musashi";
     doc["to"] = "Hazuki";
 
     char post_data[255];
