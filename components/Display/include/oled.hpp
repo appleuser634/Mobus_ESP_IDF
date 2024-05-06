@@ -313,7 +313,11 @@ class MessageBox {
     // 通知を非表示
     // http.notif_flag = false;
 
-    int offset_y = 0;
+		int font_height = 16;
+		int max_offset_y = -3;
+		int min_offset_y = res["messages"].size() * (-1 * font_height) + 40;
+    int offset_y = min_offset_y;
+
     while (true) {
       sprite.fillRect(0, 0, 128, 64, 0);
       Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
@@ -341,6 +345,14 @@ class MessageBox {
         type_button.reset_timer();
         joystick.reset_timer();
       }
+
+			if (offset_y > max_offset_y){
+				offset_y = max_offset_y;
+			}else if (offset_y < min_offset_y){
+				offset_y = min_offset_y;
+			}
+
+			printf("OFFSET_Y:%d\n",offset_y);
     
       // 描画処理
     	int cursor_y = 0;
@@ -349,14 +361,16 @@ class MessageBox {
 				std::string message_from(res["messages"][i]["from"]);
 				
 				//cursor_y = offset_y + sprite.getCursorY() + 20;
-				cursor_y = offset_y + (20*(i+1));
-				int next_cursor_y = offset_y + (20*(i+2));
+				cursor_y = offset_y + (font_height*(i+1));
+				int next_cursor_y = offset_y + (font_height*(i+2));
 
 				if (message_from == chat_to) {
 					sprite.setTextColor(0xFFFFFFu,0x000000u);
+					message = ">> " + message;
 				} else {
 					sprite.setTextColor(0x000000u,0xFFFFFFu);
-      		sprite.fillRect(0, cursor_y, 128, 20, 0xFFFF);
+					message = "<< " + message;
+      		sprite.fillRect(0, cursor_y, 128, font_height, 0xFFFF);
 				}
 
 				sprite.setCursor(2, cursor_y);
@@ -369,6 +383,7 @@ class MessageBox {
 			sprite.setTextColor(0xFFFFFFu,0x000000u);
       sprite.print(chat_to.c_str());
       sprite.drawFastHLine( 0, 14, 128, 0xFFFF); 
+      sprite.drawFastHLine( 0, 15, 128, 0); 
 
       sprite.pushSprite(&lcd, 0, 0);
 
