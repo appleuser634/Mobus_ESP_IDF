@@ -321,7 +321,7 @@ class MessageBox {
       Button::button_state_t back_button_state = back_button.get_button_state();
 
       // 入力イベント
-      if (joystick_state.left or back_button_state.pushed) {
+      if (back_button_state.pushed) {
         break;
       } else if (joystick_state.up) {
         offset_y += 3;
@@ -335,7 +335,6 @@ class MessageBox {
         while (talk.running_flag) {
           vTaskDelay(100 / portTICK_PERIOD_MS);
         }
-
         sprite.setColorDepth(8);
         sprite.setFont(&fonts::Font2);
         type_button.clear_button_state();
@@ -344,24 +343,36 @@ class MessageBox {
       }
     
       // 描画処理
-      const char* message = "";
-      int cursor_y = 0;
+    	int cursor_y = 0;
       for (int i = 0; i < res["messages"].size(); i++) {
-          message = res["messages"][i];
-          printf("message:%s\n",message);
-          cursor_y = offset_y + (20*(i+1));
-          sprite.setCursor(0, cursor_y);
-          sprite.print(message);
+				std::string message(res["messages"][i]["message"]);
+				std::string message_from(res["messages"][i]["from"]);
+				
+				//cursor_y = offset_y + sprite.getCursorY() + 20;
+				cursor_y = offset_y + (20*(i+1));
+				int next_cursor_y = offset_y + (20*(i+2));
+
+				if (message_from == chat_to) {
+					sprite.setTextColor(0xFFFFFFu,0x000000u);
+				} else {
+					sprite.setTextColor(0x000000u,0xFFFFFFu);
+      		sprite.fillRect(0, cursor_y, 128, 20, 0xFFFF);
+				}
+
+				sprite.setCursor(2, cursor_y);
+				sprite.print(message.c_str());
+				sprite.drawFastHLine( 0, cursor_y, 128, 0xFFFF); 
       }
 
       sprite.fillRect(0, 0, 128, 14, 0);
       sprite.setCursor(0, 0);
+			sprite.setTextColor(0xFFFFFFu,0x000000u);
       sprite.print(chat_to.c_str());
       sprite.drawFastHLine( 0, 14, 128, 0xFFFF); 
 
       sprite.pushSprite(&lcd, 0, 0);
 
-      // チャタリング防止用に100msのsleep
+      // チャタリング防止用に100msのsleep2
       vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 
