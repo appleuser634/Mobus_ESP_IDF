@@ -315,7 +315,7 @@ class MessageBox {
 
 		int font_height = 16;
 		int max_offset_y = -3;
-		int min_offset_y = res["messages"].size() * (-1 * font_height) + 40;
+		int min_offset_y = res["messages"].size() * (-1 * font_height) + (font_height * 2);
     int offset_y = min_offset_y;
 
     while (true) {
@@ -327,10 +327,10 @@ class MessageBox {
       // 入力イベント
       if (back_button_state.pushed) {
         break;
-      } else if (joystick_state.up) {
-        offset_y += 3;
-      } else if (joystick_state.down) {
-        offset_y -= 3;
+      } else if (joystick_state.pushed_up_edge) {
+        offset_y += font_height;
+      } else if (joystick_state.pushed_down_edge) {
+        offset_y -= font_height;
       }
       if (type_button_state.pushed) {
         talk.running_flag = true;
