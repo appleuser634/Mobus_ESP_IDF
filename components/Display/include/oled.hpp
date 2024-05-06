@@ -99,7 +99,9 @@ public:
     sprite.fillRect(0, 0, 128, 64, 0);
 
     sprite.setCursor(30, 20);
+		sprite.setFont(&fonts::Font4);
     sprite.print("Send!");
+    sprite.setFont(&fonts::Font2);
     sprite.pushSprite(&lcd, 0, 0);
 
     vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -285,7 +287,7 @@ class MessageBox {
   void start_box_task(std::string chat_to) {
     printf("Start Box Task...");
     // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
-    xTaskCreatePinnedToCore(&box_task, "box_task", 4096, &chat_to, 6, NULL, 1);
+    xTaskCreatePinnedToCore(&box_task, "box_task", 8012, &chat_to, 6, NULL, 1);
   }
 
   static void box_task(void *pvParameters) {
@@ -343,7 +345,8 @@ class MessageBox {
         sprite.setFont(&fonts::Font2);
         type_button.clear_button_state();
         type_button.reset_timer();
-        joystick.reset_timer();
+        joystick.reset_timer();    		
+				res = http_client.get_message(chat_to);
       }
 
 			if (offset_y > max_offset_y){
