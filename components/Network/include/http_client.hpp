@@ -230,13 +230,13 @@ void http_get_notifications_task(void *pvParameters)
     const char* json = str_res.c_str(); // const char* へのポインタを取得
 
     deserializeJson(notif_res, json);
-    printf("///////////// res size: %d ////////////",res["notifications"].size());
+    printf("///////////// res size: %d ////////////",notif_res["notifications"].size());
     printf(local_response_buffer);
-    res_flag = 1;
+    notif_res_flag = 1;
 
     esp_http_client_cleanup(client); 
 
-    while (res_flag) {
+    while (notif_res_flag) {
       vTaskDelay(10);
     }
   }

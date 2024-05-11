@@ -1280,6 +1280,10 @@ class MenuDisplay {
     long long int st = esp_timer_get_time();
     // 電波強度の初期値
     float radioLevel = 4;
+		
+    // 通知の取得
+    http_client.start_notifications();
+    JsonDocument notif_res = http_client.get_notifications();
 
     while (1) {
 
@@ -1299,7 +1303,7 @@ class MenuDisplay {
 
       // 経過時間を取得
       int p_time = (esp_timer_get_time() - st) / 1000000;
-      if (p_time > 10) {
+      if (p_time > 3) {
 
         // 電波強度を更新
         wifi_ap_record_t ap;
@@ -1310,17 +1314,12 @@ class MenuDisplay {
         if (radioLevel < 1) {
           radioLevel = 1;
         }
-				// JsonDocument notif_res = http_client.get_message();
-        // st = esp_timer_get_time();
+
+        // 通知情報を更新
+				notif_res = http_client.get_notifications();
+        st = esp_timer_get_time();
       }
       
-      // for (int i = 0; i < notif_res["notifications"].size(); i++) {
-			// 	std::string notification_flag(res["notifications"][i]["notification_flag"]);
-      //   if(notification_flag == "true"){
-
-      //     break;
-      //   }
-      // }
 
       // メッセージ受信通知の表示
       // if (http.notif_flag) {
@@ -1363,11 +1362,10 @@ class MenuDisplay {
       }
 
       Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
-      printf("UP:%s\n", joystick_state.up ? "true" : "false");
-      printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
-      printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
-      printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
-      vTaskDelay(50 / portTICK_PERIOD_MS);
+      // printf("UP:%s\n", joystick_state.up ? "true" : "false");
+      // printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
+      // printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
+      // printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
 
       Button::button_state_t type_button_state = type_button.get_button_state();
       if (type_button_state.pushed) {
@@ -1406,8 +1404,10 @@ class MenuDisplay {
           sprite.setFont(&fonts::Font4);
         }
 
-        type_button.clear_button_state();
+        // 通知情報を更新
+				notif_res = http_client.get_notifications();
 
+        type_button.clear_button_state();
         type_button.reset_timer();
         joystick.reset_timer();
       }
@@ -1424,10 +1424,19 @@ class MenuDisplay {
         }
       }
 
+      // 通知の表示
+      for (int i = 0; i < notif_res["notifications"].size(); i++) {
+				std::string notification_flag(notif_res["notifications"][i]["notification_flag"]);
+        if(notification_flag == "true"){
+          sprite.fillCircle(37, 25, 4, 0xFFFF);
+          break;
+        }
+      }
+
       sprite.pushSprite(&lcd, 0, 0);
       sprite.fillRect(0, 0, 128, 64, 0);
 
-      esp_task_wdt_reset();
+      // esp_task_wdt_reset();
 
       // 30秒操作がなければsleep
       int button_free_time = type_button_state.release_sec / 1000000;
@@ -1439,6 +1448,8 @@ class MenuDisplay {
         sprite.pushSprite(&lcd, 0, 0);
         esp_deep_sleep_start();
       }
+      
+      vTaskDelay(50 / portTICK_PERIOD_MS);
     }
 
     vTaskDelete(NULL);
