@@ -302,6 +302,8 @@ class MessageBox {
     Button enter_button(GPIO_NUM_5);
     
 		HttpClient http_client;
+
+    // メッセージの取得
     std::string chat_to = *(std::string *)pvParameters;
     JsonDocument res = http_client.get_message(chat_to);
 
@@ -408,7 +410,7 @@ class ContactBook {
 
   void start_message_menue_task() {
     printf("Start ContactBook Task...");
-    xTaskCreatePinnedToCore(&message_menue_task, "message_menue_task", 4096,
+    xTaskCreatePinnedToCore(&message_menue_task, "message_menue_task", 8096,
                             NULL, 6, NULL, 1);
   }
 
@@ -446,6 +448,11 @@ class ContactBook {
     int select_index = 0;
     int font_height = 13;
     int margin = 3;
+    int noti_circle_margin = 8;
+
+    HttpClient http_client;
+    // 通知の取得
+    JsonDocument notif_res = http_client.get_notifications();
 
     MessageBox box;
     while (1) {
@@ -473,6 +480,20 @@ class ContactBook {
         } else {
           sprite.setTextColor(0xFFFFFFu,0x000000u);
         }
+
+        // 通知の表示
+        for (int j = 0; j < notif_res["notifications"].size(); j++) {
+          std::string notification_flag(notif_res["notifications"][j]["notification_flag"]);
+          std::string notification_from(notif_res["notifications"][j]["from"]);
+          if(notification_flag == "true" && notification_from == contacts[i].name){
+            if (i == select_index) {
+              sprite.fillCircle(120, font_height * i + noti_circle_margin, 4, 0);
+            } else {
+              sprite.fillCircle(120, font_height * i + noti_circle_margin, 4, 0xFFFF);
+            }
+          }
+        }
+
         sprite.print(contacts[i].name.c_str());
       }
 
@@ -505,12 +526,16 @@ class ContactBook {
           vTaskDelay(100 / portTICK_PERIOD_MS);
         }
 
+        // 通知の取得
+        notif_res = http_client.get_notifications();
+        notif_res = http_client.get_notifications();
+
         type_button.clear_button_state();
         type_button.reset_timer();
         joystick.reset_timer();
       }
 
-      vTaskDelay(1);
+      vTaskDelay(10);
     }
 
     running_flag = false;

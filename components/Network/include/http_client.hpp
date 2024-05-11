@@ -185,7 +185,7 @@ void http_get_message_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-JsonDocument notif_res;
+static JsonDocument notif_res;
 int notif_res_flag = 0;
 void http_get_notifications_task(void *pvParameters)
 {
@@ -337,7 +337,7 @@ class HttpClient {
     xTaskCreatePinnedToCore(&http_get_notifications_task, "http_get_notifications_task", 6000, NULL, 5, NULL, 0);
   }
 
-  JsonDocument get_notifications()
+  static JsonDocument get_notifications()
   {
     if (!notif_res_flag){
       JsonDocument doc;
