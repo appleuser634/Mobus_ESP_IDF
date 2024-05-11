@@ -448,7 +448,7 @@ class ContactBook {
       int user_id;
     } contact_t;
 
-    contact_t contacts[6] = {{"Musashi", 1}, {"Hazuki", 2}, {"Kiki", 3}, {"Chibi", 4}, {"Saku", 5}, {"Buncha", 6}};
+    contact_t contacts[6] = {{"Kiki", 1}, {"Chibi", 2}, {"Musashi", 3}, {"Shelly", 4},{"Saku", 5}, {"Buncha", 6}};
 
     int select_index = 0;
     int font_height = 13;
