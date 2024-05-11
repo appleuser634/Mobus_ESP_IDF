@@ -301,18 +301,25 @@ class MessageBox {
     Button back_button(GPIO_NUM_3);
     Button enter_button(GPIO_NUM_5);
     
-		HttpClient http_client;
-
-    // メッセージの取得
-    std::string chat_to = *(std::string *)pvParameters;
-    JsonDocument res = http_client.get_message(chat_to);
-
     lcd.setRotation(2);
+
+    sprite.fillRect(0, 0, 128, 64, 0);
+
+    sprite.setFont(&fonts::Font4);
+		sprite.setCursor(10, 20);
+    sprite.print("Loading...");
+    sprite.pushSprite(&lcd, 0, 0);
 
     sprite.setColorDepth(8);
     sprite.setFont(&fonts::Font2);
     sprite.setTextWrap(true); // 右端到達時のカーソル折り返しを禁止
     sprite.createSprite(lcd.width(), lcd.height() * 2.5);
+		
+    HttpClient http_client;
+
+    // メッセージの取得
+    std::string chat_to = *(std::string *)pvParameters;
+    JsonDocument res = http_client.get_message(chat_to);
  
     // 通知を非表示
     // http.notif_flag = false;
@@ -356,9 +363,7 @@ class MessageBox {
 			}else if (offset_y < min_offset_y){
 				offset_y = min_offset_y;
 			}
-
-			printf("OFFSET_Y:%d\n",offset_y);
-    
+ 
       // 描画処理
     	int cursor_y = 0;
       for (int i = 0; i < res["messages"].size(); i++) {
