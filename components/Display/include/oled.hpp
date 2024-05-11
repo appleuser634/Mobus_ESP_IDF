@@ -453,7 +453,7 @@ class ContactBook {
     int select_index = 0;
     int font_height = 13;
     int margin = 3;
-    int noti_circle_margin = 8;
+    int noti_circle_margin = 13;
 
     HttpClient http_client;
     // 通知の取得
