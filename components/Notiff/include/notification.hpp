@@ -21,47 +21,47 @@
 
 #pragma once
 
+HttpClient http_client;
+
 class Notification {
 	
-	public:	
-		static HttpClient http;
-		
-		void check_notification(){
-			xTaskCreate(&check_notification_task, "check_notification_task", 4096, NULL, 5, NULL);
-		}
-
-		static void recv_notification(){
-			// 通知のため全タスクを一時停止
-			vTaskSuspendAll();
-			xTaskCreate(&notification_task, "notification_task", 4096, NULL, 20, NULL);
-			// 停止したタスクを再開
-			xTaskResumeAll();
-		}
-	
-	private:
-		
-		static void check_notification_task(void *pvParameters){
-			
-			while (1) {
-				if(http.notif_flag) {
-					Notification::recv_notification();
-					http.notif_flag = false;
-				} 
-				else {
-					vTaskDelay(3000 / portTICK_PERIOD_MS);
-				}
-			}			
-		}
-		
-		static void notification_task(void *pvParameters){
-			// 通知音を鳴らす
-			Buzzer buzzer;
-			buzzer.recv_sound();
-			// 通知画面を出す
-			Oled oled;
-			oled.RecvNotif();
-			vTaskDelete(NULL);
-		}
-		
-
+	public:		
+		void check_notification();
+		void recv_notification();
 };
+
+void check_notification_task(void *pvParameters){  
+  Notification notif;
+
+  while (1) {
+    if(http_client.notif_flag) {
+      notif.recv_notification();
+      http_client.notif_flag = false;
+    } 
+    else {
+      vTaskDelay(3000 / portTICK_PERIOD_MS);
+    }
+  }
+}
+
+void notification_task(void *pvParameters){
+  // 通知音を鳴らす
+  Buzzer buzzer;
+  buzzer.recv_sound();
+  // 通知画面を出す
+  Oled oled;
+  oled.RecvNotif();
+  vTaskDelete(NULL);
+}
+
+void Notification::check_notification(){
+  xTaskCreatePinnedToCore(&check_notification_task, "check_notification_task", 4096, NULL, 5, NULL, 0);
+}
+
+void Notification::recv_notification(){
+  // 通知のため全タスクを一時停止
+  vTaskSuspendAll();
+  xTaskCreatePinnedToCore(&notification_task, "notification_task", 4096, NULL, 20, NULL, 0);
+  // 停止したタスクを再開
+  xTaskResumeAll();
+}

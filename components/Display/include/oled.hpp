@@ -1236,7 +1236,7 @@ class MenuDisplay {
   void start_menu_task() {
     printf("Start Menu Task...");
     // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
-    xTaskCreatePinnedToCore(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
+    xTaskCreatePinnedToCore(&menu_task, "menu_task", 8096, NULL, 6, NULL, 0);
   }
 
   // static HttpClient http;
@@ -1253,6 +1253,8 @@ class MenuDisplay {
         {"Talk", 9, 22}, {"Box", 51, 22}, {"Game", 93, 22}};
 
     int cursor_index = 0;
+
+		HttpClient http_client;
 
     Joystick joystick;
 
@@ -1308,8 +1310,17 @@ class MenuDisplay {
         if (radioLevel < 1) {
           radioLevel = 1;
         }
-        st = esp_timer_get_time();
+				// JsonDocument notif_res = http_client.get_message();
+        // st = esp_timer_get_time();
       }
+      
+      // for (int i = 0; i < notif_res["notifications"].size(); i++) {
+			// 	std::string notification_flag(res["notifications"][i]["notification_flag"]);
+      //   if(notification_flag == "true"){
+
+      //     break;
+      //   }
+      // }
 
       // メッセージ受信通知の表示
       // if (http.notif_flag) {
@@ -1337,7 +1348,7 @@ class MenuDisplay {
 
       // Menu項目を表示させる
       int menu_lists_n = sizeof(menu_list) / sizeof(menu_t);
-      for (int i = 0; i <= menu_lists_n; i++) {
+      for (int i = 0; i < menu_lists_n; i++) {
 
         const unsigned char *icon_image = mail_icon;
 

@@ -161,7 +161,7 @@ void http_get_message_task(void *pvParameters)
 
     // GET 
     esp_http_client_set_header(client, "chat_from", chat_from.c_str());
-    esp_http_client_set_header(client, "chat_to", "Musashi");
+    esp_http_client_set_header(client, "chat_to", "Hazuki");
     esp_err_t err = esp_http_client_perform(client);
 
     if (err == ESP_OK) {
@@ -183,6 +183,63 @@ void http_get_message_task(void *pvParameters)
     res_flag = 1;
 
     vTaskDelete(NULL);
+}
+
+JsonDocument notif_res;
+int notif_res_flag = 0;
+void http_get_notifications_task(void *pvParameters)
+{
+  while (1) {
+    printf("START NOTIFICATIONS TASK...\n");
+    char local_response_buffer[MAX_HTTP_OUTPUT_BUFFER + 1] = {0};
+
+    esp_http_client_config_t config = {
+        .host = HTTP_ENDPOINT,
+        .port = 3000,
+        .path = "/notifications",
+        .event_handler = _http_client_event_handler,
+        .transport_type = HTTP_TRANSPORT_OVER_TCP,
+        .user_data = local_response_buffer,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+
+    // POST
+    JsonDocument doc;
+    doc["to"] = "Hazuki";
+
+    char post_data[255];
+    serializeJson(doc, post_data, sizeof(post_data));
+
+    esp_http_client_set_url(client, "/notifications");
+    esp_http_client_set_method(client, HTTP_METHOD_POST);
+    esp_http_client_set_post_field(client, post_data, strlen(post_data));
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %"PRId64,
+                esp_http_client_get_status_code(client),
+                esp_http_client_get_content_length(client));
+    } else {
+        ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
+    }
+
+    ESP_LOG_BUFFER_HEX(TAG, local_response_buffer, strlen(local_response_buffer));
+    printf("///////////// buffer ////////////");
+    printf(local_response_buffer);
+    std::string str_res(local_response_buffer);
+    const char* json = str_res.c_str(); // const char* へのポインタを取得
+
+    deserializeJson(notif_res, json);
+    printf("///////////// res size: %d ////////////",res["notifications"].size());
+    printf(local_response_buffer);
+    res_flag = 1;
+
+    esp_http_client_cleanup(client); 
+
+    while (res_flag) {
+      vTaskDelay(10);
+    }
+  }
 }
 
 std::string chat_to = "";
@@ -210,8 +267,8 @@ void http_post_message_task(void *pvParameters)
     // POST
     JsonDocument doc;
     doc["message"] = message; 
-    doc["from"] = "Musashi";
-    doc["to"] = "Hazuki";
+    doc["from"] = "Hazuki";
+    doc["to"] = "Musashi";
 
     char post_data[255];
     serializeJson(doc, post_data, sizeof(post_data));
@@ -235,6 +292,8 @@ void http_post_message_task(void *pvParameters)
 
 class HttpClient {
   public:
+
+  bool notif_flag = false;
 
   HttpClient(void) {
       esp_err_t ret = nvs_flash_init();
@@ -271,5 +330,22 @@ class HttpClient {
     }
     res_flag = 0;
     return res;
+  }
+  
+  void start_notifications()
+  {
+    xTaskCreatePinnedToCore(&http_get_notifications_task, "http_get_notifications_task", 6000, NULL, 5, NULL, 0);
+  }
+
+  JsonDocument get_notifications()
+  {
+    if (!notif_res_flag){
+      JsonDocument doc;
+      JsonArray data = doc.createNestedArray("notifications");
+      return doc;
+    }
+
+    notif_res_flag = 0;
+    return notif_res;
   }
 };
