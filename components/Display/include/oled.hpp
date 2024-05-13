@@ -376,11 +376,11 @@ class MessageBox {
 
 				if (message_from == chat_to) {
 					sprite.setTextColor(0xFFFFFFu,0x000000u);
-    			sprite.drawBitmap(0, cursor_y+2, recv_icon, 13, 12, TFT_BLACK, TFT_WHITE);
+    			sprite.drawBitmap(0, cursor_y+2, recv_icon2, 13, 12, TFT_BLACK, TFT_WHITE);
 				} else {
 					sprite.setTextColor(0x000000u,0xFFFFFFu);
       		sprite.fillRect(0, cursor_y, 128, font_height, 0xFFFF);
-    			sprite.drawBitmap(0, cursor_y+2, send_icon, 13, 12, TFT_WHITE, TFT_BLACK);
+    			sprite.drawBitmap(0, cursor_y+2, send_icon2, 13, 12, TFT_WHITE, TFT_BLACK);
 				}
 
 				sprite.setCursor(14, cursor_y);
