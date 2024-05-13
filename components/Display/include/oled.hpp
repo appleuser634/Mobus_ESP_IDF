@@ -1372,8 +1372,8 @@ class MenuDisplay {
 
       // Menu選択の表示
       sprite.fillRoundRect(menu_list[cursor_index].display_position_x - 2,
-                           menu_list[cursor_index].display_position_y - 2, 36,
-                           36, 5, 0xFFFF);
+                           menu_list[cursor_index].display_position_y - 2, 34,
+                           34, 5, 0xFFFF);
 
       // Menu項目を表示させる
       int menu_lists_n = sizeof(menu_list) / sizeof(menu_t);
@@ -1386,9 +1386,16 @@ class MenuDisplay {
         } else if (i == 2) {
           icon_image = game_icon;
         }
-        sprite.drawBitmap(menu_list[i].display_position_x,
-                          menu_list[i].display_position_y, icon_image, 32, 32,
-                          TFT_WHITE, TFT_BLACK);
+
+        if (cursor_index == i){
+					sprite.drawBitmap(menu_list[i].display_position_x,
+														menu_list[i].display_position_y, icon_image, 30, 30,
+														TFT_WHITE, TFT_BLACK);
+				} else {
+					sprite.drawBitmap(menu_list[i].display_position_x,
+														menu_list[i].display_position_y, icon_image, 30, 30,
+														TFT_BLACK, TFT_WHITE);
+				}
       }
 
       Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
@@ -1458,7 +1465,11 @@ class MenuDisplay {
       for (int i = 0; i < notif_res["notifications"].size(); i++) {
 				std::string notification_flag(notif_res["notifications"][i]["notification_flag"]);
         if(notification_flag == "true"){
-          sprite.fillCircle(37, 25, 4, 0xFFFF);
+					if (cursor_index == 0){
+          	sprite.fillCircle(37, 25, 4, 0);
+					} else {
+        		sprite.fillCircle(37, 25, 4, 0xFFFF);
+					}
           break;
         }
       }
