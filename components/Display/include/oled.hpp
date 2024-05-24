@@ -10,12 +10,6 @@
 
 #pragma once
 
-Joystick joystick;
-
-Button type_button(GPIO_NUM_46);
-Button back_button(GPIO_NUM_3);
-Button enter_button(GPIO_NUM_5);
-
 class LGFX : public lgfx::LGFX_Device {
   lgfx::Panel_SH110x _panel_instance;
   lgfx::Bus_I2C _bus_instance;
@@ -557,7 +551,7 @@ class WiFiSetting {
   void start_wifi_setting_task() {
     printf("Start WiFi Setting Task...");
     // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
-    xTaskCreatePinnedToCore(&wifi_setting_task, "wifi_setting_task", 4096, NULL, 6, NULL, 1);
+    xTaskCreatePinnedToCore(&wifi_setting_task, "wifi_setting_task", 8096, NULL, 6, NULL, 1);
   }
 
 	static std::string char_to_string_ssid(uint8_t* uint_ssid) {
@@ -599,6 +593,12 @@ class WiFiSetting {
 
     int font_ = 13;
     int margin = 3;
+
+    Joystick joystick;
+
+    Button type_button(GPIO_NUM_46);
+    Button back_button(GPIO_NUM_3);
+    Button enter_button(GPIO_NUM_5);
 
     while(1) {
       sprite.fillRect(0, 0, 128, 64, 0);
@@ -679,10 +679,16 @@ class WiFiSetting {
 
 		WiFi wifi;
 
+    Joystick joystick;
+
+    Button type_button(GPIO_NUM_46);
+    Button back_button(GPIO_NUM_3);
+    Button enter_button(GPIO_NUM_5);
+
     int select_index = 0;
     int font_height = 13;
     int margin = 3;
-		std::string input_ssid = "";
+		std::string input_ssid = char_to_string_ssid(ssid);
 		std::string input_pass = "";
 
     while(1) {
@@ -749,7 +755,8 @@ class WiFiSetting {
 				} else if (select_index == 1){
         	input_pass = input_info("PASSWORD",input_pass);
 				} else if (select_index == 2){
-					wifi.wifi_init_sta(input_ssid,input_pass);
+					wifi.wifi_set_sta(input_ssid,input_pass);
+					// wifi.wifi_set_sta("elecom-3e6943_24","7ku65wjwx8fv");
 				}
 
         type_button.clear_button_state();
@@ -779,6 +786,12 @@ class WiFiSetting {
     sprite.pushSprite(&lcd, 0, 0);
     
     WiFi wifi;
+
+    Joystick joystick;
+    
+    Button type_button(GPIO_NUM_46);
+    Button back_button(GPIO_NUM_3);
+    Button enter_button(GPIO_NUM_5);
 
     uint16_t ssid_n = DEFAULT_SCAN_LIST_SIZE;
     wifi_ap_record_t ap_info[DEFAULT_SCAN_LIST_SIZE];
