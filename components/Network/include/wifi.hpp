@@ -70,13 +70,6 @@ class WiFi {
         s_wifi_event_group = xEventGroupCreate();
         s_retry_num = 0;
         
-        if (WIFI_SSID == ""){
-          WIFI_SSID = EXAMPLE_ESP_WIFI_SSID;
-        } 
-        if (WIFI_PASS == ""){
-          WIFI_PASS = EXAMPLE_ESP_WIFI_PASS;
-        } 
-
         esp_event_handler_instance_t instance_any_id;
         esp_event_handler_instance_t instance_got_ip;
         ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
@@ -91,10 +84,14 @@ class WiFi {
                                                             &instance_got_ip));
 
         wifi_config_t wifi_config = {};
-
-        strcpy((char *) wifi_config.sta.ssid, WIFI_SSID.c_str());
-        strcpy((char *) wifi_config.sta.password, WIFI_PASS.c_str());
-
+  
+        if (WIFI_SSID == "" && WIFI_PASS == ""){
+          ESP_ERROR_CHECK(esp_wifi_get_config(WIFI_IF_STA, &wifi_config));
+        }
+        else {
+          strcpy((char *) wifi_config.sta.ssid, WIFI_SSID.c_str());
+          strcpy((char *) wifi_config.sta.password, WIFI_PASS.c_str());
+        } 
 
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
