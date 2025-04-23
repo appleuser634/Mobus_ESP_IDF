@@ -21,36 +21,36 @@ public:
       cfg.i2c_port = 0;        // 使用するI2Cポートを選択 (0 or 1)
       cfg.freq_write = 400000; // 送信時のクロック
       cfg.freq_read = 400000;  // 受信時のクロック
-      cfg.pin_sda = 1;        // SDAを接続しているピン番号
-      cfg.pin_scl = 2;        // SCLを接続しているピン番号
+      cfg.pin_sda = 1;         // SDAを接続しているピン番号
+      cfg.pin_scl = 2;         // SCLを接続しているピン番号
       cfg.i2c_addr = 0x3C;     // I2Cデバイスのアドレス
 
-      _bus_instance.config(cfg); // 設定値をバスに反映します。
+      _bus_instance.config(cfg);              // 設定値をバスに反映します。
       _panel_instance.setBus(&_bus_instance); // バスをパネルにセットします。
     }
     { // 表示パネル制御の設定を行います。
       auto cfg =
           _panel_instance.config(); // 表示パネル設定用の構造体を取得します。
 
-      cfg.pin_cs = -1; // CSが接続されているピン番号   (-1 = disable)
-      cfg.pin_rst = -1; // RSTが接続されているピン番号  (-1 = disable)
+      cfg.pin_cs = -1;   // CSが接続されているピン番号   (-1 = disable)
+      cfg.pin_rst = -1;  // RSTが接続されているピン番号  (-1 = disable)
       cfg.pin_busy = -1; // BUSYが接続されているピン番号 (-1 = disable)
 
       // ※
       // 以下の設定値はパネル毎に一般的な初期値が設定されていますので、不明な項目はコメントアウトして試してみてください。
 
-      cfg.memory_width = 128; // ドライバICがサポートしている最大の幅
-      cfg.memory_height = 64; // ドライバICがサポートしている最大の高さ
-      cfg.panel_width = 128; // 実際に表示可能な幅
-      cfg.panel_height = 64; // 実際に表示可能な高さ
-      cfg.offset_x = 2;      // パネルのX方向オフセット量
-      cfg.offset_y = 0;      // パネルのY方向オフセット量
-      cfg.offset_rotation = 0; // 回転方向の値のオフセット 0~7 (4~7は上下反転)
+      cfg.memory_width = 128;   // ドライバICがサポートしている最大の幅
+      cfg.memory_height = 64;   // ドライバICがサポートしている最大の高さ
+      cfg.panel_width = 128;    // 実際に表示可能な幅
+      cfg.panel_height = 64;    // 実際に表示可能な高さ
+      cfg.offset_x = 2;         // パネルのX方向オフセット量
+      cfg.offset_y = 0;         // パネルのY方向オフセット量
+      cfg.offset_rotation = 0;  // 回転方向の値のオフセット 0~7 (4~7は上下反転)
       cfg.dummy_read_pixel = 8; // ピクセル読出し前のダミーリードのビット数
       cfg.dummy_read_bits =
           1; // ピクセル以外のデータ読出し前のダミーリードのビット数
       cfg.readable = true; // データ読出しが可能な場合 trueに設定
-      cfg.invert = false; // パネルの明暗が反転してしまう場合 trueに設定
+      cfg.invert = false;  // パネルの明暗が反転してしまう場合 trueに設定
       cfg.rgb_order =
           false; // パネルの赤と青が入れ替わってしまう場合 trueに設定
       cfg.dlen_16bit =
@@ -93,7 +93,7 @@ public:
     sprite.fillRect(0, 0, 128, 64, 0);
 
     sprite.setCursor(30, 20);
-		sprite.setFont(&fonts::Font4);
+    sprite.setFont(&fonts::Font4);
     sprite.print("Send!");
     sprite.setFont(&fonts::Font2);
     sprite.pushSprite(&lcd, 0, 0);
@@ -106,7 +106,8 @@ public:
   void start_talk_task(std::string chat_to) {
     printf("Start Talk Task...");
     // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
-    xTaskCreatePinnedToCore(&talk_task, "talk_task", 4096, &chat_to, 6, NULL, 1);
+    xTaskCreatePinnedToCore(&talk_task, "talk_task", 4096, &chat_to, 6, NULL,
+                            1);
   }
 
   static void talk_task(void *pvParameters) {
@@ -117,8 +118,8 @@ public:
     Led led;
 
     Joystick joystick;
-		
-		HttpClient http_client;
+
+    HttpClient http_client;
 
     Button type_button(GPIO_NUM_46);
     Button back_button(GPIO_NUM_3);
@@ -275,7 +276,7 @@ bool TalkDisplay::running_flag = false;
 
 class MessageBox {
 
-  public:
+public:
   static bool running_flag;
 
   void start_box_task(std::string chat_to) {
@@ -294,13 +295,13 @@ class MessageBox {
     Button type_button(GPIO_NUM_46);
     Button back_button(GPIO_NUM_3);
     Button enter_button(GPIO_NUM_5);
-    
+
     lcd.setRotation(2);
 
     sprite.fillRect(0, 0, 128, 64, 0);
 
     sprite.setFont(&fonts::Font4);
-		sprite.setCursor(10, 20);
+    sprite.setCursor(10, 20);
     sprite.print("Loading...");
     sprite.pushSprite(&lcd, 0, 0);
 
@@ -308,19 +309,20 @@ class MessageBox {
     sprite.setFont(&fonts::Font2);
     sprite.setTextWrap(true); // 右端到達時のカーソル折り返しを禁止
     sprite.createSprite(lcd.width(), lcd.height() * 2.5);
-		
+
     HttpClient http_client;
 
     // メッセージの取得
     std::string chat_to = *(std::string *)pvParameters;
     JsonDocument res = http_client.get_message(chat_to);
- 
+
     // 通知を非表示
     // http.notif_flag = false;
 
-		int font_height = 16;
-		int max_offset_y = -3;
-		int min_offset_y = res["messages"].size() * (-1 * font_height) + (font_height * 2);
+    int font_height = 16;
+    int max_offset_y = -3;
+    int min_offset_y =
+        res["messages"].size() * (-1 * font_height) + (font_height * 2);
     int offset_y = min_offset_y;
 
     while (true) {
@@ -340,7 +342,7 @@ class MessageBox {
       if (type_button_state.pushed) {
         talk.running_flag = true;
         talk.start_talk_task(chat_to);
-        
+
         while (talk.running_flag) {
           vTaskDelay(100 / portTICK_PERIOD_MS);
         }
@@ -348,46 +350,48 @@ class MessageBox {
         sprite.setFont(&fonts::Font2);
         type_button.clear_button_state();
         type_button.reset_timer();
-        joystick.reset_timer();    		
-				res = http_client.get_message(chat_to);
+        joystick.reset_timer();
+        res = http_client.get_message(chat_to);
       }
 
-			if (offset_y > max_offset_y){
-				offset_y = max_offset_y;
-			}else if (offset_y < min_offset_y){
-				offset_y = min_offset_y;
-			}
- 
+      if (offset_y > max_offset_y) {
+        offset_y = max_offset_y;
+      } else if (offset_y < min_offset_y) {
+        offset_y = min_offset_y;
+      }
+
       // 描画処理
-    	int cursor_y = 0;
+      int cursor_y = 0;
       for (int i = 0; i < res["messages"].size(); i++) {
-				std::string message(res["messages"][i]["message"]);
-				std::string message_from(res["messages"][i]["from"]);
-				
-				//cursor_y = offset_y + sprite.getCursorY() + 20;
-				cursor_y = offset_y + (font_height*(i+1));
-				int next_cursor_y = offset_y + (font_height*(i+2));
+        std::string message(res["messages"][i]["message"]);
+        std::string message_from(res["messages"][i]["from"]);
 
-				if (message_from == chat_to) {
-					sprite.setTextColor(0xFFFFFFu,0x000000u);
-    			sprite.drawBitmap(0, cursor_y+2, recv_icon2, 13, 12, TFT_BLACK, TFT_WHITE);
-				} else {
-					sprite.setTextColor(0x000000u,0xFFFFFFu);
-      		sprite.fillRect(0, cursor_y, 128, font_height, 0xFFFF);
-    			sprite.drawBitmap(0, cursor_y+2, send_icon2, 13, 12, TFT_WHITE, TFT_BLACK);
-				}
+        // cursor_y = offset_y + sprite.getCursorY() + 20;
+        cursor_y = offset_y + (font_height * (i + 1));
+        int next_cursor_y = offset_y + (font_height * (i + 2));
 
-				sprite.setCursor(14, cursor_y);
-				sprite.print(message.c_str());
-				// sprite.drawFastHLine( 0, cursor_y, 128, 0xFFFF); 
+        if (message_from == chat_to) {
+          sprite.setTextColor(0xFFFFFFu, 0x000000u);
+          sprite.drawBitmap(0, cursor_y + 2, recv_icon2, 13, 12, TFT_BLACK,
+                            TFT_WHITE);
+        } else {
+          sprite.setTextColor(0x000000u, 0xFFFFFFu);
+          sprite.fillRect(0, cursor_y, 128, font_height, 0xFFFF);
+          sprite.drawBitmap(0, cursor_y + 2, send_icon2, 13, 12, TFT_WHITE,
+                            TFT_BLACK);
+        }
+
+        sprite.setCursor(14, cursor_y);
+        sprite.print(message.c_str());
+        // sprite.drawFastHLine( 0, cursor_y, 128, 0xFFFF);
       }
 
       sprite.fillRect(0, 0, 128, 14, 0);
       sprite.setCursor(0, 0);
-			sprite.setTextColor(0xFFFFFFu,0x000000u);
+      sprite.setTextColor(0xFFFFFFu, 0x000000u);
       sprite.print(chat_to.c_str());
-      sprite.drawFastHLine( 0, 14, 128, 0xFFFF); 
-      sprite.drawFastHLine( 0, 15, 128, 0); 
+      sprite.drawFastHLine(0, 14, 128, 0xFFFF);
+      sprite.drawFastHLine(0, 15, 128, 0);
 
       sprite.pushSprite(&lcd, 0, 0);
 
@@ -401,10 +405,9 @@ class MessageBox {
 };
 bool MessageBox::running_flag = false;
 
-
 class ContactBook {
 
-  public:
+public:
   static bool running_flag;
 
   void start_message_menue_task() {
@@ -435,14 +438,16 @@ class ContactBook {
     sprite.setColorDepth(8);
     sprite.setFont(&fonts::Font4);
     sprite.setTextWrap(true); // 右端到達時のカーソル折り返しを禁止
-    sprite.createSprite(lcd.width(), lcd.height()*(MAX_CONTACTS/CONTACT_PER_PAGE));
+    sprite.createSprite(lcd.width(),
+                        lcd.height() * (MAX_CONTACTS / CONTACT_PER_PAGE));
 
     typedef struct {
       std::string name;
       int user_id;
     } contact_t;
 
-    contact_t contacts[6] = {{"Kiki", 1}, {"Chibi", 2}, {"Musashi", 3}, {"Shelly", 4},{"Saku", 5}, {"Buncha", 6}};
+    contact_t contacts[6] = {{"Kiki", 1},   {"Chibi", 2}, {"Musashi", 3},
+                             {"Shelly", 4}, {"Saku", 5},  {"Buncha", 6}};
 
     int select_index = 0;
     int font_height = 13;
@@ -465,30 +470,35 @@ class ContactBook {
       Button::button_state_t enter_button_state =
           enter_button.get_button_state();
 
-      sprite.fillScreen(0); 
-      
+      sprite.fillScreen(0);
+
       sprite.setFont(&fonts::Font2);
 
       int length = sizeof(contacts) / sizeof(contact_t) - 1;
       for (int i = 0; i <= length; i++) {
-        sprite.setCursor(10, (font_height+margin) * i);
+        sprite.setCursor(10, (font_height + margin) * i);
 
         if (i == select_index) {
-          sprite.setTextColor(0x000000u,0xFFFFFFu);
-          sprite.fillRect(0, (font_height+margin) * select_index, 128, font_height + 3, 0xFFFF);
+          sprite.setTextColor(0x000000u, 0xFFFFFFu);
+          sprite.fillRect(0, (font_height + margin) * select_index, 128,
+                          font_height + 3, 0xFFFF);
         } else {
-          sprite.setTextColor(0xFFFFFFu,0x000000u);
+          sprite.setTextColor(0xFFFFFFu, 0x000000u);
         }
 
         // 通知の表示
         for (int j = 0; j < notif_res["notifications"].size(); j++) {
-          std::string notification_flag(notif_res["notifications"][j]["notification_flag"]);
+          std::string notification_flag(
+              notif_res["notifications"][j]["notification_flag"]);
           std::string notification_from(notif_res["notifications"][j]["from"]);
-          if(notification_flag == "true" && notification_from == contacts[i].name){
+          if (notification_flag == "true" &&
+              notification_from == contacts[i].name) {
             if (i == select_index) {
-              sprite.fillCircle(120, font_height * i + noti_circle_margin, 4, 0);
+              sprite.fillCircle(120, font_height * i + noti_circle_margin, 4,
+                                0);
             } else {
-              sprite.fillCircle(120, font_height * i + noti_circle_margin, 4, 0xFFFF);
+              sprite.fillCircle(120, font_height * i + noti_circle_margin, 4,
+                                0xFFFF);
             }
           }
         }
@@ -508,8 +518,8 @@ class ContactBook {
         select_index = length;
       }
 
-      sprite.pushSprite(&lcd, 0, (int)(select_index/CONTACT_PER_PAGE)*-64);
-      
+      sprite.pushSprite(&lcd, 0, (int)(select_index / CONTACT_PER_PAGE) * -64);
+
       // ジョイスティック左を押されたらメニューへ戻る
       // 戻るボタンを押されたらメニューへ戻る
       if (joystick_state.left || back_button_state.pushed) {
@@ -545,29 +555,30 @@ bool ContactBook::running_flag = false;
 
 class WiFiSetting {
 
-  public:
+public:
   static bool running_flag;
 
   void start_wifi_setting_task() {
     printf("Start WiFi Setting Task...");
     // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
-    xTaskCreatePinnedToCore(&wifi_setting_task, "wifi_setting_task", 8096, NULL, 6, NULL, 1);
+    xTaskCreatePinnedToCore(&wifi_setting_task, "wifi_setting_task", 8096, NULL,
+                            6, NULL, 1);
   }
 
-	static std::string char_to_string_ssid(uint8_t* uint_ssid) {
+  static std::string char_to_string_ssid(uint8_t *uint_ssid) {
     char char_ssid[33];
     sprintf(char_ssid, "%s", uint_ssid);
     std::string ssid(char_ssid);
 
-		return ssid;
-	}
+    return ssid;
+  }
 
-  static std::string get_omitted_ssid(uint8_t* uint_ssid) {
+  static std::string get_omitted_ssid(uint8_t *uint_ssid) {
     if (uint_ssid == 0) {
       return "";
     }
 
-		std::string ssid = char_to_string_ssid(uint_ssid);
+    std::string ssid = char_to_string_ssid(uint_ssid);
 
     // SSIDが12文字以内に収まるように加工
     if (ssid.length() >= 12) {
@@ -576,20 +587,21 @@ class WiFiSetting {
     return ssid;
   }
 
-  static std::string input_info(std::string input_type = "SSID",std::string type_text = "") {
+  static std::string input_info(std::string input_type = "SSID",
+                                std::string type_text = "") {
     int select_x_index = 0;
     int select_y_index = 0;
 
- 		// 文字列の配列を作成
+    // 文字列の配列を作成
     char char_set[7][35];
 
     sprintf(char_set[0], "0123456789");
     sprintf(char_set[1], "abcdefghijklmn");
-		sprintf(char_set[2], "opqrstuvwxyz");
+    sprintf(char_set[2], "opqrstuvwxyz");
     sprintf(char_set[3], "ABCDEFGHIJKLMN");
-		sprintf(char_set[4], "OPQRSTUVWXYZ");
+    sprintf(char_set[4], "OPQRSTUVWXYZ");
     sprintf(char_set[5], "!\"#$%%&\\'()*+,");
-		sprintf(char_set[6], "-./:;<=>?@[]^_`{|}~");
+    sprintf(char_set[6], "-./:;<=>?@[]^_`{|}~");
 
     int font_ = 13;
     int margin = 3;
@@ -600,9 +612,9 @@ class WiFiSetting {
     Button back_button(GPIO_NUM_3);
     Button enter_button(GPIO_NUM_5);
 
-    while(1) {
+    while (1) {
       sprite.fillRect(0, 0, 128, 64, 0);
-      sprite.setTextColor(0xFFFFFFu,0x000000u);
+      sprite.setTextColor(0xFFFFFFu, 0x000000u);
 
       sprite.setCursor(0, 0);
       sprite.print(input_type.c_str());
@@ -625,59 +637,59 @@ class WiFiSetting {
       } else if (joystick_state.pushed_down_edge) {
         select_y_index += 1;
       } else if (type_button_state.pushed) {
-				type_text = type_text + char_set[select_y_index][select_x_index];
-				type_button.clear_button_state();
+        type_text = type_text + char_set[select_y_index][select_x_index];
+        type_button.clear_button_state();
         type_button.reset_timer();
-			}
+      }
 
-			// 文字種のスクロールの設定
-			int char_set_length = sizeof(char_set)/sizeof(char_set[0]);
-			if (select_y_index >= char_set_length){
-				select_y_index = 0;
-			} else if (select_y_index < 0){
-				select_y_index = char_set_length - 1;
-			}
+      // 文字種のスクロールの設定
+      int char_set_length = sizeof(char_set) / sizeof(char_set[0]);
+      if (select_y_index >= char_set_length) {
+        select_y_index = 0;
+      } else if (select_y_index < 0) {
+        select_y_index = char_set_length - 1;
+      }
 
-			// 文字選択のスクロールの設定
-			if (char_set[select_y_index][select_x_index] == '\0'){
-				// 一番右へ行ったら左へ戻る
-				select_x_index = 0;
-			} else if (select_y_index < 0){
-				// 一番左へ行ったら右へ戻る
-				select_x_index = 0;
-				for (int i = 0; char_set[select_y_index][i] != '\0'; i++){
-					select_x_index += 1;
-				}
-			}
+      // 文字選択のスクロールの設定
+      if (char_set[select_y_index][select_x_index] == '\0') {
+        // 一番右へ行ったら左へ戻る
+        select_x_index = 0;
+      } else if (select_y_index < 0) {
+        // 一番左へ行ったら右へ戻る
+        select_x_index = 0;
+        for (int i = 0; char_set[select_y_index][i] != '\0'; i++) {
+          select_x_index += 1;
+        }
+      }
 
-			int draw_x = 0;
-			for (int i = 0; char_set[select_y_index][i] != '\0'; i++) {
-				sprite.setCursor(draw_x, 46);
-				if (select_x_index == i) {
-        	sprite.setTextColor(0x000000u,0xFFFFFFu);
-				} else {
-        	sprite.setTextColor(0xFFFFFFu,0x000000u);
-				}
-				sprite.print(char_set[select_y_index][i]);
-		    char c = char_set[select_y_index][i];
-   		 	const char* c_ptr = &c;
-				draw_x += sprite.textWidth(c_ptr);
-			}
-			
-			// 入力された文字の表示
-      sprite.setTextColor(0xFFFFFFu,0x000000u);
+      int draw_x = 0;
+      for (int i = 0; char_set[select_y_index][i] != '\0'; i++) {
+        sprite.setCursor(draw_x, 46);
+        if (select_x_index == i) {
+          sprite.setTextColor(0x000000u, 0xFFFFFFu);
+        } else {
+          sprite.setTextColor(0xFFFFFFu, 0x000000u);
+        }
+        sprite.print(char_set[select_y_index][i]);
+        char c = char_set[select_y_index][i];
+        const char *c_ptr = &c;
+        draw_x += sprite.textWidth(c_ptr);
+      }
+
+      // 入力された文字の表示
+      sprite.setTextColor(0xFFFFFFu, 0x000000u);
       sprite.setCursor(0, 15);
       sprite.print(type_text.c_str());
 
       sprite.pushSprite(&lcd, 0, 0);
     }
 
-		return type_text;
+    return type_text;
   }
 
-  static void set_wifi_info(uint8_t* ssid = 0) {
+  static void set_wifi_info(uint8_t *ssid = 0) {
 
-		WiFi wifi;
+    WiFi wifi;
 
     Joystick joystick;
 
@@ -688,10 +700,10 @@ class WiFiSetting {
     int select_index = 0;
     int font_height = 13;
     int margin = 3;
-		std::string input_ssid = char_to_string_ssid(ssid);
-		std::string input_pass = "";
+    std::string input_ssid = char_to_string_ssid(ssid);
+    std::string input_pass = "";
 
-    while(1) {
+    while (1) {
       sprite.fillRect(0, 0, 128, 64, 0);
 
       Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
@@ -715,30 +727,32 @@ class WiFiSetting {
 
       sprite.setCursor(0, 0);
       if (select_index == 0) {
-        sprite.fillRect(0, (font_height+margin) * select_index, 128, font_height + 3, 0xFFFF);
-        sprite.setTextColor(0x000000u,0xFFFFFFu);
+        sprite.fillRect(0, (font_height + margin) * select_index, 128,
+                        font_height + 3, 0xFFFF);
+        sprite.setTextColor(0x000000u, 0xFFFFFFu);
       } else {
-        sprite.setTextColor(0xFFFFFFu,0x000000u);
+        sprite.setTextColor(0xFFFFFFu, 0x000000u);
       }
       std::string disp_ssid = "SSID: " + get_omitted_ssid(ssid);
       sprite.print(disp_ssid.c_str());
 
-      sprite.setCursor(0, font_height+margin);
+      sprite.setCursor(0, font_height + margin);
       if (select_index == 1) {
-        sprite.fillRect(0, (font_height+margin) * select_index, 128, font_height + 3, 0xFFFF);
-        sprite.setTextColor(0x000000u,0xFFFFFFu);
+        sprite.fillRect(0, (font_height + margin) * select_index, 128,
+                        font_height + 3, 0xFFFF);
+        sprite.setTextColor(0x000000u, 0xFFFFFFu);
       } else {
-        sprite.setTextColor(0xFFFFFFu,0x000000u);
+        sprite.setTextColor(0xFFFFFFu, 0x000000u);
       }
-      sprite.print("PASSWORD: ****"); 
-      
-			sprite.setCursor(35, 40);
+      sprite.print("PASSWORD: ****");
+
+      sprite.setCursor(35, 40);
       if (select_index == 2) {
-        sprite.setTextColor(0x000000u,0xFFFFFFu);
+        sprite.setTextColor(0x000000u, 0xFFFFFFu);
       } else {
-        sprite.setTextColor(0xFFFFFFu,0x000000u);
+        sprite.setTextColor(0xFFFFFFu, 0x000000u);
       }
-      sprite.print("CONNECT"); 
+      sprite.print("CONNECT");
 
       sprite.pushSprite(&lcd, 0, 0);
 
@@ -750,14 +764,14 @@ class WiFiSetting {
         back_button.reset_timer();
         joystick.reset_timer();
 
-				if (select_index == 0){
-        	input_ssid = input_info("SSID",char_to_string_ssid(ssid));
-				} else if (select_index == 1){
-        	input_pass = input_info("PASSWORD",input_pass);
-				} else if (select_index == 2){
-					wifi.wifi_set_sta(input_ssid,input_pass);
-					// wifi.wifi_set_sta("elecom-3e6943_24","7ku65wjwx8fv");
-				}
+        if (select_index == 0) {
+          input_ssid = input_info("SSID", char_to_string_ssid(ssid));
+        } else if (select_index == 1) {
+          input_pass = input_info("PASSWORD", input_pass);
+        } else if (select_index == 2) {
+          wifi.wifi_set_sta(input_ssid, input_pass);
+          // wifi.wifi_set_sta("elecom-3e6943_24","7ku65wjwx8fv");
+        }
 
         type_button.clear_button_state();
         type_button.reset_timer();
@@ -784,23 +798,23 @@ class WiFiSetting {
     sprite.setCursor(30, 20);
     sprite.print("Scanning...");
     sprite.pushSprite(&lcd, 0, 0);
-    
+
     WiFi wifi;
 
     Joystick joystick;
-    
+
     Button type_button(GPIO_NUM_46);
     Button back_button(GPIO_NUM_3);
     Button enter_button(GPIO_NUM_5);
 
     uint16_t ssid_n = DEFAULT_SCAN_LIST_SIZE;
     wifi_ap_record_t ap_info[DEFAULT_SCAN_LIST_SIZE];
-    wifi.wifi_scan(&ssid_n,ap_info);
+    wifi.wifi_scan(&ssid_n, ap_info);
 
     int select_index = 0;
     int font_height = 13;
     int margin = 3;
- 
+
     while (true) {
 
       sprite.fillRect(0, 0, 128, 64, 0);
@@ -824,7 +838,6 @@ class WiFiSetting {
         select_index = ssid_n;
       }
 
-
       if (type_button_state.pushed) {
         sprite.setColorDepth(8);
         sprite.setFont(&fonts::Font2);
@@ -832,19 +845,20 @@ class WiFiSetting {
         type_button.reset_timer();
         joystick.reset_timer();
       }
-    
+
       for (int i = 0; i <= ssid_n; i++) {
-        sprite.setCursor(10, (font_height+margin) * i);
+        sprite.setCursor(10, (font_height + margin) * i);
 
         ESP_LOGI(TAG, "SSID \t\t%s", ap_info[i].ssid);
         ESP_LOGI(TAG, "RSSI \t\t%d", ap_info[i].rssi);
         ESP_LOGI(TAG, "Channel \t\t%d", ap_info[i].primary);
 
         if (i == select_index) {
-          sprite.setTextColor(0x000000u,0xFFFFFFu);
-          sprite.fillRect(0, (font_height+margin) * select_index, 128, font_height + 3, 0xFFFF);
+          sprite.setTextColor(0x000000u, 0xFFFFFFu);
+          sprite.fillRect(0, (font_height + margin) * select_index, 128,
+                          font_height + 3, 0xFFFF);
         } else {
-          sprite.setTextColor(0xFFFFFFu,0x000000u);
+          sprite.setTextColor(0xFFFFFFu, 0x000000u);
         }
 
         if (ssid_n == i) {
@@ -883,10 +897,9 @@ class WiFiSetting {
 };
 bool WiFiSetting::running_flag = false;
 
-
 class SettingMenu {
 
-  public:
+public:
   static bool running_flag;
 
   void start_message_menue_task() {
@@ -919,7 +932,8 @@ class SettingMenu {
     sprite.setColorDepth(8);
     sprite.setFont(&fonts::Font4);
     sprite.setTextWrap(true); // 右端到達時のカーソル折り返しを禁止
-    sprite.createSprite(lcd.width(), lcd.height()*(MAX_SETTINGS/ITEM_PER_PAGE));
+    sprite.createSprite(lcd.width(),
+                        lcd.height() * (MAX_SETTINGS / ITEM_PER_PAGE));
 
     typedef struct {
       std::string setting_name;
@@ -942,19 +956,20 @@ class SettingMenu {
       Button::button_state_t enter_button_state =
           enter_button.get_button_state();
 
-      sprite.fillScreen(0); 
-      
+      sprite.fillScreen(0);
+
       sprite.setFont(&fonts::Font2);
 
       int length = sizeof(settings) / sizeof(setting_t) - 1;
       for (int i = 0; i <= length; i++) {
-        sprite.setCursor(10, (font_height+margin) * i);
+        sprite.setCursor(10, (font_height + margin) * i);
 
         if (i == select_index) {
-          sprite.setTextColor(0x000000u,0xFFFFFFu);
-          sprite.fillRect(0, (font_height+margin) * select_index, 128, font_height + 3, 0xFFFF);
+          sprite.setTextColor(0x000000u, 0xFFFFFFu);
+          sprite.fillRect(0, (font_height + margin) * select_index, 128,
+                          font_height + 3, 0xFFFF);
         } else {
-          sprite.setTextColor(0xFFFFFFu,0x000000u);
+          sprite.setTextColor(0xFFFFFFu, 0x000000u);
         }
         sprite.print(settings[i].setting_name.c_str());
       }
@@ -971,15 +986,16 @@ class SettingMenu {
         select_index = length;
       }
 
-      sprite.pushSprite(&lcd, 0, (int)(select_index/ITEM_PER_PAGE)*-64);
-      
+      sprite.pushSprite(&lcd, 0, (int)(select_index / ITEM_PER_PAGE) * -64);
+
       // ジョイスティック左を押されたらメニューへ戻る
       // 戻るボタンを押されたらメニューへ戻る
       if (joystick_state.left || back_button_state.pushed) {
         break;
       }
 
-      if (type_button_state.pushed && settings[select_index].setting_name == "Wi-Fi") {
+      if (type_button_state.pushed &&
+          settings[select_index].setting_name == "Wi-Fi") {
         wifi_setting.running_flag = true;
         wifi_setting.start_wifi_setting_task();
         while (wifi_setting.running_flag) {
@@ -1001,7 +1017,7 @@ bool SettingMenu::running_flag = false;
 
 class Game {
 
-  public:
+public:
   static bool running_flag;
 
   void start_game_task() {
@@ -1011,6 +1027,7 @@ class Game {
   }
 
   static std::map<std::string, std::string> morse_code;
+  static std::map<std::string, std::string> morse_code_reverse;
   static void game_task(void *pvParameters) {
     lcd.init();
     lcd.setRotation(0);
@@ -1055,12 +1072,14 @@ class Game {
 
       // ゲーム終了フラグ
       bool break_flag = false;
-      
+
       // Play時間を取得
       float p_time = 0;
 
       // 問題を解き終わるまでループ
       while (c < n) {
+
+        sprite.fillRect(0, 0, 128, 64, 0);
 
         // Joystickの状態を取得
         Joystick::joystick_state_t joystick_state =
@@ -1103,15 +1122,8 @@ class Game {
           }
           morse_text = "";
         }
-        if (back_button_state.pushing and type_button_state.pushed) {
-          if (message_text != "") {
-            message_text.pop_back();
-          }
-          back_button.pushed_same_time();
-          type_button.clear_button_state();
-        } else if (back_button_state.pushed and
-                   !back_button_state.pushed_same_time and
-                   !type_button_state.pushing) {
+        if (back_button_state.pushed and !back_button_state.pushed_same_time and
+            !type_button_state.pushing) {
           break_flag = true;
           break;
         } else if (joystick_state.left) {
@@ -1121,18 +1133,19 @@ class Game {
           esp_restart();
         } else if (back_button_state.pushed) {
           back_button.clear_button_state();
+        } else if (joystick_state.up) {
+          sprite.setFont(&fonts::Font2);
+          sprite.setCursor(52, 30);
+
+          std::string key(1, random_char);
+          std::string morse = morse_code_reverse.at(key);
+
+          sprite.print(morse.c_str());
         }
 
-        // Enter(送信)キーの判定ロジック
-        if (enter_button_state.pushed and message_text != "") {
-          printf("Button pushed!\n");
-          printf("Pushing time:%lld\n", enter_button_state.pushing_sec);
-          printf("Push type:%c\n", enter_button_state.push_type);
-
-          message_text = "";
-
-          enter_button.clear_button_state();
-        }
+        printf("random_char is %c\n", random_char); // 生の値を出力
+        printf("random_char morse is %s\n",
+               std::to_string(random_char).c_str()); // 文字列化したキーを出力
 
         // 出題の文字と一緒であればcを++
         if (*message_text.c_str() == random_char) {
@@ -1149,13 +1162,11 @@ class Game {
 
         std::string nPerC = strC + "/" + strN;
 
-        sprite.fillRect(0, 0, 128, 64, 0);
-        
         // Play時間を取得
         p_time = round((esp_timer_get_time() - st) / 10000) / 100;
 
         char b_p_time[50];
-   
+
         std::sprintf(b_p_time, "%.2f", p_time);
         std::string s_p_time(b_p_time);
 
@@ -1193,7 +1204,7 @@ class Game {
 
       // Play時間を取得
       p_time = round((esp_timer_get_time() - st) / 10000) / 100;
-      char b_p_time[50];  
+      char b_p_time[50];
       std::sprintf(b_p_time, "%.2f", p_time);
       std::string s_p_time(b_p_time);
 
@@ -1225,7 +1236,6 @@ class Game {
           type_button.clear_button_state();
           break;
         }
-
 
         sprite.fillRect(0, 0, 128, 64, 0);
 
@@ -1271,11 +1281,20 @@ std::map<std::string, std::string> Game::morse_code = {
     {"_.._.", "/"},  {"_..._", "="},
 };
 
+std::map<std::string, std::string> Game::morse_code_reverse = {
+    {"A", "._"},   {"B", "_..."}, {"C", "_._."}, {"D", "_.."},  {"E", "."},
+    {"F", ".._."}, {"G", "__."},  {"H", "...."}, {"I", ".."},   {"J", ".___"},
+    {"K", "_._"},  {"L", "._.."}, {"M", "__"},   {"N", "_."},   {"O", "___"},
+    {"P", ".__."}, {"Q", "__._"}, {"R", "._."},  {"S", "..."},  {"T", "_"},
+    {"U", ".._"},  {"V", "..._"}, {"W", ".__"},  {"X", "_.._"}, {"Y", "_.__"},
+    {"Z", "__.."},
+};
+
 class MenuDisplay {
 
-  #define NAME_LENGTH_MAX 8
+#define NAME_LENGTH_MAX 8
 
-  public:
+public:
   void start_menu_task() {
     printf("Start Menu Task...");
     // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
@@ -1297,7 +1316,7 @@ class MenuDisplay {
 
     int cursor_index = 0;
 
-		HttpClient http_client;
+    HttpClient http_client;
 
     Joystick joystick;
 
@@ -1323,7 +1342,7 @@ class MenuDisplay {
     long long int st = esp_timer_get_time();
     // 電波強度の初期値
     float radioLevel = 4;
-		
+
     // 通知の取得
     http_client.start_notifications();
     JsonDocument notif_res = http_client.get_notifications();
@@ -1359,10 +1378,9 @@ class MenuDisplay {
         }
 
         // 通知情報を更新
-				notif_res = http_client.get_notifications();
+        notif_res = http_client.get_notifications();
         st = esp_timer_get_time();
       }
-      
 
       // メッセージ受信通知の表示
       // if (http.notif_flag) {
@@ -1400,15 +1418,15 @@ class MenuDisplay {
           icon_image = game_icon;
         }
 
-        if (cursor_index == i){
-					sprite.drawBitmap(menu_list[i].display_position_x,
-														menu_list[i].display_position_y, icon_image, 30, 30,
-														TFT_WHITE, TFT_BLACK);
-				} else {
-					sprite.drawBitmap(menu_list[i].display_position_x,
-														menu_list[i].display_position_y, icon_image, 30, 30,
-														TFT_BLACK, TFT_WHITE);
-				}
+        if (cursor_index == i) {
+          sprite.drawBitmap(menu_list[i].display_position_x,
+                            menu_list[i].display_position_y, icon_image, 30, 30,
+                            TFT_WHITE, TFT_BLACK);
+        } else {
+          sprite.drawBitmap(menu_list[i].display_position_x,
+                            menu_list[i].display_position_y, icon_image, 30, 30,
+                            TFT_BLACK, TFT_WHITE);
+        }
       }
 
       Joystick::joystick_state_t joystick_state = joystick.get_joystick_state();
@@ -1455,7 +1473,7 @@ class MenuDisplay {
         }
 
         // 通知情報を更新
-				notif_res = http_client.get_notifications();
+        notif_res = http_client.get_notifications();
 
         type_button.clear_button_state();
         type_button.reset_timer();
@@ -1476,13 +1494,14 @@ class MenuDisplay {
 
       // 通知の表示
       for (int i = 0; i < notif_res["notifications"].size(); i++) {
-				std::string notification_flag(notif_res["notifications"][i]["notification_flag"]);
-        if(notification_flag == "true"){
-					if (cursor_index == 0){
-          	sprite.fillCircle(37, 25, 4, 0);
-					} else {
-        		sprite.fillCircle(37, 25, 4, 0xFFFF);
-					}
+        std::string notification_flag(
+            notif_res["notifications"][i]["notification_flag"]);
+        if (notification_flag == "true") {
+          if (cursor_index == 0) {
+            sprite.fillCircle(37, 25, 4, 0);
+          } else {
+            sprite.fillCircle(37, 25, 4, 0xFFFF);
+          }
           break;
         }
       }
@@ -1502,7 +1521,7 @@ class MenuDisplay {
         sprite.pushSprite(&lcd, 0, 0);
         esp_deep_sleep_start();
       }
-      
+
       vTaskDelay(50 / portTICK_PERIOD_MS);
     }
 
@@ -1512,7 +1531,7 @@ class MenuDisplay {
 
 class Oled {
 
-  public:
+public:
   void BootDisplay() {
     printf("Booting!!!\n");
 
