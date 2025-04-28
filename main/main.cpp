@@ -37,88 +37,87 @@ void app_main();
 }
 
 void app_main(void) {
+    printf("Hello world!!!!\n");
 
-  printf("Hello world!!!!\n");
+    Oled oled;
+    MenuDisplay menu;
 
-  Oled oled;
-  MenuDisplay menu;
+    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+    if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
+        //// キャラクターの挨拶を描画
+        // for (int i = 0; i <= 2; i++) {
+        //   oled.ShowImage(robo1);
+        //   vTaskDelay(800 / portTICK_PERIOD_MS);
 
-  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
-    //// キャラクターの挨拶を描画
-    // for (int i = 0; i <= 2; i++) {
-    //   oled.ShowImage(robo1);
-    //   vTaskDelay(800 / portTICK_PERIOD_MS);
+        //  oled.ShowImage(robo2);
+        //  vTaskDelay(800 / portTICK_PERIOD_MS);
+        //}
 
-    //  oled.ShowImage(robo2);
-    //  vTaskDelay(800 / portTICK_PERIOD_MS);
-    //}
+        // 起動音を鳴らす
+        Buzzer buzzer;
+        buzzer.boot_sound();
+        // 起動時のロゴを表示
+        oled.BootDisplay();
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+    } else {
+        // 起動音を鳴らす
+        Buzzer buzzer;
+        buzzer.boot_sound();
+        // 起動時のロゴを表示
+        oled.BootDisplay();
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+    }
 
-    // 起動音を鳴らす
-    Buzzer buzzer;
-    buzzer.boot_sound();
-    // 起動時のロゴを表示
-    oled.BootDisplay();
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-  } else {
-    // 起動音を鳴らす
-    Buzzer buzzer;
-    buzzer.boot_sound();
-    // 起動時のロゴを表示
-    oled.BootDisplay();
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-  }
+    // Provisioning provisioning;
+    // provisioning.main();
 
-  // Provisioning provisioning;
-  // provisioning.main();
+    const gpio_num_t ext_wakeup_pin_0 = GPIO_NUM_3;
 
-  const gpio_num_t ext_wakeup_pin_0 = GPIO_NUM_3;
+    printf("Enabling EXT0 wakeup on pin GPIO%d\n", ext_wakeup_pin_0);
+    esp_sleep_enable_ext0_wakeup(ext_wakeup_pin_0, 1);
 
-  printf("Enabling EXT0 wakeup on pin GPIO%d\n", ext_wakeup_pin_0);
-  esp_sleep_enable_ext0_wakeup(ext_wakeup_pin_0, 1);
+    rtc_gpio_pullup_dis(ext_wakeup_pin_0);
+    rtc_gpio_pulldown_en(ext_wakeup_pin_0);
 
-  rtc_gpio_pullup_dis(ext_wakeup_pin_0);
-  rtc_gpio_pulldown_en(ext_wakeup_pin_0);
+    // TODO:menuから各機能の画面に遷移するように実装する
+    menu.start_menu_task();
 
-  // TODO:menuから各機能の画面に遷移するように実装する
-  menu.start_menu_task();
+    WiFi wifi;
+    wifi.main();
 
-  WiFi wifi;
-  wifi.main();
+    // HttpClient http_client;
+    // std::string chat_to = "hazuki";
+    // http_client.get_message(chat_to);
+    // http_client.post_message();
 
-  // HttpClient http_client;
-  // std::string chat_to = "hazuki";
-  // http_client.get_message(chat_to);
-  // http_client.post_message();
+    // Start ota task.
+    // Ota ota;
+    // ota.main();
 
-  // Start ota task.
-  // Ota ota;
-  // ota.main();
+    // FIXME
+    // for (int i = 0; i <= 10; i++) {
+    //   WiFi::wifi_state_t wifi_state = wifi.get_wifi_state();
+    //   printf("Wifi state:%c\n", wifi_state.state);
+    //   vTaskDelay(1000 / portTICK_PERIOD_MS);
+    // }
 
-  // FIXME
-  // for (int i = 0; i <= 10; i++) {
-  //   WiFi::wifi_state_t wifi_state = wifi.get_wifi_state();
-  //   printf("Wifi state:%c\n", wifi_state.state);
-  //   vTaskDelay(1000 / portTICK_PERIOD_MS);
-  // }
+    // HttpClient http;
+    // http.start_receiving_wait();
 
-  // HttpClient http;
-  // http.start_receiving_wait();
+    // Notification notif;
+    // notif.check_notification();
 
-  //Notification notif;
-  //notif.check_notification();
+    // app_mainが終了しないように無限ループ
+    while (1) {
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    };
 
-  // app_mainが終了しないように無限ループ
-  while (1) {
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-  };
+    for (int i = 10; i >= 0; i--) {
+        printf("Restarting in %d seconds...\n", i);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
 
-  for (int i = 10; i >= 0; i--) {
-    printf("Restarting in %d seconds...\n", i);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-  }
-
-  printf("Restarting now.\n");
-  fflush(stdout);
-  esp_restart();
+    printf("Restarting now.\n");
+    fflush(stdout);
+    esp_restart();
 }

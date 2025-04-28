@@ -1,7 +1,4 @@
 #include <stdio.h>
 #include "new_component.h"
 
-void func(void)
-{
-
-}
+void func(void) {}

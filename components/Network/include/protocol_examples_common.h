@@ -1,4 +1,5 @@
-/* Common functions for protocol examples, to establish Wi-Fi or Ethernet connection.
+/* Common functions for protocol examples, to establish Wi-Fi or Ethernet
+   connection.
 
    This example code is in the Public Domain (or CC0 licensed, at your option.)
 
@@ -28,7 +29,8 @@ extern "C" {
 #define EXAMPLE_NETIF_DESC_ETH "example_netif_eth"
 #endif
 
-/* Example default interface, prefer the ethernet one if running in example-test (CI) configuration */
+/* Example default interface, prefer the ethernet one if running in example-test
+ * (CI) configuration */
 #if CONFIG_EXAMPLE_CONNECT_ETHERNET
 #define EXAMPLE_INTERFACE get_example_netif_from_desc(EXAMPLE_NETIF_DESC_ETH)
 #define get_example_netif() get_example_netif_from_desc(EXAMPLE_NETIF_DESC_ETH)
@@ -94,7 +96,7 @@ void example_register_wifi_connect_commands(void);
  * @return esp_eth_handle_t
  */
 esp_eth_handle_t get_example_eth_handle(void);
-#endif // CONFIG_EXAMPLE_CONNECT_ETHERNET
+#endif  // CONFIG_EXAMPLE_CONNECT_ETHERNET
 
 #ifdef __cplusplus
 }
