@@ -1712,11 +1712,9 @@ class ProfileSetting {
         }
     }
 
-    static void opening() {
+    static void morse_greeting(char greet_txt[], char last_greet_txt[] = "",
+                               int cx = 64, int cy = 32) {
         Buzzer buzzer;
-
-        lcd.init();
-        lcd.setRotation(2);
 
         sprite.setColorDepth(8);
         sprite.setFont(&fonts::Font2);
@@ -1726,7 +1724,6 @@ class ProfileSetting {
         sprite.fillRect(0, 0, 128, 64, 0);
         sprite.setCursor(30, 20);
 
-        char greet_txt[] = "Hi, DE Mimoc.";
         std::string greet_str(greet_txt);
         std::string morse_str;
         std::string show_greet_str;
@@ -1741,6 +1738,7 @@ class ProfileSetting {
 
             for (int j = 0; j < morse_txt.length(); j++) {
                 sprite.fillRect(0, 0, 128, 64, 0);
+                sprite.drawCenterString(last_greet_txt, cx, 15);
                 char m = morse_txt[j];
 
                 if (m == '.') {
@@ -1755,114 +1753,26 @@ class ProfileSetting {
                 }
                 morse_str += m;
                 sprite.drawCenterString((show_greet_str + morse_str).c_str(),
-                                        64, 32);
+                                        cx, cy);
                 sprite.pushSprite(&lcd, 0, 0);
             }
             morse_str = "";
 
             sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.drawCenterString(last_greet_txt, cx, 15);
             show_greet_str = greet_str.substr(0, i + 1).c_str();
-            sprite.drawCenterString(show_greet_str.c_str(), 64, 32);
+            sprite.drawCenterString(show_greet_str.c_str(), cx, cy);
             sprite.pushSprite(&lcd, 0, 0);
 
             vTaskDelay(50 / portTICK_PERIOD_MS);
         }
-
-        sprite.pushSprite(&lcd, 0, 0);
     }
 
     static void profile_setting_task() {
-        opening();
-        Joystick joystick;
-
-        Button type_button(GPIO_NUM_46);
-        Button back_button(GPIO_NUM_3);
-        Button enter_button(GPIO_NUM_5);
-
-        int select_index = 0;
-        int font_height = 13;
-        int margin = 3;
-
-        while (true) {
-            sprite.fillRect(0, 0, 128, 64, 0);
-
-            Joystick::joystick_state_t joystick_state =
-                joystick.get_joystick_state();
-            Button::button_state_t type_button_state =
-                type_button.get_button_state();
-            Button::button_state_t back_button_state =
-                back_button.get_button_state();
-
-            // // 入力イベント
-            // if (joystick_state.left or back_button_state.pushed) {
-            //     break;
-            // } else if (joystick_state.pushed_up_edge) {
-            //     select_index -= 1;
-            // } else if (joystick_state.pushed_down_edge) {
-            //     select_index += 1;
-            // }
-
-            // if (select_index < 0) {
-            //     select_index = 0;
-            // } else if (select_index > ssid_n) {
-            //     select_index = ssid_n;
-            // }
-
-            // if (type_button_state.pushed) {
-            //     sprite.setColorDepth(8);
-            //     sprite.setFont(&fonts::Font2);
-            //     type_button.clear_button_state();
-            //     type_button.reset_timer();
-            //     joystick.reset_timer();
-            // }
-
-            // for (int i = 0; i <= ssid_n; i++) {
-            //     sprite.setCursor(10, (font_height + margin) * i);
-
-            //     ESP_LOGI(TAG, "SSID \t\t%s", ap_info[i].ssid);
-            //     ESP_LOGI(TAG, "RSSI \t\t%d", ap_info[i].rssi);
-            //     ESP_LOGI(TAG, "Channel \t\t%d", ap_info[i].primary);
-
-            //     if (i == select_index) {
-            //         sprite.setTextColor(0x000000u, 0xFFFFFFu);
-            //         sprite.fillRect(0, (font_height + margin) * select_index,
-            //                         128, font_height + 3, 0xFFFF);
-            //     } else {
-            //         sprite.setTextColor(0xFFFFFFu, 0x000000u);
-            //     }
-
-            //     if (ssid_n == i) {
-            //         // 手動入力のためのOtherを表示
-            //         std::string disp_ssid = "Other";
-            //         sprite.print(disp_ssid.c_str());
-            //     } else {
-            //         // スキャンの結果取得できたSSIDを表示
-            //         sprite.print(get_omitted_ssid(ap_info[i].ssid).c_str());
-            //     }
-            // }
-
-            // sprite.pushSprite(&lcd, 0, 0);
-
-            // 個別のWiFi設定画面へ遷移
-            if (type_button_state.pushed) {
-                // if (ssid_n == select_index) {
-                //     set_wifi_info();
-                // } else {
-                //     set_wifi_info(ap_info[select_index].ssid);
-                // }
-                set_profile_info();
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                back_button.clear_button_state();
-                back_button.reset_timer();
-                joystick.reset_timer();
-            }
-
-            // チャタリング防止用に100msのsleep
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
-
-        vTaskDelete(NULL);
+        morse_greeting("HI, DE Mimoc.", "", 64, 15);
+        vTaskDelay(400 / portTICK_PERIOD_MS);
+        morse_greeting("YOU ARE?", "HI, DE Mimoc.");
+        set_profile_info();
     };
 };
 
