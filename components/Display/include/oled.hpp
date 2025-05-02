@@ -1731,8 +1731,6 @@ class ProfileSetting {
         std::string morse_str;
         std::string show_greet_str;
 
-        printf("OK!");
-
         int greet_len = strlen(greet_txt);
         for (int i = 0; i < greet_len; i++) {
             char upper = std::toupper(static_cast<unsigned char>(greet_txt[i]));
@@ -1744,16 +1742,13 @@ class ProfileSetting {
             for (int j = 0; j < morse_txt.length(); j++) {
                 sprite.fillRect(0, 0, 128, 64, 0);
                 char m = morse_txt[j];
-                printf("M %c\n", m);
 
                 if (m == '.') {
-                    printf("pi!!");
                     buzzer.buzzer_on();
                     vTaskDelay(50 / portTICK_PERIOD_MS);
                     buzzer.buzzer_off();
 
                 } else if (m == '_') {
-                    printf("piiiii!!");
                     buzzer.buzzer_on();
                     vTaskDelay(150 / portTICK_PERIOD_MS);
                     buzzer.buzzer_off();
