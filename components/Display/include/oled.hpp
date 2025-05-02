@@ -1592,10 +1592,8 @@ class ProfileSetting {
             sprite.fillRect(0, 0, 128, 64, 0);
             sprite.setTextColor(0xFFFFFFu, 0x000000u);
 
-            sprite.setCursor(0, 0);
-            sprite.print("Name:");
-            sprite.drawFastHLine(0, 14, 128, 0xFFFF);
-            sprite.drawFastHLine(0, 45, 128, 0xFFFF);
+            sprite.drawCenterString("HI, DE Mimoc.", 64, 0);
+            sprite.drawCenterString("YOU ARE?", 64, 15);
 
             Joystick::joystick_state_t joystick_state =
                 joystick.get_joystick_state();
@@ -1658,8 +1656,9 @@ class ProfileSetting {
 
             // 入力された文字の表示
             sprite.setTextColor(0xFFFFFFu, 0x000000u);
-            sprite.setCursor(0, 15);
-            sprite.print(type_text.c_str());
+            sprite.setCursor(0, 30);
+            sprite.print(("Name: " + type_text).c_str());
+            sprite.drawFastHLine(0, 45, 128, 0xFFFF);
 
             sprite.pushSprite(&lcd, 0, 0);
         }
@@ -1667,49 +1666,11 @@ class ProfileSetting {
         return type_text;
     }
 
-    static void set_profile_info(uint8_t *ssid = 0) {
-        Joystick joystick;
-
-        Button type_button(GPIO_NUM_46);
-        Button back_button(GPIO_NUM_3);
-        Button enter_button(GPIO_NUM_5);
-
-        int select_index = 0;
-        int font_height = 13;
-        int margin = 3;
-
+    static std::string set_profile_info(uint8_t *ssid = 0) {
         std::string user_name = "";
 
-        while (1) {
-            sprite.fillRect(0, 0, 128, 64, 0);
-
-            Joystick::joystick_state_t joystick_state =
-                joystick.get_joystick_state();
-            Button::button_state_t type_button_state =
-                type_button.get_button_state();
-            Button::button_state_t back_button_state =
-                back_button.get_button_state();
-
-            // 入力イベント
-            if (joystick_state.left or back_button_state.pushed) {
-                break;
-            } else if (joystick_state.pushed_up_edge) {
-                select_index -= 1;
-            } else if (joystick_state.pushed_down_edge) {
-                select_index += 1;
-            }
-
-            if (select_index > 2) {
-                select_index = 2;
-            } else if (select_index < 0) {
-                select_index = 0;
-            }
-
-            user_name = input_info();
-
-            // チャタリング防止用に100msのsleep
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        user_name = input_info();
+        return user_name;
     }
 
     static void morse_greeting(char greet_txt[], char last_greet_txt[] = "",
@@ -1769,9 +1730,21 @@ class ProfileSetting {
     }
 
     static void profile_setting_task() {
-        morse_greeting("HI, DE Mimoc.", "", 64, 15);
+        int cx = 64;
+        int cy = 15;
+        morse_greeting("HI, DE Mimoc.", "", cx, cy);
         vTaskDelay(400 / portTICK_PERIOD_MS);
         morse_greeting("YOU ARE?", "HI, DE Mimoc.");
+
+        while (cy > 0) {
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.drawCenterString("HI, DE Mimoc.", cx, cy);
+            sprite.drawCenterString("YOU ARE?", cx, cy + 17);
+            sprite.pushSprite(&lcd, 0, 0);
+            cy--;
+            vTaskDelay(20 / portTICK_PERIOD_MS);
+        }
+
         set_profile_info();
     };
 };
