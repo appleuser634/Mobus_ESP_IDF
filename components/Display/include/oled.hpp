@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <iterator>
 #include <string>
 
@@ -7,6 +8,7 @@
 #include <buzzer.hpp>
 #include <images.hpp>
 #include <led.hpp>
+#include <ctype.h>
 
 #pragma once
 
@@ -1306,13 +1308,23 @@ std::map<std::string, std::string> Game::morse_code = {
 };
 
 std::map<std::string, std::string> Game::morse_code_reverse = {
-    {"A", "._"},   {"B", "_..."}, {"C", "_._."}, {"D", "_.."},  {"E", "."},
-    {"F", ".._."}, {"G", "__."},  {"H", "...."}, {"I", ".."},   {"J", ".___"},
-    {"K", "_._"},  {"L", "._.."}, {"M", "__"},   {"N", "_."},   {"O", "___"},
-    {"P", ".__."}, {"Q", "__._"}, {"R", "._."},  {"S", "..."},  {"T", "_"},
-    {"U", ".._"},  {"V", "..._"}, {"W", ".__"},  {"X", "_.._"}, {"Y", "_.__"},
-    {"Z", "__.."},
-};
+    {"A", "._"},     {"B", "_..."},   {"C", "_._."},   {"D", "_.."},
+    {"E", "."},      {"F", ".._."},   {"G", "__."},    {"H", "...."},
+    {"I", ".."},     {"J", ".___"},   {"K", "_._"},    {"L", "._.."},
+    {"M", "__"},     {"N", "_."},     {"O", "___"},    {"P", ".__."},
+    {"Q", "__._"},   {"R", "._."},    {"S", "..."},    {"T", "_"},
+    {"U", ".._"},    {"V", "..._"},   {"W", ".__"},    {"X", "_.._"},
+    {"Y", "_.__"},   {"Z", "__.."},   {"!", "_._.__"}, {".", "._._._"},
+
+    {" ", "._._"},
+
+    {"1", "._____"}, {"2", "..___"},  {"3", "...__"},  {"4", "...._"},
+    {"5", "....."},  {"6", "_...."},  {"7", "__..."},  {"8", "___.."},
+    {"9", "____."},  {"0", "_____"},
+
+    {"?", "..__.."}, {"!", "_._.__"}, {".", "._._._"}, {",", "__..__"},
+    {";", "_._._."}, {":", "___..."}, {"+", "._._."},  {"-", "_...._"},
+    {"/", "_.._."},  {"=", "_..._"}};
 
 class MenuDisplay {
 #define NAME_LENGTH_MAX 8
@@ -1544,6 +1556,315 @@ class MenuDisplay {
             }
 
             vTaskDelay(50 / portTICK_PERIOD_MS);
+        }
+
+        vTaskDelete(NULL);
+    };
+};
+
+class ProfileSetting {
+   public:
+    static std::string input_info(std::string type_text = "") {
+        int select_x_index = 0;
+        int select_y_index = 0;
+
+        // 文字列の配列を作成
+        char char_set[7][35];
+
+        sprintf(char_set[0], "0123456789");
+        sprintf(char_set[1], "abcdefghijklmn");
+        sprintf(char_set[2], "opqrstuvwxyz");
+        sprintf(char_set[3], "ABCDEFGHIJKLMN");
+        sprintf(char_set[4], "OPQRSTUVWXYZ");
+        sprintf(char_set[5], "!\"#$%%&\\'()*+,");
+        sprintf(char_set[6], "-./:;<=>?@[]^_`{|}~");
+
+        int font_ = 13;
+        int margin = 3;
+
+        Joystick joystick;
+
+        Button type_button(GPIO_NUM_46);
+        Button back_button(GPIO_NUM_3);
+        Button enter_button(GPIO_NUM_5);
+
+        while (1) {
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+
+            sprite.setCursor(0, 0);
+            sprite.print("Name:");
+            sprite.drawFastHLine(0, 14, 128, 0xFFFF);
+            sprite.drawFastHLine(0, 45, 128, 0xFFFF);
+
+            Joystick::joystick_state_t joystick_state =
+                joystick.get_joystick_state();
+            Button::button_state_t type_button_state =
+                type_button.get_button_state();
+            Button::button_state_t back_button_state =
+                back_button.get_button_state();
+
+            // 入力イベント
+            if (back_button_state.pushed) {
+                break;
+            } else if (joystick_state.pushed_left_edge) {
+                select_x_index -= 1;
+            } else if (joystick_state.pushed_right_edge) {
+                select_x_index += 1;
+            } else if (joystick_state.pushed_up_edge) {
+                select_y_index -= 1;
+            } else if (joystick_state.pushed_down_edge) {
+                select_y_index += 1;
+            } else if (type_button_state.pushed) {
+                type_text =
+                    type_text + char_set[select_y_index][select_x_index];
+                type_button.clear_button_state();
+                type_button.reset_timer();
+            }
+
+            // 文字種のスクロールの設定
+            int char_set_length = sizeof(char_set) / sizeof(char_set[0]);
+            if (select_y_index >= char_set_length) {
+                select_y_index = 0;
+            } else if (select_y_index < 0) {
+                select_y_index = char_set_length - 1;
+            }
+
+            // 文字選択のスクロールの設定
+            if (char_set[select_y_index][select_x_index] == '\0') {
+                // 一番右へ行ったら左へ戻る
+                select_x_index = 0;
+            } else if (select_y_index < 0) {
+                // 一番左へ行ったら右へ戻る
+                select_x_index = 0;
+                for (int i = 0; char_set[select_y_index][i] != '\0'; i++) {
+                    select_x_index += 1;
+                }
+            }
+
+            int draw_x = 0;
+            for (int i = 0; char_set[select_y_index][i] != '\0'; i++) {
+                sprite.setCursor(draw_x, 46);
+                if (select_x_index == i) {
+                    sprite.setTextColor(0x000000u, 0xFFFFFFu);
+                } else {
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                }
+                sprite.print(char_set[select_y_index][i]);
+                char c = char_set[select_y_index][i];
+                const char *c_ptr = &c;
+                draw_x += sprite.textWidth(c_ptr);
+            }
+
+            // 入力された文字の表示
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            sprite.setCursor(0, 15);
+            sprite.print(type_text.c_str());
+
+            sprite.pushSprite(&lcd, 0, 0);
+        }
+
+        return type_text;
+    }
+
+    static void set_profile_info(uint8_t *ssid = 0) {
+        Joystick joystick;
+
+        Button type_button(GPIO_NUM_46);
+        Button back_button(GPIO_NUM_3);
+        Button enter_button(GPIO_NUM_5);
+
+        int select_index = 0;
+        int font_height = 13;
+        int margin = 3;
+
+        std::string user_name = "";
+
+        while (1) {
+            sprite.fillRect(0, 0, 128, 64, 0);
+
+            Joystick::joystick_state_t joystick_state =
+                joystick.get_joystick_state();
+            Button::button_state_t type_button_state =
+                type_button.get_button_state();
+            Button::button_state_t back_button_state =
+                back_button.get_button_state();
+
+            // 入力イベント
+            if (joystick_state.left or back_button_state.pushed) {
+                break;
+            } else if (joystick_state.pushed_up_edge) {
+                select_index -= 1;
+            } else if (joystick_state.pushed_down_edge) {
+                select_index += 1;
+            }
+
+            if (select_index > 2) {
+                select_index = 2;
+            } else if (select_index < 0) {
+                select_index = 0;
+            }
+
+            user_name = input_info();
+
+            // チャタリング防止用に100msのsleep
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+    }
+
+    static void opening() {
+        Buzzer buzzer;
+
+        lcd.init();
+        lcd.setRotation(2);
+
+        sprite.setColorDepth(8);
+        sprite.setFont(&fonts::Font2);
+        sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
+        sprite.createSprite(lcd.width(), lcd.height());
+
+        sprite.fillRect(0, 0, 128, 64, 0);
+        sprite.setCursor(30, 20);
+
+        char greet_txt[] = "Hi, DE Mimoc.";
+        std::string greet_str(greet_txt);
+        std::string morse_str;
+        std::string show_greet_str;
+
+        printf("OK!");
+
+        int greet_len = strlen(greet_txt);
+        for (int i = 0; i < greet_len; i++) {
+            char upper = std::toupper(static_cast<unsigned char>(greet_txt[i]));
+            std::string key(1, upper);
+            std::string morse_txt = Game::morse_code_reverse.at(key);
+
+            printf("Morse %s\n", morse_txt.c_str());
+
+            for (int j = 0; j < morse_txt.length(); j++) {
+                sprite.fillRect(0, 0, 128, 64, 0);
+                char m = morse_txt[j];
+                printf("M %c\n", m);
+
+                if (m == '.') {
+                    printf("pi!!");
+                    buzzer.buzzer_on();
+                    vTaskDelay(50 / portTICK_PERIOD_MS);
+                    buzzer.buzzer_off();
+
+                } else if (m == '_') {
+                    printf("piiiii!!");
+                    buzzer.buzzer_on();
+                    vTaskDelay(150 / portTICK_PERIOD_MS);
+                    buzzer.buzzer_off();
+                }
+                morse_str += m;
+                sprite.drawCenterString((show_greet_str + morse_str).c_str(),
+                                        64, 32);
+                sprite.pushSprite(&lcd, 0, 0);
+            }
+            morse_str = "";
+
+            sprite.fillRect(0, 0, 128, 64, 0);
+            show_greet_str = greet_str.substr(0, i + 1).c_str();
+            sprite.drawCenterString(show_greet_str.c_str(), 64, 32);
+            sprite.pushSprite(&lcd, 0, 0);
+
+            vTaskDelay(50 / portTICK_PERIOD_MS);
+        }
+
+        sprite.pushSprite(&lcd, 0, 0);
+    }
+
+    static void profile_setting_task() {
+        opening();
+        Joystick joystick;
+
+        Button type_button(GPIO_NUM_46);
+        Button back_button(GPIO_NUM_3);
+        Button enter_button(GPIO_NUM_5);
+
+        int select_index = 0;
+        int font_height = 13;
+        int margin = 3;
+
+        while (true) {
+            sprite.fillRect(0, 0, 128, 64, 0);
+
+            Joystick::joystick_state_t joystick_state =
+                joystick.get_joystick_state();
+            Button::button_state_t type_button_state =
+                type_button.get_button_state();
+            Button::button_state_t back_button_state =
+                back_button.get_button_state();
+
+            // // 入力イベント
+            // if (joystick_state.left or back_button_state.pushed) {
+            //     break;
+            // } else if (joystick_state.pushed_up_edge) {
+            //     select_index -= 1;
+            // } else if (joystick_state.pushed_down_edge) {
+            //     select_index += 1;
+            // }
+
+            // if (select_index < 0) {
+            //     select_index = 0;
+            // } else if (select_index > ssid_n) {
+            //     select_index = ssid_n;
+            // }
+
+            // if (type_button_state.pushed) {
+            //     sprite.setColorDepth(8);
+            //     sprite.setFont(&fonts::Font2);
+            //     type_button.clear_button_state();
+            //     type_button.reset_timer();
+            //     joystick.reset_timer();
+            // }
+
+            // for (int i = 0; i <= ssid_n; i++) {
+            //     sprite.setCursor(10, (font_height + margin) * i);
+
+            //     ESP_LOGI(TAG, "SSID \t\t%s", ap_info[i].ssid);
+            //     ESP_LOGI(TAG, "RSSI \t\t%d", ap_info[i].rssi);
+            //     ESP_LOGI(TAG, "Channel \t\t%d", ap_info[i].primary);
+
+            //     if (i == select_index) {
+            //         sprite.setTextColor(0x000000u, 0xFFFFFFu);
+            //         sprite.fillRect(0, (font_height + margin) * select_index,
+            //                         128, font_height + 3, 0xFFFF);
+            //     } else {
+            //         sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            //     }
+
+            //     if (ssid_n == i) {
+            //         // 手動入力のためのOtherを表示
+            //         std::string disp_ssid = "Other";
+            //         sprite.print(disp_ssid.c_str());
+            //     } else {
+            //         // スキャンの結果取得できたSSIDを表示
+            //         sprite.print(get_omitted_ssid(ap_info[i].ssid).c_str());
+            //     }
+            // }
+
+            // sprite.pushSprite(&lcd, 0, 0);
+
+            // 個別のWiFi設定画面へ遷移
+            if (type_button_state.pushed) {
+                // if (ssid_n == select_index) {
+                //     set_wifi_info();
+                // } else {
+                //     set_wifi_info(ap_info[select_index].ssid);
+                // }
+                set_profile_info();
+                type_button.clear_button_state();
+                type_button.reset_timer();
+                back_button.clear_button_state();
+                back_button.reset_timer();
+                joystick.reset_timer();
+            }
+
+            // チャタリング防止用に100msのsleep
+            vTaskDelay(10 / portTICK_PERIOD_MS);
         }
 
         vTaskDelete(NULL);

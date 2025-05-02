@@ -23,6 +23,7 @@ static const char *TAG = "Mobus v3.14";
 #include <joystick.h>
 #include <power_monitor.h>
 
+#include <nvs_rw.hpp>
 #include <wifi.hpp>
 #include <http_client.hpp>
 #include <oled.hpp>
@@ -41,6 +42,7 @@ void app_main(void) {
 
     Oled oled;
     MenuDisplay menu;
+    ProfileSetting profile_setting;
 
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
     if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
@@ -78,6 +80,8 @@ void app_main(void) {
 
     rtc_gpio_pullup_dis(ext_wakeup_pin_0);
     rtc_gpio_pulldown_en(ext_wakeup_pin_0);
+
+    profile_setting.profile_setting_task();
 
     // TODO:menuから各機能の画面に遷移するように実装する
     menu.start_menu_task();
