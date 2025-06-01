@@ -13,61 +13,62 @@
 #pragma once
 
 class LGFX : public lgfx::LGFX_Device {
-    lgfx::Panel_SH110x _panel_instance;
-    lgfx::Bus_I2C _bus_instance;
+    lgfx::Panel_SSD1306
+        _panel_instance;  // SSD1309 は SH110x ドライバで動作可能
+    lgfx::Bus_SPI _bus_instance;
 
    public:
     LGFX(void) {
-        {  // バス制御の設定を行います。
+        {  // SPIバス設定
             auto cfg = _bus_instance.config();
-            cfg.i2c_port = 0;         // 使用するI2Cポートを選択 (0 or 1)
-            cfg.freq_write = 400000;  // 送信時のクロック
-            cfg.freq_read = 400000;   // 受信時のクロック
-            cfg.pin_sda = 1;          // SDAを接続しているピン番号
-            cfg.pin_scl = 2;          // SCLを接続しているピン番号
-            cfg.i2c_addr = 0x3C;      // I2Cデバイスのアドレス
 
-            _bus_instance.config(cfg);  // 設定値をバスに反映します。
-            _panel_instance.setBus(
-                &_bus_instance);  // バスをパネルにセットします。
+            cfg.spi_host =
+                SPI3_HOST;     // ESP32-S3では SPI2_HOST または SPI3_HOST
+            cfg.spi_mode = 0;  // SSD1309のSPIモードは0
+
+            cfg.freq_write = 8000000;  // 8MHz程度が安定（モジュールによる）
+            cfg.freq_read = 0;         // dev/ 読み取り不要なため 0
+            cfg.spi_3wire = false;     // DCピン使用するので false
+            cfg.use_lock = true;
+
+            // 接続ピン（あなたの配線に基づく）
+            cfg.pin_sclk = 2;   // SCK
+            cfg.pin_mosi = 13;  // MOSI
+            cfg.pin_miso = -1;  // MISO 使用しない
+            cfg.pin_dc = 1;     // DC
+
+            _bus_instance.config(cfg);
+            _panel_instance.setBus(&_bus_instance);
         }
-        {  // 表示パネル制御の設定を行います。
-            auto cfg = _panel_instance
-                           .config();  // 表示パネル設定用の構造体を取得します。
 
-            cfg.pin_cs = -1;    // CSが接続されているピン番号   (-1 = disable)
-            cfg.pin_rst = -1;   // RSTが接続されているピン番号  (-1 = disable)
-            cfg.pin_busy = -1;  // BUSYが接続されているピン番号 (-1 = disable)
+        {  // パネル設定
+            auto cfg = _panel_instance.config();
 
-            // ※
-            // 以下の設定値はパネル毎に一般的な初期値が設定されていますので、不明な項目はコメントアウトして試してみてください。
+            cfg.pin_cs = 11;    // CS
+            cfg.pin_rst = 12;   // RST
+            cfg.pin_busy = -1;  // BUSYピン未使用
 
-            cfg.memory_width = 128;  // ドライバICがサポートしている最大の幅
-            cfg.memory_height = 64;  // ドライバICがサポートしている最大の高さ
-            cfg.panel_width = 128;   // 実際に表示可能な幅
-            cfg.panel_height = 64;   // 実際に表示可能な高さ
-            cfg.offset_x = 2;        // パネルのX方向オフセット量
-            cfg.offset_y = 0;        // パネルのY方向オフセット量
-            cfg.offset_rotation =
-                0;  // 回転方向の値のオフセット 0~7 (4~7は上下反転)
-            cfg.dummy_read_pixel =
-                8;  // ピクセル読出し前のダミーリードのビット数
-            cfg.dummy_read_bits =
-                1;  // ピクセル以外のデータ読出し前のダミーリードのビット数
-            cfg.readable = true;  // データ読出しが可能な場合 trueに設定
-            cfg.invert = false;   // パネルの明暗が反転してしまう場合 trueに設定
-            cfg.rgb_order =
-                false;  // パネルの赤と青が入れ替わってしまう場合 trueに設定
-            cfg.dlen_16bit =
-                false;  // データ長を16bit単位で送信するパネルの場合 trueに設定
-            cfg.bus_shared =
-                true;  // SDカードとバスを共有している場合
-                       // trueに設定(drawJpgFile等でバス制御を行います)
+            cfg.panel_width = 128;
+            cfg.panel_height = 64;
+            cfg.memory_width = 128;
+            cfg.memory_height = 64;
+
+            cfg.offset_x = 0;
+            cfg.offset_y = 0;
+            cfg.offset_rotation = 2;
+
+            cfg.dummy_read_pixel = 8;
+            cfg.dummy_read_bits = 1;
+            cfg.readable = false;  // 読み取り機能なし
+            cfg.invert = false;
+            cfg.rgb_order = false;
+            cfg.dlen_16bit = false;
+            cfg.bus_shared = false;
 
             _panel_instance.config(cfg);
         }
 
-        setPanel(&_panel_instance);  // 使用するパネルをセットします。
+        setPanel(&_panel_instance);
     }
 };
 
