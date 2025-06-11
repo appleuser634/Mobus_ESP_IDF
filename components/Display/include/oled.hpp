@@ -1423,9 +1423,9 @@ class MenuDisplay {
             // }
 
             PowerMonitor::power_state_t power_state = power.get_power_state();
-            // printf("Power Voltage:%d\n", power_state.power_voltage);
+            printf("Power Voltage:%d\n", power_state.power_voltage);
 
-            float power_per = power_state.power_voltage / 25.5;
+            float power_per = power_state.power_voltage / 1.4;
             int power_per_pix = (int)(0.14 * power_per);
 
             // printf("Power Per:%d\n", power_per_pix);
