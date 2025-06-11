@@ -1119,7 +1119,6 @@ class Game {
                 if (type_button_state.push_edge and
                     !back_button_state.pushing) {
                     buzzer.buzzer_on();
-                    led.led_on();
                 }
 
                 if (type_button_state.pushed and !back_button_state.pushing) {
@@ -1135,7 +1134,6 @@ class Game {
 
                     type_button.clear_button_state();
                     buzzer.buzzer_off();
-                    led.led_off();
                 }
 
                 // printf("Release time:%lld\n",button_state.release_sec);
@@ -1178,6 +1176,10 @@ class Game {
                 if (*message_text.c_str() == random_char) {
                     c += 1;
                     random_char = letters[rand() % 26];
+                } else if (message_text != "") {
+                    led.led_on();
+                    vTaskDelay(50 / portTICK_PERIOD_MS);
+                    led.led_off();
                 }
 
                 message_text = "";
