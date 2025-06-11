@@ -1,6 +1,5 @@
 #include <cstdio>
 #include <iterator>
-#include <string>
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
@@ -1232,19 +1231,50 @@ class Game {
                 printf("message_text:%s\n", message_text.c_str());
             }
 
+            // break_flagが立ってたら終了
+            if (break_flag) {
+                break;
+            }
+
             // Play時間を取得
             p_time = round((esp_timer_get_time() - st) / 10000) / 100;
             char b_p_time[50];
             std::sprintf(b_p_time, "%.2f", p_time);
             std::string s_p_time(b_p_time);
 
-            // Play時間を表示
-            while (1) {
-                // break_flagが立ってたら終了
-                if (break_flag) {
-                    break;
-                }
+            std::string best_record = get_newrecord();
+            float best_record_f = std::stof(best_record);
 
+            sprite.fillRect(0, 0, 128, 64, 0);
+
+            sprite.setFont(&fonts::Font4);
+            sprite.setCursor(32, 0);
+            sprite.print("Clear!");
+
+            printf("best time: %s", best_record.c_str());
+            printf("time: %s", s_p_time.c_str());
+
+            if (std::stof(s_p_time) < best_record_f) {
+                save_newrecord(s_p_time);
+
+                sprite.setFont(&fonts::Font2);
+                std::string t_text = "New Record!!";
+                sprite.drawCenterString(t_text.c_str(), 64, 22, &fonts::Font2);
+
+                t_text = "Time: " + s_p_time + "s";
+                sprite.drawCenterString(t_text.c_str(), 64, 38, &fonts::Font2);
+            } else {
+                sprite.setFont(&fonts::Font2);
+                std::string t_text = "Time: " + s_p_time + "s";
+                sprite.drawCenterString(t_text.c_str(), 64, 22, &fonts::Font2);
+
+                t_text = "Best Time: " + best_record + "s";
+                sprite.drawCenterString(t_text.c_str(), 64, 38, &fonts::Font2);
+            }
+            // Play時間を表示
+            sprite.pushSprite(&lcd, 0, 0);
+
+            while (1) {
                 Joystick::joystick_state_t joystick_state =
                     joystick.get_joystick_state();
                 Button::button_state_t type_button_state =
@@ -1265,18 +1295,6 @@ class Game {
                     type_button.clear_button_state();
                     break;
                 }
-
-                sprite.fillRect(0, 0, 128, 64, 0);
-
-                sprite.setFont(&fonts::Font4);
-                sprite.setCursor(32, 0);
-                sprite.print("Clear!");
-
-                sprite.setFont(&fonts::Font2);
-                sprite.setCursor(28, 32);
-                std::string t_text = "Time: " + s_p_time + "s";
-                sprite.print(t_text.c_str());
-                sprite.pushSprite(&lcd, 0, 0);
             }
 
             if (break_flag) {
@@ -1368,6 +1386,9 @@ class MenuDisplay {
         Button type_button(GPIO_NUM_46);
         Button enter_button(GPIO_NUM_5);
 
+        // TODO: Buttonクラスではなく別で実装する
+        Button charge_stat(GPIO_NUM_8);
+
         lcd.setRotation(2);
 
         sprite.setColorDepth(8);
@@ -1436,6 +1457,13 @@ class MenuDisplay {
             // 電池残量表示
             sprite.drawRoundRect(110, 0, 14, 8, 2, 0xFFFF);
             sprite.fillRect(111, 0, power_per_pix, 8, 0xFFFF);
+
+            Button::button_state_t type_charge_stat =
+                charge_stat.get_button_state();
+
+            if (type_charge_stat.pushing) {
+                sprite.fillRect(105, 2, 2, 2, 0xFFFF);
+            }
 
             sprite.fillRect(124, 2, 1, 4, 0xFFFF);
 
