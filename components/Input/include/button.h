@@ -46,7 +46,7 @@ class Button {
     } button_state_t;
 
     button_state_t button_state = {false, false, false, false, 's', 0, 0, 0};
-    long long int long_push_thresh = 150000;
+    long long int long_push_thresh = 130000;
 
     button_state_t get_button_state() {
         button_state.push_edge = false;
