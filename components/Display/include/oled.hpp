@@ -76,6 +76,28 @@ static LGFX lcd;
 static LGFX_Sprite sprite(
     &lcd);  // スプライトを使う場合はLGFX_Spriteのインスタンスを作成。
 
+// UTF-8 の1文字の先頭バイト数を調べる（UTF-8のみ対応）
+int utf8_char_length(unsigned char ch) {
+    if ((ch & 0x80) == 0x00) return 1;  // ASCII
+    if ((ch & 0xE0) == 0xC0) return 2;  // 2バイト文字
+    if ((ch & 0xF0) == 0xE0) return 3;  // 3バイト文字（例：カタカナ）
+    if ((ch & 0xF8) == 0xF0) return 4;  // 4バイト文字（絵文字など）
+    return 1;
+}
+
+void remove_last_utf8_char(std::string &str) {
+    if (str.empty()) return;
+
+    // 末尾の先頭バイトを探す
+    size_t pos = str.size();
+    while (pos > 0) {
+        --pos;
+        if ((str[pos] & 0xC0) != 0x80) break;  // UTF-8の先頭バイト検出
+    }
+
+    str.erase(pos);
+}
+
 static constexpr char text[] = "MoBus!!";
 static constexpr size_t textlen = sizeof(text) / sizeof(text[0]);
 size_t textpos = 0;
@@ -92,6 +114,7 @@ class TalkDisplay {
     static std::string short_push_text;
 
     static std::map<std::string, std::string> morse_code;
+    static std::vector<std::pair<std::string, std::string>> romaji_kana;
 
     static int release_time;
 
@@ -121,7 +144,6 @@ class TalkDisplay {
         lcd.setRotation(0);
 
         Buzzer buzzer;
-        Led led;
 
         Joystick joystick;
 
@@ -161,7 +183,6 @@ class TalkDisplay {
 
             if (type_button_state.push_edge and !back_button_state.pushing) {
                 buzzer.buzzer_on();
-                led.led_on();
             }
 
             if (type_button_state.pushed and !back_button_state.pushing) {
@@ -176,7 +197,6 @@ class TalkDisplay {
 
                 type_button.clear_button_state();
                 buzzer.buzzer_off();
-                led.led_off();
             }
 
             // printf("Release time:%lld\n",button_state.release_sec);
@@ -190,7 +210,7 @@ class TalkDisplay {
             }
             if (back_button_state.pushing and type_button_state.pushed) {
                 if (message_text != "") {
-                    message_text.pop_back();
+                    remove_last_utf8_char(message_text);
                 }
                 back_button.pushed_same_time();
                 type_button.clear_button_state();
@@ -234,11 +254,24 @@ class TalkDisplay {
 
             sprite.fillRect(0, 0, 128, 64, 0);
 
+            sprite.setFont(&fonts::lgfxJapanGothic_12);
+
             sprite.setCursor(0, 0);
             sprite.print(display_text.c_str());
             sprite.pushSprite(&lcd, 0, 0);
 
             message_text += alphabet_text;
+
+            if (alphabet_text != "") {
+                for (const auto &pair : romaji_kana) {
+                    std::cout << "Key: " << pair.first << std::endl;
+                    size_t pos = message_text.find(pair.first);
+                    if (pos != std::string::npos) {
+                        message_text.replace(pos, pair.first.length(),
+                                             pair.second);
+                    }
+                }
+            }
             alphabet_text = "";
 
             // チャタリング防止用に100msのsleep
@@ -279,6 +312,44 @@ std::map<std::string, std::string> TalkDisplay::morse_code = {
     {"_.._.", "/"},  {"_..._", "="},
 
 };
+
+std::vector<std::pair<std::string, std::string>> TalkDisplay::romaji_kana = {
+    {"KA", "カ"},    {"KI", "キ"},    {"KU", "ク"},    {"KE", "ケ"},
+    {"KO", "コ"},    {"GA", "ガ"},    {"GI", "ギ"},    {"GU", "グ"},
+    {"GE", "ゲ"},    {"GO", "ゴ"},    {"SA", "サ"},    {"SHI", "シ"},
+    {"SU", "ス"},    {"SE", "セ"},    {"SO", "ソ"},    {"ZA", "ザ"},
+    {"JI", "ジ"},    {"ZU", "ズ"},    {"ZE", "ゼ"},    {"ZO", "ゾ"},
+    {"TA", "タ"},    {"CHI", "チ"},   {"TSU", "ツ"},   {"TE", "テ"},
+    {"TO", "ト"},    {"DA", "ダ"},    {"DI", "ディ"},  {"DU", "ドゥ"},
+    {"DE", "デ"},    {"DO", "ド"},    {"NA", "ナ"},    {"NI", "ニ"},
+    {"NU", "ヌ"},    {"NE", "ネ"},    {"NO", "ノ"},    {"HA", "ハ"},
+    {"HI", "ヒ"},    {"FU", "フ"},    {"HE", "ヘ"},    {"HO", "ホ"},
+    {"BA", "バ"},    {"BI", "ビ"},    {"BU", "ブ"},    {"BE", "ベ"},
+    {"BO", "ボ"},    {"PA", "パ"},    {"PI", "ピ"},    {"PU", "プ"},
+    {"PE", "ペ"},    {"PO", "ポ"},    {"MA", "マ"},    {"MI", "ミ"},
+    {"MU", "ム"},    {"ME", "メ"},    {"MO", "モ"},    {"YA", "ヤ"},
+    {"YU", "ユ"},    {"YO", "ヨ"},    {"RA", "ラ"},    {"RI", "リ"},
+    {"RU", "ル"},    {"RE", "レ"},    {"RO", "ロ"},    {"WA", "ワ"},
+    {"WI", "ウィ"},  {"WE", "ウェ"},  {"WO", "ヲ"},    {"NN", "ン"},
+
+    {"KYA", "キャ"}, {"KYU", "キュ"}, {"KYO", "キョ"}, {"GYA", "ギャ"},
+    {"GYU", "ギュ"}, {"GYO", "ギョ"}, {"SHA", "シャ"}, {"SHU", "シュ"},
+    {"SHO", "ショ"}, {"JA", "ジャ"},  {"JU", "ジュ"},  {"JO", "ジョ"},
+    {"CHA", "チャ"}, {"CHU", "チュ"}, {"CHO", "チョ"}, {"NYA", "ニャ"},
+    {"NYU", "ニュ"}, {"NYO", "ニョ"}, {"HYA", "ヒャ"}, {"HYU", "ヒュ"},
+    {"HYO", "ヒョ"}, {"BYA", "ビャ"}, {"BYU", "ビュ"}, {"BYO", "ビョ"},
+    {"PYA", "ピャ"}, {"PYU", "ピュ"}, {"PYO", "ピョ"}, {"MYA", "ミャ"},
+    {"MYU", "ミュ"}, {"MYO", "ミョ"}, {"RYA", "リャ"}, {"RYU", "リュ"},
+    {"RYO", "リョ"},
+
+    {"FA", "ファ"},  {"FI", "フィ"},  {"FE", "フェ"},  {"FO", "フォ"},
+    {"VA", "ヴァ"},  {"VI", "ヴィ"},  {"VE", "ヴェ"},  {"VO", "ヴォ"},
+    {"TU", "トゥ"},  {"TI", "ティ"},  {"JE", "ジェ"},  {"CHE", "チェ"},
+    {"TH", "テャ"},
+
+    {"A", "ア"},     {"I", "イ"},     {"U", "ウ"},     {"E", "エ"},
+    {"O", "オ"}};
+
 // std::map<std::string, std::string> TalkDisplay::morse_code = morse_code;
 int TalkDisplay::release_time = 0;
 bool TalkDisplay::running_flag = false;
@@ -1270,7 +1341,7 @@ class Game {
 
                 sprite.setTextColor(0x000000u, 0xFFFFFFu);
 
-                std::string t_text = "BestTime: " + best_record + "s";
+                std::string t_text = " BestTime: " + best_record + "s ";
                 sprite.drawCenterString(t_text.c_str(), 64, 38);
 
                 sprite.setTextColor(0xFFFFFFu, 0x000000u);
