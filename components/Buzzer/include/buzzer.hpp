@@ -9,7 +9,7 @@
 
 class Buzzer {
    public:
-    u_int32_t LEDC_FREQ = 2700;
+    u_int32_t LEDC_FREQ = 2300;
     u_int32_t STEP = 10;
 
     ledc_timer_config_t ledc_timer;
