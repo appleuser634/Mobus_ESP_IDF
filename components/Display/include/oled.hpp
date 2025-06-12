@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <iterator>
+#include <string>
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
@@ -1258,18 +1259,24 @@ class Game {
                 save_newrecord(s_p_time);
 
                 sprite.setFont(&fonts::Font2);
+
                 std::string t_text = "New Record!!";
-                sprite.drawCenterString(t_text.c_str(), 64, 22, &fonts::Font2);
+                sprite.drawCenterString(t_text.c_str(), 64, 22);
 
                 t_text = "Time: " + s_p_time + "s";
-                sprite.drawCenterString(t_text.c_str(), 64, 38, &fonts::Font2);
+                sprite.drawCenterString(t_text.c_str(), 64, 38);
             } else {
                 sprite.setFont(&fonts::Font2);
-                std::string t_text = "Time: " + s_p_time + "s";
-                sprite.drawCenterString(t_text.c_str(), 64, 22, &fonts::Font2);
 
-                t_text = "Best Time: " + best_record + "s";
-                sprite.drawCenterString(t_text.c_str(), 64, 38, &fonts::Font2);
+                sprite.setTextColor(0x000000u, 0xFFFFFFu);
+
+                std::string t_text = "BestTime: " + best_record + "s";
+                sprite.drawCenterString(t_text.c_str(), 64, 38);
+
+                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+
+                t_text = "Time: " + s_p_time + "s";
+                sprite.drawCenterString(t_text.c_str(), 64, 22);
             }
             // Play時間を表示
             sprite.pushSprite(&lcd, 0, 0);
