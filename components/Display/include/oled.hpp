@@ -1314,7 +1314,7 @@ class Game {
             std::sprintf(b_p_time, "%.2f", p_time);
             std::string s_p_time(b_p_time);
 
-            std::string best_record = get_newrecord();
+            std::string best_record = get_nvs("morse_score");
             float best_record_f = std::stof(best_record);
 
             sprite.fillRect(0, 0, 128, 64, 0);
@@ -1327,7 +1327,7 @@ class Game {
             printf("time: %s", s_p_time.c_str());
 
             if (std::stof(s_p_time) < best_record_f) {
-                save_newrecord(s_p_time);
+                save_nvs("morse_score", s_p_time);
 
                 sprite.setFont(&fonts::Font2);
 

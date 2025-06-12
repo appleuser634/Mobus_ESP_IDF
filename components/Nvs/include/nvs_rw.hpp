@@ -152,8 +152,8 @@ void nvs_main(void) {
     ESP_LOGI(TAG, "Returned to app_main");
 }
 
-void save_newrecord(std::string record) {
-    // Initialize NVS
+void save_nvs(char *key, std::string record) {
+    // Initialize Non-VolatileVS
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
         err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -173,7 +173,7 @@ void save_newrecord(std::string record) {
     }
 
     // Write string
-    err = nvs_set_str(my_handle, "morse_score", record.c_str());
+    err = nvs_set_str(my_handle, key, record.c_str());
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to write string: %s", esp_err_to_name(err));
         nvs_close(my_handle);
@@ -192,7 +192,7 @@ void save_newrecord(std::string record) {
     ESP_LOGI(TAG, "Returned to app_main");
 }
 
-std::string get_newrecord() {
+std::string get_nvs(char *key) {
     // Initialize NVS
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
@@ -215,7 +215,7 @@ std::string get_newrecord() {
 
     // Read string back
     size_t required_size = 0;
-    err = nvs_get_str(my_handle, "morse_score", nullptr, &required_size);
+    err = nvs_get_str(my_handle, key, nullptr, &required_size);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to get string size: %s", esp_err_to_name(err));
         nvs_close(my_handle);
@@ -225,7 +225,7 @@ std::string get_newrecord() {
     std::string result;
     result.resize(required_size);  // includes null terminator
 
-    err = nvs_get_str(my_handle, "morse_score", result.data(), &required_size);
+    err = nvs_get_str(my_handle, key, result.data(), &required_size);
     nvs_close(my_handle);
 
     if (err != ESP_OK) {
