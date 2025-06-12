@@ -1210,8 +1210,8 @@ class Game {
 
                 // sprite.setFont(&fonts::Font4);
                 sprite.setFont(&fonts::FreeMono12pt7b);
-                sprite.setCursor(50, 36);
-                sprite.print(display_text.c_str());
+                sprite.drawCenterString(display_text.c_str(), 64, 36,
+                                        &fonts::FreeMono12pt7b);
 
                 sprite.setCursor(55, 5);
                 sprite.print(random_char);
