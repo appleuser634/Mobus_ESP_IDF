@@ -1131,6 +1131,7 @@ class Game {
 
         Buzzer buzzer;
         Led led;
+        Neopixel neopixel;
 
         Joystick joystick;
 
@@ -1250,8 +1251,10 @@ class Game {
                     random_char = letters[rand() % 26];
                 } else if (message_text != "") {
                     led.led_on();
+                    neopixel.set_color(10, 0, 0);
                     vTaskDelay(50 / portTICK_PERIOD_MS);
                     led.led_off();
+                    neopixel.set_color(0, 0, 0);
                 }
 
                 message_text = "";

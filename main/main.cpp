@@ -28,8 +28,8 @@ static const char *TAG = "Mobus v3.14";
 #include <nvs_rw.hpp>
 #include <wifi.hpp>
 #include <http_client.hpp>
-#include <oled.hpp>
 #include <neopixel.hpp>
+#include <oled.hpp>
 
 // #include <notification.hpp>
 
