@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string>
+#include <iostream>
 
 #include "cJSON.h"
 #include "driver/gpio.h"
@@ -27,6 +29,7 @@ static const char *TAG = "Mobus v3.14";
 #include <wifi.hpp>
 #include <http_client.hpp>
 #include <oled.hpp>
+#include <neopixel.hpp>
 
 // #include <notification.hpp>
 
@@ -41,6 +44,7 @@ void app_main(void) {
     printf("Hello world!!!!\n");
 
     Oled oled;
+    Neopixel neopixel;
     MenuDisplay menu;
     ProfileSetting profile_setting;
 
@@ -60,14 +64,30 @@ void app_main(void) {
         buzzer.boot_sound();
         // 起動時のロゴを表示
         oled.BootDisplay();
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        // LEDを光らす
+        for (int i = 0; i < 50; i++) {
+            neopixel.set_color(i, i, i);
+            vTaskDelay(20 / portTICK_PERIOD_MS);
+        }
+        for (int i = 50; i > 0; i--) {
+            neopixel.set_color(i, i, i);
+            vTaskDelay(20 / portTICK_PERIOD_MS);
+        }
     } else {
         // 起動音を鳴らす
         Buzzer buzzer;
         buzzer.boot_sound();
         // 起動時のロゴを表示
         oled.BootDisplay();
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        // LEDを光らす
+        for (int i = 0; i < 50; i++) {
+            neopixel.set_color(i, i, i);
+            vTaskDelay(20 / portTICK_PERIOD_MS);
+        }
+        for (int i = 50; i > 0; i--) {
+            neopixel.set_color(i, i, i);
+            vTaskDelay(20 / portTICK_PERIOD_MS);
+        }
     }
 
     // Provisioning provisioning;
@@ -81,7 +101,7 @@ void app_main(void) {
     rtc_gpio_pullup_dis(ext_wakeup_pin_0);
     rtc_gpio_pulldown_en(ext_wakeup_pin_0);
 
-    profile_setting.profile_setting_task();
+    // profile_setting.profile_setting_task();
 
     // TODO:menuから各機能の画面に遷移するように実装する
     menu.start_menu_task();
