@@ -1582,6 +1582,10 @@ class MenuDisplay {
 
             Button::button_state_t type_button_state =
                 type_button.get_button_state();
+
+            Button::button_state_t enter_button_state =
+                enter_button.get_button_state();
+
             if (type_button_state.pushed) {
                 printf("Button pushed!\n");
                 printf("Pushing time:%lld\n", type_button_state.pushing_sec);
@@ -1660,11 +1664,16 @@ class MenuDisplay {
             // 30秒操作がなければsleep
             int button_free_time = type_button_state.release_sec / 1000000;
             int joystick_free_time = joystick_state.release_sec / 1000000;
+
             if (button_free_time >= 30 and joystick_free_time >= 30) {
                 printf("button_free_time:%d\n", button_free_time);
                 printf("joystick_free_time:%d\n", joystick_free_time);
                 sprite.fillRect(0, 0, 128, 64, 0);
                 sprite.pushSprite(&lcd, 0, 0);
+                esp_deep_sleep_start();
+            } else if (enter_button_state.pushed) {
+                type_button.clear_button_state();
+                type_button.reset_timer();
                 esp_deep_sleep_start();
             }
 
