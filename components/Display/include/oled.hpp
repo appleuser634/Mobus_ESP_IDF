@@ -117,7 +117,7 @@ class TalkDisplay {
     static std::vector<std::pair<std::string, std::string>> romaji_kana;
 
     static int release_time;
-    // 0:EN 1:JP
+    // -1:EN 1:JP
     static int input_lang;
 
     static void SendAnimation() {
@@ -169,6 +169,9 @@ class TalkDisplay {
 
         // カーソル点滅制御用タイマー
         long long int t = esp_timer_get_time();
+
+        size_t input_switch_pos = 0;
+        size_t pos = 0;
 
         while (true) {
             Joystick::joystick_state_t joystick_state =
@@ -222,8 +225,22 @@ class TalkDisplay {
                 break;
             } else if (joystick_state.left) {
                 break;
-            } else if (joystick_state.right) {
-                break;
+            } else if (joystick_state.pushed_right_edge) {
+                input_lang = input_lang * -1;
+
+                sprite.fillRoundRect(52, 24, 24, 18, 2, 0);
+                sprite.drawRoundRect(52, 24, 24, 18, 2, 0xFFFF);
+
+                sprite.setFont(&fonts::Font2);
+                if (input_lang == 1) {
+                    sprite.drawCenterString("JP", 64, 25);
+                } else {
+                    sprite.drawCenterString("EN", 64, 25);
+                }
+                sprite.pushSprite(&lcd, 0, 0);
+                vTaskDelay(300 / portTICK_PERIOD_MS);
+
+                input_switch_pos = pos;
             } else if (back_button_state.pushed) {
                 back_button.clear_button_state();
             }
@@ -259,7 +276,7 @@ class TalkDisplay {
             sprite.fillRect(0, 0, 128, 64, 0);
             sprite.setCursor(0, 0);
 
-            size_t pos = 0;
+            pos = 0;
             while (pos < display_text.length()) {
                 // UTF-8の先頭バイトを調べる
                 uint8_t c = display_text[pos];
@@ -287,8 +304,8 @@ class TalkDisplay {
 
             sprite.pushSprite(&lcd, 0, 0);
 
-            if (alphabet_text != "") {
-                message_text += alphabet_text;
+            message_text += alphabet_text;
+            if (alphabet_text != "" && input_lang == 1) {
                 for (const auto &pair : romaji_kana) {
                     std::cout << "Key: " << pair.first << std::endl;
                     size_t pos = message_text.find(pair.first);
@@ -550,7 +567,7 @@ std::vector<std::pair<std::string, std::string>> TalkDisplay::romaji_kana = {
 
 // std::map<std::string, std::string> TalkDisplay::morse_code = morse_code;
 int TalkDisplay::release_time = 0;
-int TalkDisplay::input_lang = 0;
+int TalkDisplay::input_lang = -1;
 bool TalkDisplay::running_flag = false;
 
 class MessageBox {
