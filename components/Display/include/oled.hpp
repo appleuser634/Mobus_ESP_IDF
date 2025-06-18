@@ -306,14 +306,18 @@ class TalkDisplay {
 
             message_text += alphabet_text;
             if (alphabet_text != "" && input_lang == 1) {
+                std::string translate_targt =
+                    message_text.substr(input_switch_pos);
                 for (const auto &pair : romaji_kana) {
                     std::cout << "Key: " << pair.first << std::endl;
-                    size_t pos = message_text.find(pair.first);
+                    size_t pos = translate_targt.find(pair.first);
                     if (pos != std::string::npos) {
-                        message_text.replace(pos, pair.first.length(),
-                                             pair.second);
+                        translate_targt.replace(pos, pair.first.length(),
+                                                pair.second);
                     }
                 }
+                message_text =
+                    message_text.substr(0, input_switch_pos) + translate_targt;
             }
             alphabet_text = "";
 
@@ -353,7 +357,6 @@ std::map<std::string, std::string> TalkDisplay::morse_code = {
     {"..__..", "?"}, {"_._.__", "!"}, {"._._._", "."}, {"__..__", ","},
     {"_._._.", ";"}, {"___...", ":"}, {"._._.", "+"},  {"_...._", "-"},
     {"_.._.", "/"},  {"_..._", "="},
-
 };
 
 std::vector<std::pair<std::string, std::string>> TalkDisplay::romaji_kana = {
