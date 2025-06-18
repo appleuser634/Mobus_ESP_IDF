@@ -211,6 +211,10 @@ class TalkDisplay {
                 if (morse_code.count(morse_text)) {
                     alphabet_text = morse_code.at(morse_text);
                 }
+                if (joystick_state.up) {
+                    std::transform(alphabet_text.begin(), alphabet_text.end(),
+                                   alphabet_text.begin(), ::toupper);
+                }
                 morse_text = "";
             }
             if (back_button_state.pushing and type_button_state.pushed) {
