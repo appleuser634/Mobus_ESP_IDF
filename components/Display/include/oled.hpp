@@ -117,6 +117,8 @@ class TalkDisplay {
     static std::vector<std::pair<std::string, std::string>> romaji_kana;
 
     static int release_time;
+    // 0:EN 1:JP
+    static int input_lang;
 
     static void SendAnimation() {
         sprite.fillRect(0, 0, 128, 64, 0);
@@ -220,6 +222,8 @@ class TalkDisplay {
                 break;
             } else if (joystick_state.left) {
                 break;
+            } else if (joystick_state.right) {
+                break;
             } else if (back_button_state.pushed) {
                 back_button.clear_button_state();
             }
@@ -253,16 +257,38 @@ class TalkDisplay {
             }
 
             sprite.fillRect(0, 0, 128, 64, 0);
-
-            sprite.setFont(&fonts::lgfxJapanGothic_12);
-
             sprite.setCursor(0, 0);
-            sprite.print(display_text.c_str());
+
+            size_t pos = 0;
+            while (pos < display_text.length()) {
+                // UTF-8の先頭バイトを調べる
+                uint8_t c = display_text[pos];
+                printf("pos:%d.c:0x%02X\n", pos, c);
+                int char_len = 1;
+                if ((c & 0xE0) == 0xC0)
+                    char_len = 2;  // 2バイト文字
+                else if ((c & 0xF0) == 0xE0)
+                    char_len = 3;  // 3バイト文字
+
+                std::string ch = display_text.substr(pos, char_len);
+
+                // カタカナ or ASCII 判定（UTF-8 → Unicodeへ変換するのが理想）
+                // 仮にカタカナ判定だけハードコーディングする例：
+                if ((uint8_t)ch[0] == 0xE3 &&
+                    ((uint8_t)ch[1] == 0x82 || (uint8_t)ch[1] == 0x83)) {
+                    sprite.setFont(&fonts::lgfxJapanGothic_12);
+                } else {
+                    sprite.setFont(&fonts::Font2);
+                }
+
+                sprite.print(ch.c_str());
+                pos += char_len;
+            }
+
             sprite.pushSprite(&lcd, 0, 0);
 
-            message_text += alphabet_text;
-
             if (alphabet_text != "") {
+                message_text += alphabet_text;
                 for (const auto &pair : romaji_kana) {
                     std::cout << "Key: " << pair.first << std::endl;
                     size_t pos = message_text.find(pair.first);
@@ -524,6 +550,7 @@ std::vector<std::pair<std::string, std::string>> TalkDisplay::romaji_kana = {
 
 // std::map<std::string, std::string> TalkDisplay::morse_code = morse_code;
 int TalkDisplay::release_time = 0;
+int TalkDisplay::input_lang = 0;
 bool TalkDisplay::running_flag = false;
 
 class MessageBox {
@@ -1382,7 +1409,8 @@ class Game {
 
                 // printf("Release time:%lld\n",button_state.release_sec);
                 if (type_button_state.release_sec > 200000) {
-                    // printf("Release time:%lld\n",button_state.release_sec);
+                    // printf("Release
+                    // time:%lld\n",button_state.release_sec);
 
                     if (morse_code.count(morse_text)) {
                         alphabet_text = morse_code.at(morse_text);
@@ -1751,8 +1779,9 @@ class MenuDisplay {
                 joystick.get_joystick_state();
             // printf("UP:%s\n", joystick_state.up ? "true" : "false");
             // printf("DOWN:%s\n", joystick_state.down ? "true" : "false");
-            // printf("RIGHT:%s\n", joystick_state.right ? "true" : "false");
-            // printf("LEFT:%s\n", joystick_state.left ? "true" : "false");
+            // printf("RIGHT:%s\n", joystick_state.right ? "true" :
+            // "false"); printf("LEFT:%s\n", joystick_state.left ? "true" :
+            // "false");
 
             Button::button_state_t type_button_state =
                 type_button.get_button_state();
@@ -2070,14 +2099,16 @@ class Oled {
         for (int i = 50; i >= 20; i--) {
             sprite.setCursor(25, i);   // カーソル位置を更新
             sprite.print(notif_text);  // 1バイトずつ出力
-            // sprite.scroll(0, 0);  // キャンバスの内容を1ドット上にスクロール
+            // sprite.scroll(0, 0);  //
+            // キャンバスの内容を1ドット上にスクロール
             sprite.pushSprite(&lcd, 0, 0);
         }
 
         for (int i = 20; i >= -50; i--) {
             sprite.setCursor(25, i);   // カーソル位置を更新
             sprite.print(notif_text);  // 1バイトずつ出力
-            // sprite.scroll(0, 0);  // キャンバスの内容を1ドット上にスクロール
+            // sprite.scroll(0, 0);  //
+            // キャンバスの内容を1ドット上にスクロール
             sprite.pushSprite(&lcd, 0, 0);
         }
     }
@@ -2093,7 +2124,8 @@ class Oled {
         // sprite.drawPixel(64, 32);
 
         sprite.drawBitmap(55, 25, img, 16, 22, TFT_WHITE, TFT_BLACK);
-        // sprite.drawBitmap(32, 0, mimocLogo, 64, 64, TFT_WHITE, TFT_BLACK);
+        // sprite.drawBitmap(32, 0, mimocLogo, 64, 64, TFT_WHITE,
+        // TFT_BLACK);
 
         sprite.pushSprite(&lcd, 0, 0);
     }
