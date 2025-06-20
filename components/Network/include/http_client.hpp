@@ -178,8 +178,8 @@ void http_get_message_task(void *pvParameters) {
 
     // POST
     JsonDocument doc;
-    doc["from"] = "Musashi";
-    doc["to"] = "Hazuki";
+    doc["from"] = "Hazuki";
+    doc["to"] = "Musashi";
 
     char post_data[255];
     serializeJson(doc, post_data, sizeof(post_data));
@@ -233,7 +233,7 @@ void http_get_notifications_task(void *pvParameters) {
 
         // POST
         JsonDocument doc;
-        doc["to"] = "Musashi";
+        doc["to"] = "Hazuki";
 
         char post_data[255];
         serializeJson(doc, post_data, sizeof(post_data));
