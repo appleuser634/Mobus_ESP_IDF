@@ -217,10 +217,15 @@ class TalkDisplay {
                 }
                 morse_text = "";
             }
+            if (joystick_state.down and type_button_state.pushed) {
+                message_text += "\n";
+                type_button.clear_button_state();
+            }
             if (back_button_state.pushing and type_button_state.pushed) {
                 if (message_text != "") {
                     remove_last_utf8_char(message_text);
                 }
+                input_switch_pos = pos;
                 back_button.pushed_same_time();
                 type_button.clear_button_state();
             } else if (back_button_state.pushed and
@@ -689,13 +694,42 @@ class MessageBox {
                 }
 
                 sprite.setCursor(14, cursor_y);
-                sprite.print(message.c_str());
-                // sprite.drawFastHLine( 0, cursor_y, 128, 0xFFFF);
+
+                size_t pos = 0;
+                while (pos < message.length()) {
+                    // UTF-8の先頭バイトを調べる
+                    uint8_t c = message[pos];
+                    printf("pos:%d.c:0x%02X\n", pos, c);
+                    int char_len = 1;
+                    if ((c & 0xE0) == 0xC0)
+                        char_len = 2;  // 2バイト文字
+                    else if ((c & 0xF0) == 0xE0)
+                        char_len = 3;  // 3バイト文字
+
+                    std::string ch = message.substr(pos, char_len);
+
+                    // カタカナ or ASCII 判定（UTF-8 →
+                    // Unicodeへ変換するのが理想）
+                    // 仮にカタカナ判定だけハードコーディングする例：
+                    if ((uint8_t)ch[0] == 0xE3 &&
+                        ((uint8_t)ch[1] == 0x82 || (uint8_t)ch[1] == 0x83)) {
+                        sprite.setFont(&fonts::lgfxJapanGothic_12);
+                    } else {
+                        sprite.setFont(&fonts::Font2);
+                    }
+
+                    sprite.print(ch.c_str());
+                    pos += char_len;
+                }
+
+                // sprite.print(message.c_str());
+                //  sprite.drawFastHLine( 0, cursor_y, 128, 0xFFFF);
             }
 
             sprite.fillRect(0, 0, 128, 14, 0);
             sprite.setCursor(0, 0);
             sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            sprite.setFont(&fonts::Font2);
             sprite.print(chat_to.c_str());
             sprite.drawFastHLine(0, 14, 128, 0xFFFF);
             sprite.drawFastHLine(0, 15, 128, 0);
@@ -1769,6 +1803,8 @@ class MenuDisplay {
             if (type_charge_stat.pushing) {
                 sprite.fillRect(105, 2, 2, 2, 0xFFFF);
             }
+            charge_stat.clear_button_state();
+            charge_stat.reset_timer();
 
             sprite.fillRect(124, 2, 1, 4, 0xFFFF);
 
