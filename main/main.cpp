@@ -31,6 +31,8 @@ static const char *TAG = "Mobus v3.14";
 #include <neopixel.hpp>
 #include <oled.hpp>
 
+#define uS_TO_S_FACTOR 1000000ULL  // 秒→マイクロ秒
+
 // #include <notification.hpp>
 
 // #include <provisioning.h>
@@ -40,6 +42,47 @@ extern "C" {
 void app_main();
 }
 
+void check_notification() {
+    Oled oled;
+    Buzzer buzzer;
+    Led led;
+    Neopixel neopixel;
+
+    printf("通知チェック中...");
+    HttpClient http_client;
+    // 通知の取得
+    http_client.start_notifications();
+
+    int timeout = 10;
+    for (int i = 0; i < timeout; i++) {
+        JsonDocument notif_res = http_client.get_notifications();
+
+        for (int i = 0; i < notif_res["notifications"].size(); i++) {
+            std::string notification_flag(
+                notif_res["notifications"][i]["notification_flag"]);
+            if (notification_flag == "true") {
+                printf("got notification!");
+
+                for (int n = 0; n < 2; n++) {
+                    buzzer.buzzer_on(2600);
+                    led.led_on();
+                    neopixel.set_color(0, 100, 100);
+                    vTaskDelay(50 / portTICK_PERIOD_MS);
+                    buzzer.buzzer_off();
+                    led.led_off();
+                    neopixel.set_color(0, 0, 0);
+                    vTaskDelay(50 / portTICK_PERIOD_MS);
+                }
+                neopixel.set_color(0, 100, 100);
+                return;
+            } else {
+                printf("notofication not found");
+            }
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}
+
 void app_main(void) {
     printf("Hello world!!!!\n");
 
@@ -47,6 +90,22 @@ void app_main(void) {
     Neopixel neopixel;
     MenuDisplay menu;
     ProfileSetting profile_setting;
+
+    WiFi wifi;
+    wifi.main();
+
+    // Deep Sleep Config
+    const gpio_num_t ext_wakeup_pin_0 = GPIO_NUM_3;
+
+    printf("Enabling EXT0 wakeup on pin GPIO%d\n", ext_wakeup_pin_0);
+    esp_sleep_enable_ext0_wakeup(ext_wakeup_pin_0, 1);
+
+    rtc_gpio_pullup_dis(ext_wakeup_pin_0);
+    rtc_gpio_pulldown_en(ext_wakeup_pin_0);
+
+    // 次のDeep Sleepの設定（例：10秒）
+    const int sleep_time_sec = 5;
+    esp_sleep_enable_timer_wakeup(sleep_time_sec * uS_TO_S_FACTOR);
 
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
     if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
@@ -73,6 +132,18 @@ void app_main(void) {
             neopixel.set_color(i, i, i);
             vTaskDelay(20 / portTICK_PERIOD_MS);
         }
+    } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
+        printf("wake up from timer");
+        EventBits_t bits =
+            xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE,
+                                pdTRUE, pdMS_TO_TICKS(10000));
+        if (bits & WIFI_CONNECTED_BIT) {
+            ESP_LOGI(TAG, "Wi-Fi Connected");
+            check_notification();
+        } else {
+            ESP_LOGW(TAG, "Wi-Fi Connection Timeout");
+        }
+        esp_deep_sleep_start();
     } else {
         // 起動音を鳴らす
         Buzzer buzzer;
@@ -93,21 +164,10 @@ void app_main(void) {
     // Provisioning provisioning;
     // provisioning.main();
 
-    const gpio_num_t ext_wakeup_pin_0 = GPIO_NUM_3;
-
-    printf("Enabling EXT0 wakeup on pin GPIO%d\n", ext_wakeup_pin_0);
-    esp_sleep_enable_ext0_wakeup(ext_wakeup_pin_0, 1);
-
-    rtc_gpio_pullup_dis(ext_wakeup_pin_0);
-    rtc_gpio_pulldown_en(ext_wakeup_pin_0);
-
     // profile_setting.profile_setting_task();
 
     // TODO:menuから各機能の画面に遷移するように実装する
     menu.start_menu_task();
-
-    WiFi wifi;
-    wifi.main();
 
     // HttpClient http_client;
     // std::string chat_to = "hazuki";

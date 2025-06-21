@@ -52,7 +52,7 @@ class Buzzer {
         vTaskDelay(time / portTICK_PERIOD_MS);
     }
 
-    void buzzer_on(void) {
+    void buzzer_on(u_int32_t LEDC_FREQ = 2300) {
         ledc_timer_config_t ledc_timer = {
             .duty_resolution = LEDC_TIMER_8_BIT,  // resolution of PWM duty
             .freq_hz = LEDC_FREQ                  // frequency of PWM signal
