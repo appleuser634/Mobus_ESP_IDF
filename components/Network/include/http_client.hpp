@@ -233,7 +233,7 @@ void http_get_notifications_task(void *pvParameters) {
 
         // POST
         JsonDocument doc;
-        doc["to"] = "Hazuki";
+        doc["to"] = "Musashi";
 
         char post_data[255];
         serializeJson(doc, post_data, sizeof(post_data));
