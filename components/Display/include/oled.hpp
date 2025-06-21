@@ -264,6 +264,8 @@ class TalkDisplay {
                 // std::string chat_to_data = message_text;
                 http_client.post_message(chat_to_data);
                 message_text = "";
+                pos = 0;
+                input_switch_pos = 9;
 
                 SendAnimation();
 
@@ -287,28 +289,28 @@ class TalkDisplay {
 
             pos = 0;
             while (pos < display_text.length()) {
-                // UTF-8の先頭バイトを調べる
                 uint8_t c = display_text[pos];
-                printf("pos:%d.c:0x%02X\n", pos, c);
                 int char_len = 1;
                 if ((c & 0xE0) == 0xC0)
-                    char_len = 2;  // 2バイト文字
+                    char_len = 2;
                 else if ((c & 0xF0) == 0xE0)
-                    char_len = 3;  // 3バイト文字
+                    char_len = 3;
 
-                std::string ch = display_text.substr(pos, char_len);
+                if (pos + char_len <= display_text.length()) {
+                    std::string ch = display_text.substr(pos, char_len);
 
-                // カタカナ or ASCII 判定（UTF-8 → Unicodeへ変換するのが理想）
-                // 仮にカタカナ判定だけハードコーディングする例：
-                if ((uint8_t)ch[0] == 0xE3 &&
-                    ((uint8_t)ch[1] == 0x82 || (uint8_t)ch[1] == 0x83)) {
-                    sprite.setFont(&fonts::lgfxJapanGothic_12);
+                    if ((uint8_t)ch[0] == 0xE3 &&
+                        ((uint8_t)ch[1] == 0x82 || (uint8_t)ch[1] == 0x83)) {
+                        sprite.setFont(&fonts::lgfxJapanGothic_12);
+                    } else {
+                        sprite.setFont(&fonts::Font2);
+                    }
+
+                    sprite.print(ch.c_str());
+                    pos += char_len;
                 } else {
-                    sprite.setFont(&fonts::Font2);
+                    break;
                 }
-
-                sprite.print(ch.c_str());
-                pos += char_len;
             }
 
             sprite.pushSprite(&lcd, 0, 0);
@@ -1121,6 +1123,31 @@ class WiFiSetting {
                 } else if (select_index == 2) {
                     wifi.wifi_set_sta(input_ssid, input_pass);
                     // wifi.wifi_set_sta("elecom-3e6943_24","7ku65wjwx8fv");
+                    sprite.fillRect(0, 0, 128, 64, 0);
+                    sprite.setFont(&fonts::Font2);
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                    sprite.drawCenterString("Connecting...", 64, 22);
+                    sprite.pushSprite(&lcd, 0, 0);
+
+                    EventBits_t bits = xEventGroupWaitBits(
+                        s_wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdTRUE,
+                        pdMS_TO_TICKS(10000));
+
+                    if (bits & WIFI_CONNECTED_BIT) {
+                        sprite.fillRect(0, 0, 128, 64, 0);
+                        sprite.setFont(&fonts::Font2);
+                        sprite.drawCenterString("Connected!", 64, 22);
+                        sprite.pushSprite(&lcd, 0, 0);
+                        vTaskDelay(2000 / portTICK_PERIOD_MS);
+                        return;
+                    } else {
+                        sprite.fillRect(0, 0, 128, 64, 0);
+                        sprite.setFont(&fonts::Font2);
+                        sprite.drawCenterString("Connection Failed!", 64, 22);
+                        sprite.pushSprite(&lcd, 0, 0);
+                        vTaskDelay(2000 / portTICK_PERIOD_MS);
+                        ESP_LOGW(TAG, "Wi-Fi Connection Timeout");
+                    }
                 }
 
                 type_button.clear_button_state();
