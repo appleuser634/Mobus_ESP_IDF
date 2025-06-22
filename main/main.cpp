@@ -53,7 +53,7 @@ void check_notification() {
     // 通知の取得
     http_client.start_notifications();
 
-    int timeout = 10;
+    int timeout = 3;
     for (int i = 0; i < timeout; i++) {
         JsonDocument notif_res = http_client.get_notifications();
 
@@ -73,13 +73,15 @@ void check_notification() {
                     neopixel.set_color(0, 0, 0);
                     vTaskDelay(50 / portTICK_PERIOD_MS);
                 }
-                neopixel.set_color(0, 100, 100);
+                neopixel.set_color(0, 10, 10);
+                save_nvs("notif_flag", "true");
                 return;
             } else {
                 printf("notofication not found");
+                save_nvs("notif_flag", "false");
             }
         }
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 }
 
@@ -103,7 +105,7 @@ void app_main(void) {
     rtc_gpio_pullup_dis(ext_wakeup_pin_0);
     rtc_gpio_pulldown_en(ext_wakeup_pin_0);
 
-    // 次のDeep Sleepの設定（例：10秒）
+    // 次のDeep Sleepの設定
     const int sleep_time_sec = 5;
     esp_sleep_enable_timer_wakeup(sleep_time_sec * uS_TO_S_FACTOR);
 
@@ -133,15 +135,18 @@ void app_main(void) {
             vTaskDelay(20 / portTICK_PERIOD_MS);
         }
     } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
-        printf("wake up from timer");
-        EventBits_t bits =
-            xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE,
-                                pdTRUE, pdMS_TO_TICKS(10000));
-        if (bits & WIFI_CONNECTED_BIT) {
-            ESP_LOGI(TAG, "Wi-Fi Connected");
-            check_notification();
-        } else {
-            ESP_LOGW(TAG, "Wi-Fi Connection Timeout");
+        std::string notif_flag = get_nvs("notif_flag");
+        if (notif_flag == "false") {
+            printf("wake up from timer");
+            EventBits_t bits =
+                xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT,
+                                    pdFALSE, pdTRUE, pdMS_TO_TICKS(10000));
+            if (bits & WIFI_CONNECTED_BIT) {
+                ESP_LOGI(TAG, "Wi-Fi Connected");
+                check_notification();
+            } else {
+                ESP_LOGW(TAG, "Wi-Fi Connection Timeout");
+            }
         }
         esp_deep_sleep_start();
     } else {
@@ -167,6 +172,7 @@ void app_main(void) {
     // profile_setting.profile_setting_task();
 
     // TODO:menuから各機能の画面に遷移するように実装する
+    save_nvs("notif_flag", "false");
     menu.start_menu_task();
 
     // HttpClient http_client;
