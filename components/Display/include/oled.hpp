@@ -1765,11 +1765,21 @@ class MenuDisplay {
         // 開始時間を取得 st=start_time
         long long int st = esp_timer_get_time();
         // 電波強度の初期値
-        float radioLevel = 4;
+        float radioLevel = 0;
 
         // 通知の取得
         http_client.start_notifications();
         JsonDocument notif_res = http_client.get_notifications();
+
+        // バッテリー電圧の取得
+        PowerMonitor::power_state_t power_state = power.get_power_state();
+        printf("Power Voltage:%d\n", power_state.power_voltage);
+
+        if (power_state.power_voltage > 140) {
+            power_state.power_voltage = 140;
+        }
+        float power_per = power_state.power_voltage / 1.4;
+        int power_per_pix = (int)(0.12 * power_per);
 
         while (1) {
             // 画面上部のステータス表示
@@ -1799,6 +1809,16 @@ class MenuDisplay {
                     radioLevel = 1;
                 }
 
+                // バッテリー電圧を更新
+                power_state = power.get_power_state();
+                printf("Power Voltage:%d\n", power_state.power_voltage);
+
+                if (power_state.power_voltage > 140) {
+                    power_state.power_voltage = 140;
+                }
+                power_per = power_state.power_voltage / 1.4;
+                power_per_pix = (int)(0.12 * power_per);
+
                 // 通知情報を更新
                 notif_res = http_client.get_notifications();
                 st = esp_timer_get_time();
@@ -1808,15 +1828,6 @@ class MenuDisplay {
             // if (http.notif_flag) {
             //   sprite.drawRoundRect(50, 0, 20, 8, 2, 0xFFFF);
             // }
-
-            PowerMonitor::power_state_t power_state = power.get_power_state();
-            printf("Power Voltage:%d\n", power_state.power_voltage);
-
-            if (power_state.power_voltage > 140) {
-                power_state.power_voltage = 140;
-            }
-            float power_per = power_state.power_voltage / 1.4;
-            int power_per_pix = (int)(0.12 * power_per);
 
             // printf("Power Per:%d\n", power_per_pix);
 

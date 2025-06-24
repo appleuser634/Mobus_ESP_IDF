@@ -106,7 +106,7 @@ void app_main(void) {
     rtc_gpio_pulldown_en(ext_wakeup_pin_0);
 
     // 次のDeep Sleepの設定
-    const int sleep_time_sec = 5;
+    const int sleep_time_sec = 30;
     esp_sleep_enable_timer_wakeup(sleep_time_sec * uS_TO_S_FACTOR);
 
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
