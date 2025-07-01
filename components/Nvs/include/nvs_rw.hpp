@@ -210,7 +210,7 @@ std::string get_nvs(char *key) {
     err = nvs_open("storage", NVS_READWRITE, &my_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Error (%s) opening NVS handle!", esp_err_to_name(err));
-        return "1000";
+        return "";
     }
 
     // Read string back
@@ -219,7 +219,7 @@ std::string get_nvs(char *key) {
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to get string size: %s", esp_err_to_name(err));
         nvs_close(my_handle);
-        return "1000";
+        return "";
     }
 
     std::string result;
@@ -230,7 +230,7 @@ std::string get_nvs(char *key) {
 
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to read string: %s", esp_err_to_name(err));
-        return "1000";
+        return "";
     }
 
     // Remove trailing null character

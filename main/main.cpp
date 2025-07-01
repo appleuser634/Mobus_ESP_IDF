@@ -169,7 +169,12 @@ void app_main(void) {
     // Provisioning provisioning;
     // provisioning.main();
 
-    // profile_setting.profile_setting_task();
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+
+    std::string user_name = get_nvs("user_name");
+    if (user_name == "") {
+        profile_setting.profile_setting_task();
+    }
 
     // TODO:menuから各機能の画面に遷移するように実装する
     save_nvs("notif_flag", "false");

@@ -1603,6 +1603,9 @@ class Game {
             std::string s_p_time(b_p_time);
 
             std::string best_record = get_nvs("morse_score");
+            if (best_record == "") {
+                best_record = "1000";
+            }
             float best_record_f = std::stof(best_record);
 
             sprite.fillRect(0, 0, 128, 64, 0);
@@ -2168,7 +2171,8 @@ class ProfileSetting {
             vTaskDelay(20 / portTICK_PERIOD_MS);
         }
 
-        set_profile_info();
+        std::string user_name = set_profile_info();
+        save_nvs("user_name", user_name);
     };
 };
 
