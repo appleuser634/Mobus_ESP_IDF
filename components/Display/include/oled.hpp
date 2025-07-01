@@ -748,6 +748,7 @@ class MessageBox {
 };
 bool MessageBox::running_flag = false;
 
+#define CONTACT_SIZE 5
 class ContactBook {
    public:
     static bool running_flag;
@@ -787,8 +788,21 @@ class ContactBook {
             int user_id;
         } contact_t;
 
-        contact_t contacts[6] = {{"Kiki", 1},   {"Chibi", 2}, {"Hazuki", 3},
-                                 {"Shelly", 4}, {"Saku", 5},  {"Buncha", 6}};
+        contact_t contacts[CONTACT_SIZE] = {
+            {"Asa", 1}, {"Saku", 2}, {"Buncha", 3}, {"Kiki", 4}, {"Shelly", 5}};
+
+        std::string user_name = get_nvs("user_name");
+        int new_size = CONTACT_SIZE;
+        for (int i = 0; i < new_size; ++i) {
+            if (strcmp(contacts[i].name.c_str(), user_name.c_str()) == 0) {
+                // 見つけたら詰める
+                for (int j = i; j < new_size - 1; ++j) {
+                    contacts[j] = contacts[j + 1];
+                }
+                new_size--;  // 配列サイズを縮める
+                i--;         // 次の要素もチェック（複数削除対応）
+            }
+        }
 
         int select_index = 0;
         int font_height = 13;

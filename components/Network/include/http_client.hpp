@@ -11,6 +11,7 @@
 #include <sys/param.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <string>
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_event.h"
@@ -178,8 +179,9 @@ void http_get_message_task(void *pvParameters) {
 
     // POST
     JsonDocument doc;
-    doc["from"] = "Hazuki";
-    doc["to"] = "Musashi";
+    doc["from"] = chat_from;
+    std::string user_name = get_nvs("user_name");
+    doc["to"] = user_name;
 
     char post_data[255];
     serializeJson(doc, post_data, sizeof(post_data));
@@ -233,7 +235,8 @@ void http_get_notifications_task(void *pvParameters) {
 
         // POST
         JsonDocument doc;
-        doc["to"] = "Musashi";
+        std::string user_name = get_nvs("user_name");
+        doc["to"] = user_name;
 
         char post_data[255];
         serializeJson(doc, post_data, sizeof(post_data));
@@ -296,8 +299,9 @@ void http_post_message_task(void *pvParameters) {
     // POST
     JsonDocument doc;
     doc["message"] = message;
-    doc["from"] = "Musashi";
-    doc["to"] = "Hazuki";
+    std::string user_name = get_nvs("user_name");
+    doc["from"] = user_name;
+    doc["to"] = chat_to;
 
     char post_data[255];
     serializeJson(doc, post_data, sizeof(post_data));
