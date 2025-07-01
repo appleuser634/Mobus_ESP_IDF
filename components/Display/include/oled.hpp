@@ -1276,6 +1276,48 @@ class WiFiSetting {
 };
 bool WiFiSetting::running_flag = false;
 
+void Profile() {
+    printf("Profile!!!\n");
+    Joystick joystick;
+
+    Button type_button(GPIO_NUM_46);
+    Button back_button(GPIO_NUM_3);
+    Button enter_button(GPIO_NUM_5);
+
+    lcd.fillScreen(0x000000u);
+    sprite.createSprite(lcd.width(), lcd.height());
+    sprite.setCursor(0, 0);
+    sprite.print("Name:");
+    std::string user_name = get_nvs("user_name");
+    sprite.setCursor(0, 14);
+    sprite.print(user_name.c_str());
+    sprite.pushSprite(&lcd, 0, 0);
+    while (1) {
+        // Joystickの状態を取得
+        Joystick::joystick_state_t joystick_state =
+            joystick.get_joystick_state();
+
+        // スイッチの状態を取得
+        Button::button_state_t type_button_state =
+            type_button.get_button_state();
+        Button::button_state_t back_button_state =
+            back_button.get_button_state();
+        Button::button_state_t enter_button_state =
+            enter_button.get_button_state();
+
+        // ジョイスティック左を押されたらメニューへ戻る
+        // 戻るボタンを押されたらメニューへ戻る
+        if (joystick_state.left || back_button_state.pushed) {
+            break;
+        }
+
+        type_button.clear_button_state();
+        type_button.reset_timer();
+        joystick.reset_timer();
+        vTaskDelay(1);
+    }
+}
+
 class SettingMenu {
    public:
     static bool running_flag;
@@ -1381,6 +1423,12 @@ class SettingMenu {
                 while (wifi_setting.running_flag) {
                     vTaskDelay(100 / portTICK_PERIOD_MS);
                 }
+                type_button.clear_button_state();
+                type_button.reset_timer();
+                joystick.reset_timer();
+            } else if (type_button_state.pushed &&
+                       settings[select_index].setting_name == "Profile") {
+                Profile();
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 joystick.reset_timer();
