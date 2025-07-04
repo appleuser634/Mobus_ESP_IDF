@@ -76,6 +76,8 @@ static LGFX lcd;
 static LGFX_Sprite sprite(
     &lcd);  // スプライトを使う場合はLGFX_Spriteのインスタンスを作成。
 
+#include "mopping.h"
+
 // UTF-8 の1文字の先頭バイト数を調べる（UTF-8のみ対応）
 int utf8_char_length(unsigned char ch) {
     if ((ch & 0x80) == 0x00) return 1;  // ASCII
@@ -2252,6 +2254,8 @@ class Oled {
 
         sprite.drawBitmap(32, 0, mimocLogo, 64, 64, TFT_WHITE, TFT_BLACK);
         sprite.pushSprite(&lcd, 0, 0);
+
+        mopping_main();
     }
 
     void RecvNotif() {
