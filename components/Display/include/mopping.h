@@ -252,7 +252,7 @@ void gen_enemy(character *enemy) {
         enemy[2].y = 53;
         enemy[2].w = 8;
         enemy[2].h = 8;
-    } else if (character_n <= 8) {
+    } else if (character_n <= 7) {
         enemy[2].id = 1;
         enemy[2].img = pineapple_1;
         enemy[2].img_1 = pineapple_1;
@@ -261,7 +261,7 @@ void gen_enemy(character *enemy) {
         enemy[2].y = 45;
         enemy[2].w = 16;
         enemy[2].h = 16;
-    } else if (character_n <= 9) {
+    } else if (character_n <= 8) {
         enemy[2].id = 2;
         enemy[2].img = mongoose_left_1;
         enemy[2].img_1 = mongoose_left_1;
@@ -270,7 +270,7 @@ void gen_enemy(character *enemy) {
         enemy[2].y = 53;
         enemy[2].w = 16;
         enemy[2].h = 8;
-    } else if (character_n <= 10) {
+    } else if (character_n <= 9) {
         enemy[2].id = 3;
         enemy[2].img = earthworm_1;
         enemy[2].img_1 = earthworm_1;
@@ -332,6 +332,9 @@ bool game_loop() {
     Button back_button(GPIO_NUM_3);
     Button enter_button(GPIO_NUM_5);
 
+    Led led;
+    Neopixel neopixel;
+
     while (loop_flag) {
         // Joystickの状態を取得
         Joystick::joystick_state_t joystick_state =
@@ -346,11 +349,16 @@ bool game_loop() {
             enter_button.get_button_state();
 
         // jump trigger
-        if (type_button_state.pushed && !jump_flag) {
+        if (type_button_state.push_edge && !jump_flag) {
             jump_flag = true;
             type_button.clear_button_state();
             type_button.reset_timer();
             joystick.reset_timer();
+        } else if (back_button_state.pushed || joystick_state.left) {
+            type_button.clear_button_state();
+            type_button.reset_timer();
+            joystick.reset_timer();
+            return false;
         }
 
         // jump animation
@@ -396,8 +404,6 @@ bool game_loop() {
             if (enemy[i].show) {
                 sprite.drawBitmap(enemy[i].x, enemy[i].y, enemy[i].img,
                                   enemy[i].w, enemy[i].h, TFT_WHITE, TFT_BLACK);
-                // ssd1306_drawRect(enemy[i].x, enemy[i].y, enemy[i].w,
-                // enemy[i].h, 1);
             }
 
             enemy[i].x -= 1;
@@ -420,10 +426,20 @@ bool game_loop() {
             }
         }
 
+        if (hart_flag && hart_cnt == 0) {
+            led.led_on();
+            neopixel.set_color(0, 10, 0);
+        } else if (hart_flag && hart_cnt == 10) {
+            led.led_off();
+            neopixel.set_color(0, 0, 0);
+        }
+
         if (hart_flag && hart_cnt < 60) {
-            sprite.drawBitmap(30, 30, hart, 8, 8, TFT_WHITE, TFT_BLACK);
+            sprite.drawBitmap(20, 30, hart, 8, 8, TFT_WHITE, TFT_BLACK);
             hart_cnt++;
-        } else {
+        }
+
+        else {
             hart_flag = false;
             hart_cnt = 0;
         }
@@ -451,6 +467,13 @@ bool game_loop() {
         sprite.fillRect(0, 0, 128, 64, 0);
     }
 
+    // Game Over Animation
+    led.led_on();
+    neopixel.set_color(10, 0, 0);
+    vTaskDelay(300 / portTICK_PERIOD_MS);
+    led.led_off();
+    neopixel.set_color(0, 0, 0);
+
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     // wait push button...
     while (1) {
@@ -470,22 +493,22 @@ bool game_loop() {
             type_button.clear_button_state();
             type_button.reset_timer();
             joystick.reset_timer();
-            break;
+            return true;
+        } else if (back_button_state.pushed || joystick_state.left) {
+            type_button.clear_button_state();
+            type_button.reset_timer();
+            joystick.reset_timer();
+            return false;
         }
     }
-    return true;
 }
 
 void mopping_main() {
     opening();
-    game_loop();
-
-    // clear display
-    // lcd.fillScreen(0x000000u);
-    // sprite.pushSprite(&lcd, 0, 0);
-
-    // bool stage_clear = false;
-    // while (1) {
-    //     stage_clear = game_loop();
-    // }
+    while (1) {
+        bool cont = game_loop();
+        if (!cont) {
+            break;
+        }
+    }
 }
