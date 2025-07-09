@@ -26,9 +26,9 @@ class LGFX : public lgfx::LGFX_Device {
                 SPI3_HOST;     // ESP32-S3では SPI2_HOST または SPI3_HOST
             cfg.spi_mode = 0;  // SSD1309のSPIモードは0
 
-            cfg.freq_write = 8000000;  // 8MHz程度が安定（モジュールによる）
-            cfg.freq_read = 0;         // dev/ 読み取り不要なため 0
-            cfg.spi_3wire = false;     // DCピン使用するので false
+            cfg.freq_write = 20000000;  // 8MHz程度が安定（モジュールによる）
+            cfg.freq_read = 0;          // dev/ 読み取り不要なため 0
+            cfg.spi_3wire = false;      // DCピン使用するので false
             cfg.use_lock = true;
 
             // 接続ピン（あなたの配線に基づく）
