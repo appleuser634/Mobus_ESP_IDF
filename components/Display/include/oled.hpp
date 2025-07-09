@@ -2255,7 +2255,7 @@ class Oled {
         sprite.drawBitmap(32, 0, mimocLogo, 64, 64, TFT_WHITE, TFT_BLACK);
         sprite.pushSprite(&lcd, 0, 0);
 
-        mopping_main();
+        // mopping_main();
     }
 
     void RecvNotif() {
