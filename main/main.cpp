@@ -15,6 +15,17 @@
 #include "hal/gpio_types.h"
 #include "sdkconfig.h"
 #include <ArduinoJson.h>
+#include "esp_now.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+
+void check_heap() {
+    ESP_LOGI("HEAP", "Largest Free Block: %d",
+             heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+    heap_caps_print_heap_info(MALLOC_CAP_DEFAULT);
+}
 
 static const char *TAG = "Mobus v3.14";
 
@@ -87,6 +98,9 @@ void check_notification() {
 
 void app_main(void) {
     printf("Hello world!!!!\n");
+
+    check_heap();
+    esp_err_t err = nvs_flash_init();
 
     Oled oled;
     Neopixel neopixel;
