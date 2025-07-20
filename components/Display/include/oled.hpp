@@ -1350,6 +1350,8 @@ class P2P_Display {
         memcpy(peerInfo.peer_addr, peer_mac, 6);
         ESP_ERROR_CHECK(esp_now_add_peer(&peerInfo));
 
+        esp_wifi_set_max_tx_power(84);
+
         espnow_recv();
     }
 
