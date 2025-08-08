@@ -20,6 +20,16 @@
 #include "nvs_flash.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include <stdio.h>
+
+#include <string.h>
+#include <time.h>
+#include <sys/time.h>
+#include "esp_sntp.h"
+#include "esp_log.h"
+#include "esp_netif.h"
+#include "esp_wifi.h"
+#include "nvs_flash.h"
 
 void check_heap() {
     ESP_LOGI("HEAP", "Largest Free Block: %d",
@@ -41,6 +51,7 @@ static const char *TAG = "Mobus v3.14";
 #include <http_client.hpp>
 #include <neopixel.hpp>
 #include <oled.hpp>
+#include <ntp.hpp>
 
 #define uS_TO_S_FACTOR 1000000ULL  // 秒→マイクロ秒
 
@@ -110,6 +121,9 @@ void app_main(void) {
     WiFi wifi;
     wifi.main();
 
+    initialize_sntp();
+    start_rtc_task();
+
     // Deep Sleep Config
     const gpio_num_t ext_wakeup_pin_0 = GPIO_NUM_3;
 
@@ -137,17 +151,9 @@ void app_main(void) {
         // 起動音を鳴らす
         Buzzer buzzer;
         buzzer.boot_sound();
-        // 起動時のロゴを表示
-        oled.BootDisplay();
-        // LEDを光らす
-        for (int i = 0; i < 50; i++) {
-            neopixel.set_color(i, i, i);
-            vTaskDelay(20 / portTICK_PERIOD_MS);
-        }
-        for (int i = 50; i > 0; i--) {
-            neopixel.set_color(i, i, i);
-            vTaskDelay(20 / portTICK_PERIOD_MS);
-        }
+        // Show Watch
+        oled.WatchDisplay();
+
     } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
         std::string notif_flag = get_nvs("notif_flag");
         if (notif_flag == "false") {
@@ -182,8 +188,6 @@ void app_main(void) {
 
     // Provisioning provisioning;
     // provisioning.main();
-
-    vTaskDelay(500 / portTICK_PERIOD_MS);
 
     std::string user_name = get_nvs("user_name");
     if (user_name == "") {
