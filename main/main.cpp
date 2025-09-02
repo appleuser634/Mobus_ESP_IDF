@@ -88,7 +88,7 @@ void check_notification() {
                 for (int n = 0; n < 2; n++) {
                     buzzer.buzzer_on(2600);
                     led.led_on();
-                    neopixel.set_color(0, 100, 100);
+                    neopixel.set_color(0, 10, 100);
                     vTaskDelay(50 / portTICK_PERIOD_MS);
                     buzzer.buzzer_off();
                     led.led_off();
@@ -163,7 +163,7 @@ void app_main(void) {
                                     pdFALSE, pdTRUE, pdMS_TO_TICKS(10000));
             if (bits & WIFI_CONNECTED_BIT) {
                 ESP_LOGI(TAG, "Wi-Fi Connected");
-                check_notification();
+                // check_notification();
             } else {
                 ESP_LOGW(TAG, "Wi-Fi Connection Timeout");
             }

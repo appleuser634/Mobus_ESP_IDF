@@ -600,7 +600,6 @@ class MessageBox {
     static void box_task(void *pvParameters) {
         nvs_main();
         lcd.init();
-        lcd.setRotation(0);
 
         TalkDisplay talk;
         Joystick joystick;
@@ -608,8 +607,6 @@ class MessageBox {
         Button type_button(GPIO_NUM_46);
         Button back_button(GPIO_NUM_3);
         Button enter_button(GPIO_NUM_5);
-
-        lcd.setRotation(2);
 
         sprite.fillRect(0, 0, 128, 64, 0);
 
@@ -1583,9 +1580,6 @@ class P2P_Display {
 std::string P2P_Display::received_text = "";
 
 void Profile() {
-    P2P_Display p2p;
-    p2p.morse_p2p();
-
     printf("Profile!!!\n");
     Joystick joystick;
 
@@ -1639,7 +1633,6 @@ class SettingMenu {
 
     static void message_menue_task(void *pvParameters) {
         lcd.init();
-        lcd.setRotation(0);
 
         WiFiSetting wifi_setting;
 
@@ -1653,15 +1646,13 @@ class SettingMenu {
         Button enter_button(GPIO_NUM_5);
 
         lcd.setRotation(2);
-
         int MAX_SETTINGS = 20;
         int ITEM_PER_PAGE = 4;
 
         sprite.setColorDepth(8);
         sprite.setFont(&fonts::Font4);
         sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
-        sprite.createSprite(lcd.width(),
-                            lcd.height() * (MAX_SETTINGS / ITEM_PER_PAGE));
+        sprite.createSprite(lcd.width(), lcd.height());
 
         typedef struct {
             std::string setting_name;
@@ -1741,6 +1732,11 @@ class SettingMenu {
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 joystick.reset_timer();
+
+            } else if (type_button_state.pushed &&
+                       settings[select_index].setting_name == "Notif") {
+                P2P_Display p2p;
+                p2p.morse_p2p();
             }
 
             vTaskDelay(1);
