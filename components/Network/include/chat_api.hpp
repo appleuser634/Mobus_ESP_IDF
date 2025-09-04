@@ -9,6 +9,10 @@
 
 #include "esp_log.h"
 #include "esp_http_client.h"
+#include "esp_tls.h"
+#if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
+#include "esp_crt_bundle.h"
+#endif
 #include "nvs_flash.h"
 #include "nvs.h"
 
@@ -69,15 +73,20 @@ class ChatApiClient {
     // serverHost: e.g. "localhost" or "mimoc.jp"
     // port: e.g. 8080
     // useTLS: not used yet (only HTTP for now)
-    ChatApiClient(std::string serverHost = "192.168.2.184", int port = 8080)
+    ChatApiClient(std::string serverHost = "mimoc.jp", int port = 443)
         : host_(std::move(serverHost)), port_(port) {
         // Allow override from NVS if set
         std::string h = nvs_get_string("server_host");
         std::string p = nvs_get_string("server_port");
+        std::string sch = nvs_get_string("server_scheme");
+        if (!sch.empty()) scheme_ = sch; // "https" or "http"
         if (!h.empty()) host_ = h;
         if (!p.empty()) {
             int v = atoi(p.c_str());
             if (v > 0) port_ = v;
+        } else {
+            // Default port when not specified
+            port_ = (scheme_ == "https") ? 443 : 8080;
         }
         token_ = nvs_get_string("jwt_token");
         user_id_ = nvs_get_string("user_id");
@@ -296,6 +305,7 @@ class ChatApiClient {
     int port_ = 8080;
     std::string token_;
     std::string user_id_;
+    std::string scheme_ = "https";
 
     static esp_err_t _handle_events(esp_http_client_event_t* evt) {
         // No-op, but could log per-event
@@ -311,7 +321,15 @@ class ChatApiClient {
         cfg.port = port_;
         cfg.path = path;
         cfg.event_handler = _handle_events; // no-op
-        cfg.transport_type = HTTP_TRANSPORT_OVER_TCP;
+        cfg.transport_type = (scheme_ == "https") ? HTTP_TRANSPORT_OVER_SSL : HTTP_TRANSPORT_OVER_TCP;
+#if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
+        if (scheme_ == "https") cfg.crt_bundle_attach = esp_crt_bundle_attach;
+#else
+        // Use embedded CA certificate if bundle is not enabled
+        extern const unsigned char ca_cert_pem_start[] asm("_binary_ca_cert_pem_start");
+        extern const unsigned char ca_cert_pem_end[]   asm("_binary_ca_cert_pem_end");
+        if (scheme_ == "https") cfg.cert_pem = (const char*)ca_cert_pem_start;
+#endif
 
         esp_http_client_handle_t client = esp_http_client_init(&cfg);
         if (!client) return ESP_FAIL;
@@ -376,7 +394,14 @@ class ChatApiClient {
         cfg.port = port_;
         cfg.path = path;
         cfg.event_handler = _handle_events;
-        cfg.transport_type = HTTP_TRANSPORT_OVER_TCP;
+        cfg.transport_type = (scheme_ == "https") ? HTTP_TRANSPORT_OVER_SSL : HTTP_TRANSPORT_OVER_TCP;
+#if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
+        if (scheme_ == "https") cfg.crt_bundle_attach = esp_crt_bundle_attach;
+#else
+        extern const unsigned char ca_cert_pem_start[] asm("_binary_ca_cert_pem_start");
+        extern const unsigned char ca_cert_pem_end[]   asm("_binary_ca_cert_pem_end");
+        if (scheme_ == "https") cfg.cert_pem = (const char*)ca_cert_pem_start;
+#endif
 
         esp_http_client_handle_t client = esp_http_client_init(&cfg);
         if (!client) return ESP_FAIL;

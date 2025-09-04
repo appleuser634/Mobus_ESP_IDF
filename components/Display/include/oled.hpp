@@ -2026,8 +2026,8 @@ class SettingMenu {
             std::string setting_name;
         } setting_t;
 
-        setting_t settings[5] = {
-            {"Profile"}, {"Wi-Fi"}, {"Sound"}, {"Notif"}, {"Factory Reset"}};
+        setting_t settings[6] = {
+            {"Profile"}, {"Wi-Fi"}, {"Sound"}, {"Notif"}, {"Develop"}, {"Factory Reset"}};
 
         int select_index = 0;
         int font_height = 13;
@@ -2069,7 +2069,15 @@ class SettingMenu {
                 } else {
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 }
-                sprite.print(settings[i].setting_name.c_str());
+                // Render name (Develop shows ON/OFF)
+                if (settings[i].setting_name == "Develop") {
+                    std::string dev = get_nvs((char*)"develop_mode");
+                    bool on = (dev == "true");
+                    std::string label = settings[i].setting_name + (on?" [ON]":" [OFF]");
+                    sprite.print(label.c_str());
+                } else {
+                    sprite.print(settings[i].setting_name.c_str());
+                }
             }
 
             if (joystick_state.pushed_up_edge) {
@@ -2099,6 +2107,33 @@ class SettingMenu {
                 while (wifi_setting.running_flag) {
                     vTaskDelay(100 / portTICK_PERIOD_MS);
                 }
+                type_button.clear_button_state();
+                type_button.reset_timer();
+                joystick.reset_timer();
+            } else if (type_button_state.pushed &&
+                       settings[select_index].setting_name == "Develop") {
+                // Toggle develop mode ON/OFF
+                std::string dev = get_nvs((char*)"develop_mode");
+                bool on = (dev == "true");
+                on = !on;
+                save_nvs((char*)"develop_mode", on?std::string("true"):std::string("false"));
+                if (on) {
+                    save_nvs((char*)"server_scheme", std::string("http"));
+                    save_nvs((char*)"server_host",   std::string("192.168.2.184"));
+                    save_nvs((char*)"server_port",   std::string("8080"));
+                } else {
+                    save_nvs((char*)"server_scheme", std::string("https"));
+                    save_nvs((char*)"server_host",   std::string("mimoc.jp"));
+                    save_nvs((char*)"server_port",   std::string("443"));
+                }
+                // Feedback screen
+                sprite.fillRect(0,0,128,64,0);
+                sprite.setFont(&fonts::Font2);
+                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                sprite.drawCenterString(on?"Develop: ON":"Develop: OFF", 64, 22);
+                sprite.drawCenterString(on?"http://192.168.2.184":"https://mimoc.jp", 64, 40);
+                sprite.pushSprite(&lcd, 0, 0);
+                vTaskDelay(1200/portTICK_PERIOD_MS);
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 joystick.reset_timer();
