@@ -29,9 +29,12 @@
 
 #include "esp_http_client.h"
 
+#include "chat_api.hpp"
+#include "mqtt_client.hpp"
+
 #define MAX_HTTP_RECV_BUFFER 512
 #define MAX_HTTP_OUTPUT_BUFFER 2048
-#define HTTP_ENDPOINT "mimoc.jp"
+#define HTTP_ENDPOINT "localhost"
 
 /* Root cert for howsmyssl.com, taken from howsmyssl_com_root_cert.pem
 
@@ -47,11 +50,6 @@ extern const char howsmyssl_com_root_cert_pem_start[] asm(
     "_binary_howsmyssl_com_root_cert_pem_start");
 extern const char howsmyssl_com_root_cert_pem_end[] asm(
     "_binary_howsmyssl_com_root_cert_pem_end");
-
-extern const char postman_root_cert_pem_start[] asm(
-    "_binary_postman_root_cert_pem_start");
-extern const char postman_root_cert_pem_end[] asm(
-    "_binary_postman_root_cert_pem_end");
 
 esp_err_t _http_client_event_handler(esp_http_client_event_t *evt) {
     static char *output_buffer;  // Buffer to store response of http request
@@ -163,163 +161,124 @@ esp_err_t _http_client_event_handler(esp_http_client_event_t *evt) {
 JsonDocument res;
 int res_flag = 0;
 void http_get_message_task(void *pvParameters) {
-    char local_response_buffer[MAX_HTTP_OUTPUT_BUFFER + 1] = {0};
+    std::string chat_from =
+        *(std::string *)pvParameters;  // friend identifier (uuid or short_id)
 
-    esp_http_client_config_t config = {
-        .host = HTTP_ENDPOINT,
-        .port = 3000,
-        .path = "/messages",
-        .event_handler = _http_client_event_handler,
-        .transport_type = HTTP_TRANSPORT_OVER_TCP,
-        .user_data = local_response_buffer,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
+    // Prepare API client
+    chatapi::ChatApiClient api(HTTP_ENDPOINT, 8080);
 
-    std::string chat_from = *(std::string *)pvParameters;
-
-    // POST
-    JsonDocument doc;
-    doc["from"] = chat_from;
-    std::string user_name = get_nvs("user_name");
-    doc["to"] = user_name;
-
-    char post_data[255];
-    serializeJson(doc, post_data, sizeof(post_data));
-
-    esp_http_client_set_url(client, "/messages");
-    esp_http_client_set_method(client, HTTP_METHOD_GET);
-    esp_http_client_set_post_field(client, post_data, strlen(post_data));
-    esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %" PRId64,
-                 esp_http_client_get_status_code(client),
-                 esp_http_client_get_content_length(client));
-    } else {
-        ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
+    // Ensure logged in
+    std::string username = get_nvs("user_name");
+    std::string password = get_nvs("password");
+    if (password.empty()) password = "password123";  // default for dev env
+    if (api.token().empty()) {
+        api.login(username, password);
     }
 
-    ESP_LOG_BUFFER_HEX(TAG, local_response_buffer,
-                       strlen(local_response_buffer));
-    printf("///////////// buffer ////////////");
-    printf(local_response_buffer);
-    std::string str_res(local_response_buffer);
-    const char *json = str_res.c_str();  // const char* へのポインタを取得 ║
-    deserializeJson(res, json);
-    printf("///////////// res size: %d ////////////", res["messages"].size());
-    printf(local_response_buffer);
+    std::string response;
+    esp_err_t err = api.get_messages(chat_from, 20, response);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "get_messages failed: %s", esp_err_to_name(err));
+        vTaskDelete(NULL);
+        return;
+    }
 
-    esp_http_client_cleanup(client);
-
+    // Transform server response into legacy shape used by Display
+    // Server:
+    // {"messages":[{"id","sender_id","receiver_id","content","is_read","created_at"},
+    // ...]} Legacy expected: {"messages":[{"message":"...","from":"<friend or
+    // me>"}, ...]}
+    StaticJsonDocument<4096> in;
+    if (deserializeJson(in, response) != DeserializationError::Ok) {
+        ESP_LOGE(TAG, "JSON parse error");
+        vTaskDelete(NULL);
+        return;
+    }
+    StaticJsonDocument<4096> out;
+    auto arr = out.createNestedArray("messages");
+    std::string my_id = api.user_id();
+    for (JsonObject m : in["messages"].as<JsonArray>()) {
+        JsonObject o = arr.createNestedObject();
+        o["message"] = m["content"].as<const char *>();
+        // Mark origin by comparing sender_id to self
+        const char *sender = m["sender_id"].as<const char *>();
+        if (sender && my_id.size() && my_id == sender) {
+            o["from"] = username.c_str();
+        } else {
+            o["from"] = chat_from.c_str();
+        }
+    }
+    // Serialize to buffer then parse into global res to keep type compatibility
+    std::string outBuf;
+    serializeJson(out, outBuf);
+    deserializeJson(res, outBuf);
     res_flag = 1;
-
     vTaskDelete(NULL);
 }
 
 static JsonDocument notif_res;
 int notif_res_flag = 0;
+static chatmqtt::MQTTClient g_mqtt;  // single instance
+
 void http_get_notifications_task(void *pvParameters) {
+    // Initialize MQTT and subscribe to user topic
+    chatapi::ChatApiClient api(HTTP_ENDPOINT, 8080);
+    std::string username = get_nvs("user_name");
+    std::string password = get_nvs("password");
+    if (password.empty()) password = "password123";
+    if (api.token().empty()) api.login(username, password);
+
+    // Choose MQTT host
+    std::string mqtt_host = get_nvs("mqtt_host");
+    if (mqtt_host.empty()) mqtt_host = HTTP_ENDPOINT;
+    if (g_mqtt.start(mqtt_host, 1883) != ESP_OK) {
+        ESP_LOGE(TAG, "MQTT connect failed");
+        vTaskDelete(NULL);
+        return;
+    }
+    if (api.user_id().empty()) {
+        ESP_LOGE(TAG, "No user_id for MQTT subscribe");
+        vTaskDelete(NULL);
+        return;
+    }
+    g_mqtt.subscribe_user(api.user_id());
+
+    // Pump incoming messages into legacy notif_res format
     while (1) {
-        printf("START NOTIFICATIONS TASK...\n");
-        char local_response_buffer[MAX_HTTP_OUTPUT_BUFFER + 1] = {0};
+        std::string msg;
+        if (g_mqtt.pop_message(msg)) {
+            StaticJsonDocument<1024> out;
+            auto arr = out.createNestedArray("notifications");
+            JsonObject o = arr.createNestedObject();
+            o["notification_flag"] = "true";
+            o["raw"] = msg.c_str();
 
-        esp_http_client_config_t config = {
-            .host = HTTP_ENDPOINT,
-            .port = 3000,
-            .path = "/notifications",
-            .event_handler = _http_client_event_handler,
-            .transport_type = HTTP_TRANSPORT_OVER_TCP,
-            .user_data = local_response_buffer,
-        };
-        esp_http_client_handle_t client = esp_http_client_init(&config);
-
-        // POST
-        JsonDocument doc;
-        std::string user_name = get_nvs("user_name");
-        doc["to"] = user_name;
-
-        char post_data[255];
-        serializeJson(doc, post_data, sizeof(post_data));
-
-        esp_http_client_set_url(client, "/notifications");
-        esp_http_client_set_method(client, HTTP_METHOD_POST);
-        esp_http_client_set_post_field(client, post_data, strlen(post_data));
-        esp_http_client_set_header(client, "Content-Type", "application/json");
-        esp_err_t err = esp_http_client_perform(client);
-        if (err == ESP_OK) {
-            ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %" PRId64,
-                     esp_http_client_get_status_code(client),
-                     esp_http_client_get_content_length(client));
-        } else {
-            ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
+            std::string outBuf;
+            serializeJson(out, outBuf);
+            deserializeJson(notif_res, outBuf);
+            notif_res_flag = 1;
         }
-
-        ESP_LOG_BUFFER_HEX(TAG, local_response_buffer,
-                           strlen(local_response_buffer));
-        printf("///////////// buffer ////////////");
-        printf(local_response_buffer);
-        std::string str_res(local_response_buffer);
-        const char *json = str_res.c_str();  // const char* へのポインタを取得
-
-        deserializeJson(notif_res, json);
-        printf("///////////// res size: %d ////////////",
-               notif_res["notifications"].size());
-        printf(local_response_buffer);
-        notif_res_flag = 1;
-
-        esp_http_client_cleanup(client);
-
-        while (notif_res_flag) {
-            vTaskDelay(10);
-        }
+        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
 
 std::string chat_to = "";
 std::string message = "";
 void http_post_message_task(void *pvParameters) {
-    char local_response_buffer[MAX_HTTP_OUTPUT_BUFFER + 1] = {0};
+    // Prepare API client and send message using new /api/messages/send
+    chatapi::ChatApiClient api(HTTP_ENDPOINT, 8080);
+    std::string username = get_nvs("user_name");
+    std::string password = get_nvs("password");
+    if (password.empty()) password = "password123";
+    if (api.token().empty()) api.login(username, password);
 
-    esp_http_client_config_t config = {
-        .host = HTTP_ENDPOINT,
-        .port = 3000,
-        .path = "/messages",
-        .event_handler = _http_client_event_handler,
-        .transport_type = HTTP_TRANSPORT_OVER_TCP,
-        .user_data = local_response_buffer,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-
-    // std::string* chat_to_data = static_cast<std::string*>(pvParameters);;
-    // std::string chat_to_data[] = (std::string *)pvParameters;
-    // std::string chat_to = chat_to_data[0];
-    // std::string message = chat_to_data[1];
-    // std::string message = *(std::string *)pvParameters;
-
-    // POST
-    JsonDocument doc;
-    doc["message"] = message;
-    std::string user_name = get_nvs("user_name");
-    doc["from"] = user_name;
-    doc["to"] = chat_to;
-
-    char post_data[255];
-    serializeJson(doc, post_data, sizeof(post_data));
-
-    esp_http_client_set_url(client, "/messages");
-    esp_http_client_set_method(client, HTTP_METHOD_POST);
-    esp_http_client_set_post_field(client, post_data, strlen(post_data));
-    esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %" PRId64,
-                 esp_http_client_get_status_code(client),
-                 esp_http_client_get_content_length(client));
+    std::string dummy;
+    esp_err_t err = api.send_message(chat_to, message, &dummy);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "send_message failed: %s", esp_err_to_name(err));
     } else {
-        ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
+        ESP_LOGI(TAG, "Message sent to %s", chat_to.c_str());
     }
-
-    esp_http_client_cleanup(client);
     vTaskDelete(NULL);
 }
 
