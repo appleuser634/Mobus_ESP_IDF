@@ -657,10 +657,11 @@ class MessageBox {
         // http.notif_flag = false;
 
         int font_height = 16;
-        int max_offset_y = -3;
-        int min_offset_y =
-            res["messages"].size() * (-1 * font_height) + (font_height * 2);
-        int offset_y = min_offset_y;
+        // When message count is small, avoid positive min_offset which causes jitter.
+        int max_offset_y = 0;
+        int min_offset_y = (int)( (int)font_height * 2 - (int)res["messages"].size() * font_height );
+        if (min_offset_y > 0) min_offset_y = 0;
+        int offset_y = 0;
 
         while (true) {
             sprite.fillRect(0, 0, 128, 64, 0);
@@ -694,11 +695,8 @@ class MessageBox {
                 res = http_client.get_message(chat_to);
             }
 
-            if (offset_y > max_offset_y) {
-                offset_y = max_offset_y;
-            } else if (offset_y < min_offset_y) {
-                offset_y = min_offset_y;
-            }
+            if (offset_y > max_offset_y) offset_y = max_offset_y;
+            if (offset_y < min_offset_y) offset_y = min_offset_y;
 
             // 描画処理
             int cursor_y = 0;
