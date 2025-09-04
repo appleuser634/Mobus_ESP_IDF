@@ -275,6 +275,22 @@ class ChatApiClient {
         return err;
     }
 
+    // POST /api/user/refresh-friend-code -> {"friend_code":"XXXXXXXX"}
+    esp_err_t refresh_friend_code(std::string& out_code, int* out_status = nullptr) {
+        if (token_.empty()) return ESP_ERR_INVALID_STATE;
+        std::string resp; int status = 0;
+        auto err = request_with_status("POST", "/api/user/refresh-friend-code", "", resp, /*auth*/ true, &status);
+        if (out_status) *out_status = status;
+        if (err != ESP_OK) return err;
+        DynamicJsonDocument doc(resp.size()+128);
+        if (deserializeJson(doc, resp) != DeserializationError::Ok) return ESP_FAIL;
+        const char* code = doc["friend_code"].as<const char*>();
+        if (!code) return ESP_FAIL;
+        out_code = code;
+        nvs_put_string("friend_code", out_code);
+        return ESP_OK;
+    }
+
    private:
     std::string host_;
     int port_ = 8080;

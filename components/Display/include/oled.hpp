@@ -1809,42 +1809,52 @@ void Profile() {
 
     lcd.fillScreen(0x000000u);
     sprite.createSprite(lcd.width(), lcd.height());
-    sprite.setCursor(0, 0);
     sprite.setTextColor(0xFFFFFFu, 0x000000u);
     sprite.setFont(&fonts::Font2);
 
-    // Show username
-    sprite.print("Name:");
-    std::string user_name = get_nvs((char*)"user_name");
-    sprite.setCursor(0, 14);
-    sprite.print(user_name.c_str());
+    // Prepare data (tokenは表示しない)
+    std::string user_name   = get_nvs((char*)"user_name");
+    std::string friend_code = get_nvs((char*)"friend_code");
+    std::string short_id    = get_nvs((char*)"short_id");
 
-    // Show IDs
-    sprite.setCursor(0, 30);
-    sprite.print("ShortID:");
-    std::string short_id = get_nvs((char*)"short_id");
-    sprite.setCursor(0, 44);
-    sprite.print(short_id == "" ? "(none)" : short_id.c_str());
-
-    sprite.setCursor(0, 60);
-    sprite.print("FriendCode:");
-    std::string fcode = get_nvs((char*)"friend_code");
-    sprite.setCursor(0, 74);
-    sprite.print(fcode == "" ? "(none)" : fcode.c_str());
-
-    // Show JWT token (truncated for display)
-    sprite.setCursor(0, 90);
-    sprite.print("Token:");
-    std::string token = get_nvs((char*)"jwt_token");
-    sprite.setCursor(0, 104);
-    if (token == "") {
-        sprite.print("(empty)");
-    } else {
-        std::string short_token = token.substr(0, token.size() > 20 ? 20 : token.size());
-        if (token.size() > 20) short_token += "...";
-        sprite.print(short_token.c_str());
+    // If friend_code is not saved, try to fetch via API and store
+    if (friend_code == "") {
+        chatapi::ChatApiClient api;
+        std::string password = get_nvs((char*)"password");
+        if (password == "") password = "password123";
+        if (api.token().empty() && user_name != "") {
+            api.login(user_name, password);
+        }
+        std::string code; int st=0;
+        if (api.refresh_friend_code(code, &st) == ESP_OK && !code.empty()) {
+            friend_code = code;
+        }
     }
-    sprite.pushSprite(&lcd, 0, 0);
+
+    // Layout metrics (avoid label/value overlap across fonts)
+    const int block_h = 28;      // total block height per item
+    const int value_offset = 14; // value text offset from label
+    int offset_y = 0;
+    std::vector<std::pair<std::string,std::string>> lines = {
+        {"Name",      user_name},
+        {"Friend ID", friend_code == "" ? std::string("(none)") : friend_code},
+        {"Short ID",  short_id    == "" ? std::string("(none)") : short_id}
+    };
+    auto draw = [&](int off){
+        sprite.fillRect(0,0,128,64,0);
+        int y = 0;
+        for (auto &kv : lines) {
+            sprite.setCursor(0, y + off);
+            sprite.print((kv.first + ":").c_str());
+            sprite.setCursor(0, y + off + value_offset);
+            std::string val = kv.second;
+            if ((int)val.size() > 24) val = val.substr(0, 24) + "...";
+            sprite.print(val.c_str());
+            y += block_h;
+        }
+        sprite.pushSprite(&lcd, 0, 0);
+    };
+    draw(offset_y);
     while (1) {
         // Joystickの状態を取得
         Joystick::joystick_state_t joystick_state =
@@ -1858,8 +1868,19 @@ void Profile() {
         Button::button_state_t enter_button_state =
             enter_button.get_button_state();
 
-        // ジョイスティック左を押されたらメニューへ戻る
-        // 戻るボタンを押されたらメニューへ戻る
+        // スクロール
+        if (joystick_state.pushed_up_edge) {
+            offset_y += block_h;
+        } else if (joystick_state.pushed_down_edge) {
+            offset_y -= block_h;
+        }
+        int content_h = (int)lines.size() * block_h;
+        int min_off = lcd.height() - content_h; if (min_off > 0) min_off = 0;
+        if (offset_y > 0) offset_y = 0;
+        if (offset_y < min_off) offset_y = min_off;
+        draw(offset_y);
+
+        // ジョイスティック左/戻るでメニューへ戻る
         if (joystick_state.left || back_button_state.pushed) {
             break;
         }
