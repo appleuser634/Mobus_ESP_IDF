@@ -48,11 +48,11 @@ inline std::string nvs_get_string(const char* key) {
 }
 
 class ChatApiClient {
-public:
+   public:
     // serverHost: e.g. "localhost" or "mimoc.jp"
     // port: e.g. 8080
     // useTLS: not used yet (only HTTP for now)
-    ChatApiClient(std::string serverHost = "localhost", int port = 8080)
+    ChatApiClient(std::string serverHost = "192.168.2.184", int port = 8080)
         : host_(std::move(serverHost)), port_(port) {
         // Allow override from NVS if set
         std::string h = nvs_get_string("server_host");
@@ -77,7 +77,8 @@ public:
         serializeJson(body, payload);
 
         std::string resp;
-        auto err = request("POST", "/api/auth/login", payload, resp, /*auth*/false);
+        auto err =
+            request("POST", "/api/auth/login", payload, resp, /*auth*/ false);
         if (err != ESP_OK) return err;
 
         StaticJsonDocument<384> doc;
@@ -87,8 +88,12 @@ public:
             return ESP_FAIL;
         }
 
-        token_ = std::string(doc["token"].as<const char*>() ? doc["token"].as<const char*>() : "");
-        user_id_ = std::string(doc["user_id"].as<const char*>() ? doc["user_id"].as<const char*>() : "");
+        token_ = std::string(doc["token"].as<const char*>()
+                                 ? doc["token"].as<const char*>()
+                                 : "");
+        user_id_ = std::string(doc["user_id"].as<const char*>()
+                                   ? doc["user_id"].as<const char*>()
+                                   : "");
         if (token_.empty() || user_id_.empty()) {
             ESP_LOGE(CHAT_TAG, "login: token or user_id missing");
             return ESP_FAIL;
@@ -101,7 +106,8 @@ public:
 
     // POST /api/auth/register
     // On success saves token and user_id in NVS
-    esp_err_t register_user(const std::string& username, const std::string& password) {
+    esp_err_t register_user(const std::string& username,
+                            const std::string& password) {
         StaticJsonDocument<256> body;
         body["username"] = username;
         body["password"] = password;
@@ -109,7 +115,8 @@ public:
         serializeJson(body, payload);
 
         std::string resp;
-        auto err = request("POST", "/api/auth/register", payload, resp, /*auth*/false);
+        auto err = request("POST", "/api/auth/register", payload, resp,
+                           /*auth*/ false);
         if (err != ESP_OK) return err;
 
         StaticJsonDocument<384> doc;
@@ -119,8 +126,12 @@ public:
             return ESP_FAIL;
         }
 
-        token_ = std::string(doc["token"].as<const char*>() ? doc["token"].as<const char*>() : "");
-        user_id_ = std::string(doc["user_id"].as<const char*>() ? doc["user_id"].as<const char*>() : "");
+        token_ = std::string(doc["token"].as<const char*>()
+                                 ? doc["token"].as<const char*>()
+                                 : "");
+        user_id_ = std::string(doc["user_id"].as<const char*>()
+                                   ? doc["user_id"].as<const char*>()
+                                   : "");
         if (token_.empty() || user_id_.empty()) {
             ESP_LOGE(CHAT_TAG, "register: token or user_id missing");
             return ESP_FAIL;
@@ -132,7 +143,9 @@ public:
     }
 
     // POST /api/messages/send { receiver_id, content }
-    esp_err_t send_message(const std::string& receiver_identifier, const std::string& content, std::string* out_response = nullptr) {
+    esp_err_t send_message(const std::string& receiver_identifier,
+                           const std::string& content,
+                           std::string* out_response = nullptr) {
         if (token_.empty()) return ESP_ERR_INVALID_STATE;
         StaticJsonDocument<512> body;
         body["receiver_id"] = receiver_identifier;
@@ -140,24 +153,28 @@ public:
         std::string payload;
         serializeJson(body, payload);
         std::string resp;
-        auto err = request("POST", "/api/messages/send", payload, resp, /*auth*/true);
+        auto err =
+            request("POST", "/api/messages/send", payload, resp, /*auth*/ true);
         if (err == ESP_OK && out_response) *out_response = resp;
         return err;
     }
 
     // GET /api/friends/:friend_id/messages?limit=n
-    esp_err_t get_messages(const std::string& friend_identifier, int limit, std::string& out_response) {
+    esp_err_t get_messages(const std::string& friend_identifier, int limit,
+                           std::string& out_response) {
         if (token_.empty()) return ESP_ERR_INVALID_STATE;
         char path[192];
         if (limit < 1 || limit > 100) limit = 50;
-        snprintf(path, sizeof(path), "/api/friends/%s/messages?limit=%d", friend_identifier.c_str(), limit);
-        return request("GET", path, "", out_response, /*auth*/true);
+        snprintf(path, sizeof(path), "/api/friends/%s/messages?limit=%d",
+                 friend_identifier.c_str(), limit);
+        return request("GET", path, "", out_response, /*auth*/ true);
     }
 
     // GET /api/messages/unread/count
     esp_err_t get_unread_count(std::string& out_response) {
         if (token_.empty()) return ESP_ERR_INVALID_STATE;
-        return request("GET", "/api/messages/unread/count", "", out_response, /*auth*/true);
+        return request("GET", "/api/messages/unread/count", "", out_response,
+                       /*auth*/ true);
     }
 
     // PUT /api/messages/:message_id/read
@@ -165,15 +182,16 @@ public:
         if (token_.empty()) return ESP_ERR_INVALID_STATE;
         std::string resp;
         std::string path = std::string("/api/messages/") + message_id + "/read";
-        return request("PUT", path.c_str(), "", resp, /*auth*/true);
+        return request("PUT", path.c_str(), "", resp, /*auth*/ true);
     }
 
     // PUT /api/friends/:friend_id/messages/read-all
     esp_err_t mark_all_as_read(const std::string& friend_identifier) {
         if (token_.empty()) return ESP_ERR_INVALID_STATE;
         std::string resp;
-        std::string path = std::string("/api/friends/") + friend_identifier + "/messages/read-all";
-        return request("PUT", path.c_str(), "", resp, /*auth*/true);
+        std::string path = std::string("/api/friends/") + friend_identifier +
+                           "/messages/read-all";
+        return request("PUT", path.c_str(), "", resp, /*auth*/ true);
     }
 
     const std::string& user_id() const { return user_id_; }
@@ -181,7 +199,14 @@ public:
     const std::string& host() const { return host_; }
     int port() const { return port_; }
 
-private:
+    // GET /api/friends -> {"friends":[{friend_id, short_id, username,
+    // created_at}, ...]}
+    esp_err_t get_friends(std::string& out_response) {
+        if (token_.empty()) return ESP_ERR_INVALID_STATE;
+        return request("GET", "/api/friends", "", out_response, /*auth*/ true);
+    }
+
+   private:
     std::string host_;
     int port_ = 8080;
     std::string token_;
@@ -192,7 +217,9 @@ private:
         return ESP_OK;
     }
 
-    esp_err_t request(const char* method, const char* path, const std::string& body, std::string& out_resp, bool auth) {
+    esp_err_t request(const char* method, const char* path,
+                      const std::string& body, std::string& out_resp,
+                      bool auth) {
         // Configure client per request (keep simple)
         esp_http_client_config_t cfg = {};
         cfg.host = host_.c_str();
@@ -204,29 +231,32 @@ private:
         esp_http_client_handle_t client = esp_http_client_init(&cfg);
         if (!client) return ESP_FAIL;
 
-        esp_http_client_set_method(client, 
-            strcmp(method, "POST") == 0 ? HTTP_METHOD_POST :
-            strcmp(method, "PUT") == 0 ? HTTP_METHOD_PUT : HTTP_METHOD_GET);
+        esp_http_client_set_method(
+            client, strcmp(method, "POST") == 0  ? HTTP_METHOD_POST
+                    : strcmp(method, "PUT") == 0 ? HTTP_METHOD_PUT
+                                                 : HTTP_METHOD_GET);
 
         if (auth && !token_.empty()) {
             std::string authz = std::string("Bearer ") + token_;
             esp_http_client_set_header(client, "Authorization", authz.c_str());
         }
         if (!body.empty()) {
-            esp_http_client_set_header(client, "Content-Type", "application/json");
+            esp_http_client_set_header(client, "Content-Type",
+                                       "application/json");
             esp_http_client_set_post_field(client, body.c_str(), body.size());
         }
 
         esp_err_t err = esp_http_client_perform(client);
         if (err != ESP_OK) {
-            ESP_LOGE(CHAT_TAG, "HTTP %s %s failed: %s", method, path, esp_err_to_name(err));
+            ESP_LOGE(CHAT_TAG, "HTTP %s %s failed: %s", method, path,
+                     esp_err_to_name(err));
             esp_http_client_cleanup(client);
             return err;
         }
 
         // Read response body
         int content_len = esp_http_client_get_content_length(client);
-        if (content_len < 0) content_len = 0; // may be chunked
+        if (content_len < 0) content_len = 0;  // may be chunked
         char buf[1024];
         out_resp.clear();
         int read_len;
@@ -240,4 +270,4 @@ private:
     }
 };
 
-} // namespace chatapi
+}  // namespace chatapi

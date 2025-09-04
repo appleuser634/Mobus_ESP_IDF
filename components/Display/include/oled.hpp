@@ -77,6 +77,7 @@ static LGFX_Sprite sprite(
     &lcd);  // スプライトを使う場合はLGFX_Spriteのインスタンスを作成。
 
 #include "mopping.h"
+#include <chat_api.hpp>
 
 // UTF-8 の1文字の先頭バイト数を調べる（UTF-8のみ対応）
 int utf8_char_length(unsigned char ch) {
@@ -589,6 +590,7 @@ bool TalkDisplay::running_flag = false;
 class MessageBox {
    public:
     static bool running_flag;
+    static std::string chat_title;  // display username for header
 
     void start_box_task(std::string chat_to) {
         printf("Start Box Task...");
@@ -678,16 +680,19 @@ class MessageBox {
             for (int i = 0; i < res["messages"].size(); i++) {
                 std::string message(res["messages"][i]["message"]);
                 std::string message_from(res["messages"][i]["from"]);
+                std::string my_name = get_nvs((char *)"user_name");
 
                 // cursor_y = offset_y + sprite.getCursorY() + 20;
                 cursor_y = offset_y + (font_height * (i + 1));
                 int next_cursor_y = offset_y + (font_height * (i + 2));
 
-                if (message_from == chat_to) {
+                if (message_from != my_name) {
+                    // Incoming from friend
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
                     sprite.drawBitmap(0, cursor_y + 2, recv_icon2, 13, 12,
                                       TFT_BLACK, TFT_WHITE);
                 } else {
+                    // Outgoing (mine)
                     sprite.setTextColor(0x000000u, 0xFFFFFFu);
                     sprite.fillRect(0, cursor_y, 128, font_height, 0xFFFF);
                     sprite.drawBitmap(0, cursor_y + 2, send_icon2, 13, 12,
@@ -731,7 +736,11 @@ class MessageBox {
             sprite.setCursor(0, 0);
             sprite.setTextColor(0xFFFFFFu, 0x000000u);
             sprite.setFont(&fonts::Font2);
-            sprite.print(chat_to.c_str());
+            if (chat_title != "") {
+                sprite.print(chat_title.c_str());
+            } else {
+                sprite.print(chat_to.c_str());
+            }
             sprite.drawFastHLine(0, 14, 128, 0xFFFF);
             sprite.drawFastHLine(0, 15, 128, 0);
 
@@ -746,6 +755,7 @@ class MessageBox {
     };
 };
 bool MessageBox::running_flag = false;
+std::string MessageBox::chat_title = "";
 
 #define CONTACT_SIZE 5
 class ContactBook {
@@ -759,9 +769,6 @@ class ContactBook {
     }
 
     static void message_menue_task(void *pvParameters) {
-        lcd.init();
-        lcd.setRotation(0);
-
         Buzzer buzzer;
         Led led;
 
@@ -771,35 +778,81 @@ class ContactBook {
         Button back_button(GPIO_NUM_3);
         Button enter_button(GPIO_NUM_5);
 
-        lcd.setRotation(2);
-
         int MAX_CONTACTS = 20;
         int CONTACT_PER_PAGE = 4;
 
-        sprite.setColorDepth(8);
-        sprite.setFont(&fonts::Font4);
-        sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
-        sprite.createSprite(lcd.width(),
-                            lcd.height() * (MAX_CONTACTS / CONTACT_PER_PAGE));
-
         typedef struct {
-            std::string name;
-            int user_id;
+            std::string display_name;  // username
+            std::string identifier;    // short_id or uuid
         } contact_t;
 
-        contact_t contacts[CONTACT_SIZE] = {
-            {"Asa", 1}, {"Saku", 2}, {"Buncha", 3}, {"Kiki", 4}, {"Shelly", 5}};
+        // Ensure Wi-Fi connected before attempting to fetch friends
+        while (true) {
+            bool connected = false;
+            if (s_wifi_event_group) {
+                EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
+                connected = bits & WIFI_CONNECTED_BIT;
+            }
+            if (connected) break;
 
-        std::string user_name = get_nvs("user_name");
-        int new_size = CONTACT_SIZE;
-        for (int i = 0; i < new_size; ++i) {
-            if (strcmp(contacts[i].name.c_str(), user_name.c_str()) == 0) {
-                // 見つけたら詰める
-                for (int j = i; j < new_size - 1; ++j) {
-                    contacts[j] = contacts[j + 1];
+            // Simple connecting screen with cancel
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.setFont(&fonts::Font2);
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            sprite.drawCenterString("Connecting Wi-Fi...", 64, 22);
+            sprite.drawCenterString("Press Back to exit", 64, 40);
+            sprite.pushSprite(&lcd, 0, 0);
+
+            // Allow exit
+            Joystick joystick;
+            Button back_button(GPIO_NUM_3);
+            auto bs = back_button.get_button_state();
+            if (bs.pushed || joystick.get_joystick_state().left) {
+                running_flag = false;
+                vTaskDelete(NULL);
+                return;
+            }
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+        }
+
+        // Fetch real friends list from server
+        std::vector<contact_t> contacts;
+        {
+            chatapi::ChatApiClient api;  // uses NVS server_host/port if present
+            // Ensure we have token
+            std::string username = get_nvs((char *)"user_name");
+            std::string password = get_nvs((char *)"password");
+            if (password == "") password = "password123";
+            if (api.token().empty()) {
+                api.login(username, password);
+            }
+            std::string resp;
+            if (api.get_friends(resp) == ESP_OK) {
+                StaticJsonDocument<4096> doc;
+                if (deserializeJson(doc, resp) == DeserializationError::Ok) {
+                    for (JsonObject f : doc["friends"].as<JsonArray>()) {
+                        contact_t c;
+                        c.display_name =
+                            std::string(f["username"].as<const char *>()
+                                            ? f["username"].as<const char *>()
+                                            : "");
+                        // Prefer short_id for identifier (readable), fallback
+                        // to uuid
+                        const char *sid = f["short_id"].as<const char *>();
+                        const char *fid = f["friend_id"].as<const char *>();
+                        if (sid && strlen(sid) > 0)
+                            c.identifier = sid;
+                        else if (fid)
+                            c.identifier = fid;
+                        else
+                            c.identifier = c.display_name;
+                        // Skip self if any
+                        if (c.display_name != username &&
+                            !c.identifier.empty()) {
+                            contacts.push_back(c);
+                        }
+                    }
                 }
-                new_size--;  // 配列サイズを縮める
-                i--;         // 次の要素もチェック（複数削除対応）
             }
         }
 
@@ -830,7 +883,15 @@ class ContactBook {
 
             sprite.setFont(&fonts::Font2);
 
-            int length = sizeof(contacts) / sizeof(contact_t) - 1;
+            int length = (int)contacts.size() - 1;
+            if (contacts.empty()) {
+                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                sprite.setCursor(8, 12);
+                sprite.print("No friends yet");
+                sprite.setCursor(8, 28);
+                sprite.print("Add friends from app");
+            }
+
             for (int i = 0; i <= length; i++) {
                 sprite.setCursor(10, (font_height + margin) * i);
 
@@ -842,27 +903,7 @@ class ContactBook {
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 }
 
-                // 通知の表示
-                for (int j = 0; j < notif_res["notifications"].size(); j++) {
-                    std::string notification_flag(
-                        notif_res["notifications"][j]["notification_flag"]);
-                    std::string notification_from(
-                        notif_res["notifications"][j]["from"]);
-                    if (notification_flag == "true" &&
-                        notification_from == contacts[i].name) {
-                        if (i == select_index) {
-                            sprite.fillCircle(
-                                120, font_height * i + noti_circle_margin, 4,
-                                0);
-                        } else {
-                            sprite.fillCircle(
-                                120, font_height * i + noti_circle_margin, 4,
-                                0xFFFF);
-                        }
-                    }
-                }
-
-                sprite.print(contacts[i].name.c_str());
+                sprite.print(contacts[i].display_name.c_str());
             }
 
             if (joystick_state.pushed_up_edge) {
@@ -886,11 +927,13 @@ class ContactBook {
                 break;
             }
 
-            if (type_button_state.pushed) {
+            if (type_button_state.pushed && !contacts.empty()) {
                 // talk.running_flag = true;
                 // talk.start_talk_task(contacts[i].name);
                 box.running_flag = true;
-                box.start_box_task(contacts[select_index].name);
+                // Set chat title as username for UI, pass identifier for API
+                MessageBox::chat_title = contacts[select_index].display_name;
+                box.start_box_task(contacts[select_index].identifier);
                 while (box.running_flag) {
                     vTaskDelay(100 / portTICK_PERIOD_MS);
                 }
