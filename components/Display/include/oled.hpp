@@ -228,7 +228,7 @@ class TalkDisplay {
                 if (message_text != "") {
                     remove_last_utf8_char(message_text);
                 }
-                input_switch_pos = pos;
+                input_switch_pos = message_text.size();
                 back_button.pushed_same_time();
                 type_button.clear_button_state();
             } else if (back_button_state.pushed and
@@ -252,7 +252,7 @@ class TalkDisplay {
                 sprite.pushSprite(&lcd, 0, 0);
                 vTaskDelay(300 / portTICK_PERIOD_MS);
 
-                input_switch_pos = pos;
+                input_switch_pos = message_text.size();
             } else if (back_button_state.pushed) {
                 back_button.clear_button_state();
             }
@@ -268,7 +268,7 @@ class TalkDisplay {
                 http_client.post_message(chat_to_data);
                 message_text = "";
                 pos = 0;
-                input_switch_pos = 9;
+                input_switch_pos = 0;
 
                 SendAnimation();
 
@@ -320,18 +320,43 @@ class TalkDisplay {
 
             message_text += alphabet_text;
             if (alphabet_text != "" && input_lang == 1) {
-                std::string translate_targt =
-                    message_text.substr(input_switch_pos);
-                for (const auto &pair : romaji_kana) {
-                    std::cout << "Key: " << pair.first << std::endl;
-                    size_t pos = translate_targt.find(pair.first);
-                    if (pos != std::string::npos) {
-                        translate_targt.replace(pos, pair.first.length(),
-                                                pair.second);
+                size_t safe_pos = input_switch_pos;
+                if (safe_pos > message_text.size()) safe_pos = message_text.size();
+                std::string translate_target = message_text.substr(safe_pos);
+                // Longest-match transliteration
+                auto transliterate = [] (const std::string &src) -> std::string {
+                    // Build sorted mapping by key length desc once
+                    static std::vector<std::pair<std::string,std::string>> sorted;
+                    static bool inited = false;
+                    if (!inited) {
+                        sorted = romaji_kana; // copy
+                        std::stable_sort(sorted.begin(), sorted.end(), [](auto &a, auto &b){
+                            return a.first.size() > b.first.size();
+                        });
+                        inited = true;
                     }
-                }
-                message_text =
-                    message_text.substr(0, input_switch_pos) + translate_targt;
+                    std::string out;
+                    out.reserve(src.size()*3);
+                    size_t i = 0;
+                    while (i < src.size()) {
+                        bool matched = false;
+                        for (auto &kv : sorted) {
+                            const std::string &k = kv.first;
+                            if (k.size() > 0 && i + k.size() <= src.size() && src.compare(i, k.size(), k) == 0) {
+                                out += kv.second;
+                                i += k.size();
+                                matched = true;
+                                break;
+                            }
+                        }
+                        if (!matched) {
+                            out += src[i++];
+                        }
+                    }
+                    return out;
+                };
+                translate_target = transliterate(translate_target);
+                message_text = message_text.substr(0, safe_pos) + translate_target;
             }
             alphabet_text = "";
 
