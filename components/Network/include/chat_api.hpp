@@ -18,8 +18,24 @@ namespace chatapi {
 
 static const char* CHAT_TAG = "ChatAPI";
 
+inline void ensure_nvs_ready() {
+    static bool inited = false;
+    if (inited) return;
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        // Do not erase here to avoid user data loss; try init again after erase only if absolutely required
+        // For robustness in this client context, we attempt a safe erase+init.
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ESP_ERROR_CHECK(nvs_flash_init());
+    } else {
+        ESP_ERROR_CHECK(err);
+    }
+    inited = true;
+}
+
 // Simple helper to read/write strings to NVS
 inline bool nvs_put_string(const char* key, const std::string& value) {
+    ensure_nvs_ready();
     nvs_handle_t h;
     if (nvs_open("storage", NVS_READWRITE, &h) != ESP_OK) return false;
     esp_err_t err = nvs_set_str(h, key, value.c_str());
@@ -29,6 +45,7 @@ inline bool nvs_put_string(const char* key, const std::string& value) {
 }
 
 inline std::string nvs_get_string(const char* key) {
+    ensure_nvs_ready();
     nvs_handle_t h;
     if (nvs_open("storage", NVS_READONLY, &h) != ESP_OK) return "";
     size_t len = 0;
@@ -81,10 +98,10 @@ class ChatApiClient {
             request("POST", "/api/auth/login", payload, resp, /*auth*/ false);
         if (err != ESP_OK) return err;
 
-        StaticJsonDocument<384> doc;
+        DynamicJsonDocument doc(resp.size() + 512);
         auto jerr = deserializeJson(doc, resp);
         if (jerr != DeserializationError::Ok) {
-            ESP_LOGE(CHAT_TAG, "login: JSON parse error");
+            ESP_LOGE(CHAT_TAG, "login: JSON parse error (len=%d)", (int)resp.size());
             return ESP_FAIL;
         }
 
@@ -101,6 +118,13 @@ class ChatApiClient {
         nvs_put_string("jwt_token", token_);
         nvs_put_string("user_id", user_id_);
         nvs_put_string("username", username);
+        if (doc["friend_code"]) {
+            nvs_put_string("friend_code", std::string(doc["friend_code"].as<const char*>()));
+        }
+        if (doc["short_id"]) {
+            nvs_put_string("short_id", std::string(doc["short_id"].as<const char*>()));
+        }
+        ESP_LOGI(CHAT_TAG, "login ok: token_len=%d", (int)token_.size());
         return ESP_OK;
     }
 
@@ -119,10 +143,10 @@ class ChatApiClient {
                            /*auth*/ false);
         if (err != ESP_OK) return err;
 
-        StaticJsonDocument<384> doc;
+        DynamicJsonDocument doc(resp.size() + 512);
         auto jerr = deserializeJson(doc, resp);
         if (jerr != DeserializationError::Ok) {
-            ESP_LOGE(CHAT_TAG, "register: JSON parse error");
+            ESP_LOGE(CHAT_TAG, "register: JSON parse error (len=%d)", (int)resp.size());
             return ESP_FAIL;
         }
 
@@ -139,6 +163,13 @@ class ChatApiClient {
         nvs_put_string("jwt_token", token_);
         nvs_put_string("user_id", user_id_);
         nvs_put_string("username", username);
+        if (doc["friend_code"]) {
+            nvs_put_string("friend_code", std::string(doc["friend_code"].as<const char*>()));
+        }
+        if (doc["short_id"]) {
+            nvs_put_string("short_id", std::string(doc["short_id"].as<const char*>()));
+        }
+        ESP_LOGI(CHAT_TAG, "register ok: token_len=%d", (int)token_.size());
         return ESP_OK;
     }
 
@@ -177,6 +208,22 @@ class ChatApiClient {
                        /*auth*/ true);
     }
 
+    // POST /api/friends/request { receiver_id }
+    // Returns esp_err_t and fills out_status + out_response
+    esp_err_t send_friend_request(const std::string& receiver_identifier, std::string* out_response, int* out_status) {
+        if (token_.empty()) return ESP_ERR_INVALID_STATE;
+        StaticJsonDocument<256> body;
+        body["receiver_id"] = receiver_identifier;
+        std::string payload;
+        serializeJson(body, payload);
+        std::string resp;
+        int status = 0;
+        auto err = request_with_status("POST", "/api/friends/request", payload, resp, /*auth*/ true, &status);
+        if (out_response) *out_response = resp;
+        if (out_status) *out_status = status;
+        return err;
+    }
+
     // PUT /api/messages/:message_id/read
     esp_err_t mark_as_read(const std::string& message_id) {
         if (token_.empty()) return ESP_ERR_INVALID_STATE;
@@ -206,6 +253,28 @@ class ChatApiClient {
         return request("GET", "/api/friends", "", out_response, /*auth*/ true);
     }
 
+    // GET /api/friends/pending
+    esp_err_t get_pending_requests(std::string& out_response) {
+        if (token_.empty()) return ESP_ERR_INVALID_STATE;
+        return request("GET", "/api/friends/pending", "", out_response, /*auth*/ true);
+    }
+
+    // POST /api/friends/respond { request_id, accept }
+    esp_err_t respond_friend_request(const std::string& request_id, bool accept, std::string* out_response, int* out_status) {
+        if (token_.empty()) return ESP_ERR_INVALID_STATE;
+        StaticJsonDocument<256> body;
+        body["request_id"] = request_id;
+        body["accept"] = accept;
+        std::string payload;
+        serializeJson(body, payload);
+        std::string resp;
+        int status = 0;
+        auto err = request_with_status("POST", "/api/friends/respond", payload, resp, /*auth*/ true, &status);
+        if (out_response) *out_response = resp;
+        if (out_status) *out_status = status;
+        return err;
+    }
+
    private:
     std::string host_;
     int port_ = 8080;
@@ -220,7 +289,72 @@ class ChatApiClient {
     esp_err_t request(const char* method, const char* path,
                       const std::string& body, std::string& out_resp,
                       bool auth) {
-        // Configure client per request (keep simple)
+        // Configure client per request (explicit open/write/read)
+        esp_http_client_config_t cfg = {};
+        cfg.host = host_.c_str();
+        cfg.port = port_;
+        cfg.path = path;
+        cfg.event_handler = _handle_events; // no-op
+        cfg.transport_type = HTTP_TRANSPORT_OVER_TCP;
+
+        esp_http_client_handle_t client = esp_http_client_init(&cfg);
+        if (!client) return ESP_FAIL;
+
+        esp_http_client_method_t httpMethod = HTTP_METHOD_GET;
+        if (strcmp(method, "POST") == 0) httpMethod = HTTP_METHOD_POST;
+        else if (strcmp(method, "PUT") == 0) httpMethod = HTTP_METHOD_PUT;
+        esp_http_client_set_method(client, httpMethod);
+
+        if (auth && !token_.empty()) {
+            std::string authz = std::string("Bearer ") + token_;
+            esp_http_client_set_header(client, "Authorization", authz.c_str());
+        }
+        if (!body.empty()) {
+            esp_http_client_set_header(client, "Content-Type", "application/json");
+        }
+
+        esp_err_t err = esp_http_client_open(client, body.empty() ? 0 : body.size());
+        if (err != ESP_OK) {
+            ESP_LOGE(CHAT_TAG, "HTTP open %s %s failed: %s", method, path, esp_err_to_name(err));
+            esp_http_client_cleanup(client);
+            return err;
+        }
+
+        if (!body.empty()) {
+            int wlen = esp_http_client_write(client, body.c_str(), body.size());
+            if (wlen < 0) {
+                ESP_LOGE(CHAT_TAG, "HTTP write failed");
+                esp_http_client_cleanup(client);
+                return ESP_FAIL;
+            }
+        }
+
+        // Fetch headers to allow reading status
+        (void)esp_http_client_fetch_headers(client);
+
+        out_resp.clear();
+        char buf[512];
+        while (1) {
+            int r = esp_http_client_read(client, buf, sizeof(buf));
+            if (r <= 0) break;
+            out_resp.append(buf, buf + r);
+        }
+
+        int status = esp_http_client_get_status_code(client);
+        if (status >= 400) {
+            ESP_LOGE(CHAT_TAG, "HTTP %s %s status=%d body_len=%d", method, path, status, (int)out_resp.size());
+        } else {
+            ESP_LOGD(CHAT_TAG, "HTTP %s %s status=%d body_len=%d", method, path, status, (int)out_resp.size());
+        }
+
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return ESP_OK;
+    }
+
+    // Same as request but captures HTTP status code
+    esp_err_t request_with_status(const char* method, const char* path, const std::string& body,
+                                  std::string& out_resp, bool auth, int* out_status) {
         esp_http_client_config_t cfg = {};
         cfg.host = host_.c_str();
         cfg.port = port_;
@@ -231,41 +365,38 @@ class ChatApiClient {
         esp_http_client_handle_t client = esp_http_client_init(&cfg);
         if (!client) return ESP_FAIL;
 
-        esp_http_client_set_method(
-            client, strcmp(method, "POST") == 0  ? HTTP_METHOD_POST
-                    : strcmp(method, "PUT") == 0 ? HTTP_METHOD_PUT
-                                                 : HTTP_METHOD_GET);
+        esp_http_client_method_t httpMethod = HTTP_METHOD_GET;
+        if (strcmp(method, "POST") == 0) httpMethod = HTTP_METHOD_POST;
+        else if (strcmp(method, "PUT") == 0) httpMethod = HTTP_METHOD_PUT;
+        esp_http_client_set_method(client, httpMethod);
 
         if (auth && !token_.empty()) {
             std::string authz = std::string("Bearer ") + token_;
             esp_http_client_set_header(client, "Authorization", authz.c_str());
         }
-        if (!body.empty()) {
-            esp_http_client_set_header(client, "Content-Type",
-                                       "application/json");
-            esp_http_client_set_post_field(client, body.c_str(), body.size());
-        }
+        if (!body.empty()) esp_http_client_set_header(client, "Content-Type", "application/json");
 
-        esp_err_t err = esp_http_client_perform(client);
+        esp_err_t err = esp_http_client_open(client, body.empty() ? 0 : body.size());
         if (err != ESP_OK) {
-            ESP_LOGE(CHAT_TAG, "HTTP %s %s failed: %s", method, path,
-                     esp_err_to_name(err));
             esp_http_client_cleanup(client);
             return err;
         }
-
-        // Read response body
-        int content_len = esp_http_client_get_content_length(client);
-        if (content_len < 0) content_len = 0;  // may be chunked
-        char buf[1024];
+        if (!body.empty()) {
+            int wlen = esp_http_client_write(client, body.c_str(), body.size());
+            if (wlen < 0) { esp_http_client_cleanup(client); return ESP_FAIL; }
+        }
+        (void)esp_http_client_fetch_headers(client);
         out_resp.clear();
-        int read_len;
-        do {
-            read_len = esp_http_client_read(client, buf, sizeof(buf));
-            if (read_len > 0) out_resp.append(buf, buf + read_len);
-        } while (read_len > 0);
-
+        char buf[512];
+        while (1) {
+            int r = esp_http_client_read(client, buf, sizeof(buf));
+            if (r <= 0) break;
+            out_resp.append(buf, buf + r);
+        }
+        int status = esp_http_client_get_status_code(client);
+        esp_http_client_close(client);
         esp_http_client_cleanup(client);
+        if (out_status) *out_status = status;
         return ESP_OK;
     }
 };

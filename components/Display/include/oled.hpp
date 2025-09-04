@@ -757,6 +757,9 @@ class MessageBox {
 bool MessageBox::running_flag = false;
 std::string MessageBox::chat_title = "";
 
+// Forward declaration for helper proxy
+std::string wifi_input_info_proxy(std::string input_type, std::string type_text = "");
+
 #define CONTACT_SIZE 5
 class ContactBook {
    public:
@@ -883,7 +886,8 @@ class ContactBook {
 
             sprite.setFont(&fonts::Font2);
 
-            int length = (int)contacts.size() - 1;
+            int base_count = (int)contacts.size();
+            int last_index = base_count + 1; // +1: Add Friend, +1: Pending Requests
             if (contacts.empty()) {
                 sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 sprite.setCursor(8, 12);
@@ -892,7 +896,7 @@ class ContactBook {
                 sprite.print("Add friends from app");
             }
 
-            for (int i = 0; i <= length; i++) {
+            for (int i = 0; i <= last_index; i++) {
                 sprite.setCursor(10, (font_height + margin) * i);
 
                 if (i == select_index) {
@@ -902,8 +906,13 @@ class ContactBook {
                 } else {
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 }
-
-                sprite.print(contacts[i].display_name.c_str());
+                if (i < base_count) {
+                    sprite.print(contacts[i].display_name.c_str());
+                } else if (i == base_count) {
+                    sprite.print("+ Add Friend");
+                } else {
+                    sprite.print("Pending Requests");
+                }
             }
 
             if (joystick_state.pushed_up_edge) {
@@ -914,8 +923,8 @@ class ContactBook {
 
             if (select_index < 0) {
                 select_index = 0;
-            } else if (select_index >= length) {
-                select_index = length;
+            } else if (select_index > last_index) {
+                select_index = last_index;
             }
 
             sprite.pushSprite(&lcd, 0,
@@ -927,24 +936,164 @@ class ContactBook {
                 break;
             }
 
-            if (type_button_state.pushed && !contacts.empty()) {
+            if (type_button_state.pushed) {
                 // talk.running_flag = true;
                 // talk.start_talk_task(contacts[i].name);
-                box.running_flag = true;
-                // Set chat title as username for UI, pass identifier for API
-                MessageBox::chat_title = contacts[select_index].display_name;
-                box.start_box_task(contacts[select_index].identifier);
-                while (box.running_flag) {
-                    vTaskDelay(100 / portTICK_PERIOD_MS);
-                }
+                if (select_index == base_count) {
+                    // Add Friend flow: input friend code/ID, then send request
+                    std::string friend_code = wifi_input_info_proxy("Friend Code/ID", "");
+                    if (friend_code != "") {
+                        chatapi::ChatApiClient api;
+                        std::string username = get_nvs((char*)"user_name");
+                        std::string password = get_nvs((char*)"password");
+                        if (password == "") password = "password123";
+                        if (api.token().empty()) { api.login(username, password); }
 
-                // 通知の取得
-                notif_res = http_client.get_notifications();
-                notif_res = http_client.get_notifications();
+                        sprite.fillRect(0, 0, 128, 64, 0);
+                        sprite.setFont(&fonts::Font2);
+                        sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                        sprite.drawCenterString("Sending request...", 64, 22);
+                        sprite.pushSprite(&lcd, 0, 0);
+
+                        std::string resp;
+                        int status = 0;
+                        auto err = api.send_friend_request(friend_code, &resp, &status);
+                        sprite.fillRect(0, 0, 128, 64, 0);
+                        sprite.setFont(&fonts::Font2);
+                        if (err == ESP_OK && status >= 200 && status < 300) {
+                            sprite.drawCenterString("Request sent!", 64, 22);
+                        } else if (err == ESP_OK && status >= 400) {
+                            // Try to parse error from response
+                            StaticJsonDocument<256> edoc;
+                            const char* emsg = "Invalid ID";
+                            if (deserializeJson(edoc, resp) == DeserializationError::Ok && edoc["error"]) {
+                                emsg = edoc["error"].as<const char*>();
+                            }
+                            sprite.drawCenterString("Error:", 64, 16);
+                            sprite.drawCenterString(emsg, 64, 34);
+                        } else {
+                            sprite.drawCenterString("Failed to send", 64, 22);
+                        }
+                        sprite.pushSprite(&lcd, 0, 0);
+                        vTaskDelay(1200 / portTICK_PERIOD_MS);
+                    }
+                } else if (!contacts.empty()) {
+                    box.running_flag = true;
+                    // Set chat title as username for UI, pass identifier for API
+                    MessageBox::chat_title = contacts[select_index].display_name;
+                    box.start_box_task(contacts[select_index].identifier);
+                    while (box.running_flag) { vTaskDelay(100 / portTICK_PERIOD_MS); }
+
+                    // 通知の取得
+                    notif_res = http_client.get_notifications();
+                    notif_res = http_client.get_notifications();
+                }
 
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 joystick.reset_timer();
+            } else if (type_button_state.pushed && select_index == base_count + 1) {
+                // Pending Requests UI
+                type_button.clear_button_state();
+                joystick.reset_timer();
+
+                chatapi::ChatApiClient api;
+                std::string username = get_nvs((char*)"user_name");
+                std::string password = get_nvs((char*)"password");
+                if (password == "") password = "password123";
+                if (api.token().empty()) { api.login(username, password); }
+
+                // Fetch pending
+                std::vector<std::pair<std::string,std::string>> pending; // {request_id, username}
+                {
+                    std::string presp;
+                    if (api.get_pending_requests(presp) == ESP_OK) {
+                        StaticJsonDocument<2048> pdoc;
+                        if (deserializeJson(pdoc, presp) == DeserializationError::Ok) {
+                            for (JsonObject r : pdoc["requests"].as<JsonArray>()) {
+                                std::string rid = r["request_id"].as<const char*>() ? r["request_id"].as<const char*>() : "";
+                                std::string uname = r["username"].as<const char*>() ? r["username"].as<const char*>() : "";
+                                if (!rid.empty()) pending.push_back({rid, uname});
+                            }
+                        }
+                    }
+                }
+
+                int psel = 0;
+                while (1) {
+                    sprite.fillRect(0,0,128,64,0);
+                    sprite.setFont(&fonts::Font2);
+                    sprite.setTextColor(0xFFFFFFu,0x000000u);
+                    if (pending.empty()) {
+                        sprite.drawCenterString("No pending requests", 64, 22);
+                        sprite.pushSprite(&lcd,0,0);
+                    } else {
+                        int show = pending.size(); if (show>4) show=4;
+                        int start = (psel/4)*4;
+                        for (int i=0;i<show;i++) {
+                            int idx = start+i; if (idx >= (int)pending.size()) break;
+                            int y = i*(13+3);
+                            if (idx==psel) { sprite.fillRect(0,y,128,16,0xFFFF); sprite.setTextColor(0x0000,0xFFFF);} else {sprite.setTextColor(0xFFFF,0x0000);}    
+                            sprite.setCursor(10,y);
+                            std::string line = pending[idx].second;
+                            sprite.print(line.c_str());
+                        }
+                        sprite.pushSprite(&lcd,0,0);
+                    }
+
+                    // Input
+                    auto js = joystick.get_joystick_state();
+                    auto tbs = type_button.get_button_state();
+                    auto bbs = back_button.get_button_state();
+                    auto ebs = enter_button.get_button_state();
+                    if (js.left || bbs.pushed) break;
+                    if (js.pushed_up_edge) psel = (psel>0)?psel-1:0;
+                    if (js.pushed_down_edge) psel = (psel+1<(int)pending.size())?psel+1:psel;
+
+                    // Accept/Reject dialog
+                    if (!pending.empty() && (tbs.pushed || ebs.pushed)) {
+                        bool accept = tbs.pushed; // type_button=Accept, enter_button=Reject
+                        // Confirm
+                        int selar = 0; // 0:No 1:Yes
+                        while (1) {
+                            auto js2 = joystick.get_joystick_state();
+                            if (js2.pushed_left_edge) selar = 0;
+                            if (js2.pushed_right_edge) selar = 1;
+                            sprite.fillRect(0,0,128,64,0);
+                            sprite.setTextColor(0xFFFF,0x0000);
+                            sprite.drawCenterString(accept?"Accept?":"Reject?",64,14);
+                            uint16_t noFg=(selar==0)?0x0000:0xFFFF, noBg=(selar==0)?0xFFFF:0x0000;
+                            uint16_t ysFg=(selar==1)?0x0000:0xFFFF, ysBg=(selar==1)?0xFFFF:0x0000;
+                            sprite.fillRoundRect(12,34,40,18,3,noBg); sprite.drawRoundRect(12,34,40,18,3,0xFFFF); sprite.setTextColor(noFg,noBg); sprite.drawCenterString("No",32,36);
+                            sprite.fillRoundRect(76,34,40,18,3,ysBg); sprite.drawRoundRect(76,34,40,18,3,0xFFFF); sprite.setTextColor(ysFg,ysBg); sprite.drawCenterString("Yes",96,36);
+                            sprite.pushSprite(&lcd,0,0);
+                            auto t2 = type_button.get_button_state();
+                            auto b2 = back_button.get_button_state();
+                            if (b2.pushed || js2.left) break;
+                            if (t2.pushed) {
+                                if (selar==1) {
+                                    // Send respond
+                                    std::string rid = pending[psel].first;
+                                    std::string rresp; int rstatus=0; 
+                                    api.respond_friend_request(rid, accept, &rresp, &rstatus);
+                                    // Show outcome
+                                    sprite.fillRect(0,0,128,64,0);
+                                    sprite.setTextColor(0xFFFF,0x0000);
+                                    if (rstatus>=200 && rstatus<300) sprite.drawCenterString("Done",64,22);
+                                    else sprite.drawCenterString("Failed",64,22);
+                                    sprite.pushSprite(&lcd,0,0);
+                                    vTaskDelay(800/portTICK_PERIOD_MS);
+                                    // Refresh pending list
+                                    pending.clear();
+                                    std::string presp2; if (api.get_pending_requests(presp2)==ESP_OK){StaticJsonDocument<2048> pdoc2; if (deserializeJson(pdoc2,presp2)==DeserializationError::Ok){for(JsonObject r: pdoc2["requests"].as<JsonArray>()){std::string rid2=r["request_id"].as<const char*>()?r["request_id"].as<const char*>():""; std::string uname2=r["username"].as<const char*>()?r["username"].as<const char*>():""; if(!rid2.empty()) pending.push_back({rid2,uname2});}}}
+                                }
+                                break;
+                            }
+                            vTaskDelay(10/portTICK_PERIOD_MS);
+                        }
+                    }
+                    vTaskDelay(10/portTICK_PERIOD_MS);
+                }
             }
 
             vTaskDelay(10);
@@ -1332,6 +1481,11 @@ class WiFiSetting {
 };
 bool WiFiSetting::running_flag = false;
 
+// Define proxy after WiFiSetting is fully defined
+inline std::string wifi_input_info_proxy(std::string input_type, std::string type_text) {
+    return WiFiSetting::input_info(input_type, type_text);
+}
+
 class P2P_Display {
    public:
     int cursor_point = 2;
@@ -1633,10 +1787,40 @@ void Profile() {
     lcd.fillScreen(0x000000u);
     sprite.createSprite(lcd.width(), lcd.height());
     sprite.setCursor(0, 0);
+    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+    sprite.setFont(&fonts::Font2);
+
+    // Show username
     sprite.print("Name:");
-    std::string user_name = get_nvs("user_name");
+    std::string user_name = get_nvs((char*)"user_name");
     sprite.setCursor(0, 14);
     sprite.print(user_name.c_str());
+
+    // Show IDs
+    sprite.setCursor(0, 30);
+    sprite.print("ShortID:");
+    std::string short_id = get_nvs((char*)"short_id");
+    sprite.setCursor(0, 44);
+    sprite.print(short_id == "" ? "(none)" : short_id.c_str());
+
+    sprite.setCursor(0, 60);
+    sprite.print("FriendCode:");
+    std::string fcode = get_nvs((char*)"friend_code");
+    sprite.setCursor(0, 74);
+    sprite.print(fcode == "" ? "(none)" : fcode.c_str());
+
+    // Show JWT token (truncated for display)
+    sprite.setCursor(0, 90);
+    sprite.print("Token:");
+    std::string token = get_nvs((char*)"jwt_token");
+    sprite.setCursor(0, 104);
+    if (token == "") {
+        sprite.print("(empty)");
+    } else {
+        std::string short_token = token.substr(0, token.size() > 20 ? 20 : token.size());
+        if (token.size() > 20) short_token += "...";
+        sprite.print(short_token.c_str());
+    }
     sprite.pushSprite(&lcd, 0, 0);
     while (1) {
         // Joystickの状態を取得
@@ -2690,9 +2874,9 @@ class ProfileSetting {
         }
 
         // Call register API. If it fails (e.g., network), try login as
-        // fallback.
+        // fallback. Use defaults/NVS overrides for server endpoint.
         {
-            chatapi::ChatApiClient api("192.168.2.184", 8080);
+            chatapi::ChatApiClient api;
             esp_err_t err = api.register_user(user_name, password);
             if (err != ESP_OK) {
                 // Fallback: login if user already exists or registration failed
