@@ -99,6 +99,38 @@ public:
         return ESP_OK;
     }
 
+    // POST /api/auth/register
+    // On success saves token and user_id in NVS
+    esp_err_t register_user(const std::string& username, const std::string& password) {
+        StaticJsonDocument<256> body;
+        body["username"] = username;
+        body["password"] = password;
+        std::string payload;
+        serializeJson(body, payload);
+
+        std::string resp;
+        auto err = request("POST", "/api/auth/register", payload, resp, /*auth*/false);
+        if (err != ESP_OK) return err;
+
+        StaticJsonDocument<384> doc;
+        auto jerr = deserializeJson(doc, resp);
+        if (jerr != DeserializationError::Ok) {
+            ESP_LOGE(CHAT_TAG, "register: JSON parse error");
+            return ESP_FAIL;
+        }
+
+        token_ = std::string(doc["token"].as<const char*>() ? doc["token"].as<const char*>() : "");
+        user_id_ = std::string(doc["user_id"].as<const char*>() ? doc["user_id"].as<const char*>() : "");
+        if (token_.empty() || user_id_.empty()) {
+            ESP_LOGE(CHAT_TAG, "register: token or user_id missing");
+            return ESP_FAIL;
+        }
+        nvs_put_string("jwt_token", token_);
+        nvs_put_string("user_id", user_id_);
+        nvs_put_string("username", username);
+        return ESP_OK;
+    }
+
     // POST /api/messages/send { receiver_id, content }
     esp_err_t send_message(const std::string& receiver_identifier, const std::string& content, std::string* out_response = nullptr) {
         if (token_.empty()) return ESP_ERR_INVALID_STATE;

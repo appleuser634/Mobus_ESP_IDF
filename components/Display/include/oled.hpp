@@ -1658,7 +1658,8 @@ class SettingMenu {
             std::string setting_name;
         } setting_t;
 
-        setting_t settings[4] = {{"Profile"}, {"Wi-Fi"}, {"Sound"}, {"Notif"}};
+        setting_t settings[5] = {
+            {"Profile"}, {"Wi-Fi"}, {"Sound"}, {"Notif"}, {"Factory Reset"}};
 
         int select_index = 0;
         int font_height = 13;
@@ -1681,14 +1682,22 @@ class SettingMenu {
 
             sprite.setFont(&fonts::Font2);
 
-            int length = sizeof(settings) / sizeof(setting_t) - 1;
-            for (int i = 0; i <= length; i++) {
-                sprite.setCursor(10, (font_height + margin) * i);
+            int last_index = (int)(sizeof(settings) / sizeof(setting_t)) -
+                             1;  // 0-based last index
+            int total_items = last_index + 1;
+            int page = select_index / ITEM_PER_PAGE;
+            int start = page * ITEM_PER_PAGE;
+            int end = start + ITEM_PER_PAGE - 1;
+            if (end > last_index) end = last_index;
+
+            for (int i = start; i <= end; i++) {
+                int row = i - start;
+                int y = (font_height + margin) * row;
+                sprite.setCursor(10, y);
 
                 if (i == select_index) {
                     sprite.setTextColor(0x000000u, 0xFFFFFFu);
-                    sprite.fillRect(0, (font_height + margin) * select_index,
-                                    128, font_height + 3, 0xFFFF);
+                    sprite.fillRect(0, y, 128, font_height + 3, 0xFFFF);
                 } else {
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 }
@@ -1703,12 +1712,11 @@ class SettingMenu {
 
             if (select_index < 0) {
                 select_index = 0;
-            } else if (select_index >= length) {
-                select_index = length;
+            } else if (select_index > last_index) {
+                select_index = last_index;
             }
 
-            sprite.pushSprite(&lcd, 0,
-                              (int)(select_index / ITEM_PER_PAGE) * -64);
+            sprite.pushSprite(&lcd, 0, 0);
 
             // ジョイスティック左を押されたらメニューへ戻る
             // 戻るボタンを押されたらメニューへ戻る
@@ -1737,6 +1745,86 @@ class SettingMenu {
                        settings[select_index].setting_name == "Notif") {
                 P2P_Display p2p;
                 p2p.morse_p2p();
+            } else if (type_button_state.pushed &&
+                       settings[select_index].setting_name == "Factory Reset") {
+                // Confirmation dialog
+                type_button.clear_button_state();
+                type_button.reset_timer();
+                back_button.clear_button_state();
+                back_button.reset_timer();
+                joystick.reset_timer();
+                int sel = 0;  // 0: No, 1: Yes
+                while (1) {
+                    // Read input
+                    Joystick::joystick_state_t jst =
+                        joystick.get_joystick_state();
+                    Button::button_state_t tbs = type_button.get_button_state();
+                    Button::button_state_t bbs = back_button.get_button_state();
+
+                    if (jst.pushed_left_edge) sel = 0;
+                    if (jst.pushed_right_edge) sel = 1;
+
+                    sprite.fillRect(0, 0, 128, 64, 0);
+                    sprite.setFont(&fonts::Font2);
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                    sprite.drawCenterString("Factory Reset?", 64, 10);
+
+                    // Draw buttons
+                    // No button (left)
+                    uint16_t noFg = (sel == 0) ? 0x0000 : 0xFFFF;
+                    uint16_t noBg = (sel == 0) ? 0xFFFF : 0x0000;
+                    sprite.fillRoundRect(12, 34, 40, 18, 3, noBg);
+                    sprite.drawRoundRect(12, 34, 40, 18, 3, 0xFFFF);
+                    sprite.setTextColor(noFg, noBg);
+                    sprite.drawCenterString("No", 12 + 20, 36);
+
+                    // Yes button (right)
+                    uint16_t ysFg = (sel == 1) ? 0x0000 : 0xFFFF;
+                    uint16_t ysBg = (sel == 1) ? 0xFFFF : 0x0000;
+                    sprite.fillRoundRect(76, 34, 40, 18, 3, ysBg);
+                    sprite.drawRoundRect(76, 34, 40, 18, 3, 0xFFFF);
+                    sprite.setTextColor(ysFg, ysBg);
+                    sprite.drawCenterString("Yes", 76 + 20, 36);
+
+                    sprite.pushSprite(&lcd, 0, 0);
+
+                    if (bbs.pushed) {
+                        // Cancel and return to settings list
+                        break;
+                    }
+                    if (tbs.pushed) {
+                        if (sel == 1) {
+                            // Proceed with reset
+                            sprite.fillRect(0, 0, 128, 64, 0);
+                            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                            sprite.drawCenterString("Resetting...", 64, 22);
+                            sprite.drawCenterString("Erasing NVS", 64, 40);
+                            sprite.pushSprite(&lcd, 0, 0);
+
+                            esp_err_t err = nvs_flash_erase();
+                            if (err == ESP_OK) {
+                                nvs_flash_init();
+                                sprite.fillRect(0, 0, 128, 64, 0);
+                                sprite.drawCenterString("Reset Done", 64, 22);
+                                sprite.drawCenterString("Rebooting...", 64, 40);
+                                sprite.pushSprite(&lcd, 0, 0);
+                                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                                esp_restart();
+                            } else {
+                                sprite.fillRect(0, 0, 128, 64, 0);
+                                sprite.drawCenterString("Reset Failed", 64, 22);
+                                sprite.drawCenterString("Check logs", 64, 40);
+                                sprite.pushSprite(&lcd, 0, 0);
+                                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                            }
+                        }
+                        // If No selected or after failure, exit dialog
+                        break;
+                    }
+
+                    // debounce
+                    vTaskDelay(10 / portTICK_PERIOD_MS);
+                }
             }
 
             vTaskDelay(1);
@@ -2509,6 +2597,9 @@ class ProfileSetting {
     }
 
     static void profile_setting_task() {
+        // Register user to WebServer after getting profile name
+        // Requires network connection to be ready
+        // Uses default password if none is set in NVS
         int cx = 64;
         int cy = 15;
         morse_greeting("HI, DE Mimoc.", "", cx, cy);
@@ -2526,6 +2617,25 @@ class ProfileSetting {
 
         std::string user_name = set_profile_info();
         save_nvs("user_name", user_name);
+
+        // Try user registration via chat backend
+        // If password not set, use default for development
+        std::string password = get_nvs("password");
+        if (password == "") {
+            password = "password123";
+            save_nvs((char *)"password", password);
+        }
+
+        // Call register API. If it fails (e.g., network), try login as
+        // fallback.
+        {
+            chatapi::ChatApiClient api("192.168.2.184", 8080);
+            esp_err_t err = api.register_user(user_name, password);
+            if (err != ESP_OK) {
+                // Fallback: login if user already exists or registration failed
+                api.login(user_name, password);
+            }
+        }
     };
 };
 
