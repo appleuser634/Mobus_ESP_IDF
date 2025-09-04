@@ -321,28 +321,32 @@ class TalkDisplay {
             message_text += alphabet_text;
             if (alphabet_text != "" && input_lang == 1) {
                 size_t safe_pos = input_switch_pos;
-                if (safe_pos > message_text.size()) safe_pos = message_text.size();
+                if (safe_pos > message_text.size())
+                    safe_pos = message_text.size();
                 std::string translate_target = message_text.substr(safe_pos);
                 // Longest-match transliteration
-                auto transliterate = [] (const std::string &src) -> std::string {
+                auto transliterate = [](const std::string &src) -> std::string {
                     // Build sorted mapping by key length desc once
-                    static std::vector<std::pair<std::string,std::string>> sorted;
+                    static std::vector<std::pair<std::string, std::string>>
+                        sorted;
                     static bool inited = false;
                     if (!inited) {
-                        sorted = romaji_kana; // copy
-                        std::stable_sort(sorted.begin(), sorted.end(), [](auto &a, auto &b){
-                            return a.first.size() > b.first.size();
-                        });
+                        sorted = romaji_kana;  // copy
+                        std::stable_sort(
+                            sorted.begin(), sorted.end(), [](auto &a, auto &b) {
+                                return a.first.size() > b.first.size();
+                            });
                         inited = true;
                     }
                     std::string out;
-                    out.reserve(src.size()*3);
+                    out.reserve(src.size() * 3);
                     size_t i = 0;
                     while (i < src.size()) {
                         bool matched = false;
                         for (auto &kv : sorted) {
                             const std::string &k = kv.first;
-                            if (k.size() > 0 && i + k.size() <= src.size() && src.compare(i, k.size(), k) == 0) {
+                            if (k.size() > 0 && i + k.size() <= src.size() &&
+                                src.compare(i, k.size(), k) == 0) {
                                 out += kv.second;
                                 i += k.size();
                                 matched = true;
@@ -356,7 +360,8 @@ class TalkDisplay {
                     return out;
                 };
                 translate_target = transliterate(translate_target);
-                message_text = message_text.substr(0, safe_pos) + translate_target;
+                message_text =
+                    message_text.substr(0, safe_pos) + translate_target;
             }
             alphabet_text = "";
 
@@ -657,9 +662,11 @@ class MessageBox {
         // http.notif_flag = false;
 
         int font_height = 16;
-        // When message count is small, avoid positive min_offset which causes jitter.
+        // When message count is small, avoid positive min_offset which causes
+        // jitter.
         int max_offset_y = 0;
-        int min_offset_y = (int)( (int)font_height * 2 - (int)res["messages"].size() * font_height );
+        int min_offset_y = (int)((int)font_height * 2 -
+                                 (int)res["messages"].size() * font_height);
         if (min_offset_y > 0) min_offset_y = 0;
         int offset_y = 0;
 
@@ -781,7 +788,8 @@ bool MessageBox::running_flag = false;
 std::string MessageBox::chat_title = "";
 
 // Forward declaration for helper proxy
-std::string wifi_input_info_proxy(std::string input_type, std::string type_text = "");
+std::string wifi_input_info_proxy(std::string input_type,
+                                  std::string type_text = "");
 
 #define CONTACT_SIZE 5
 class ContactBook {
@@ -910,14 +918,8 @@ class ContactBook {
             sprite.setFont(&fonts::Font2);
 
             int base_count = (int)contacts.size();
-            int last_index = base_count + 1; // +1: Add Friend, +1: Pending Requests
-            if (contacts.empty()) {
-                sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                sprite.setCursor(8, 12);
-                sprite.print("No friends yet");
-                sprite.setCursor(8, 28);
-                sprite.print("Add friends from app");
-            }
+            int last_index =
+                base_count + 1;  // +1: Add Friend, +1: Pending Requests
 
             for (int i = 0; i <= last_index; i++) {
                 sprite.setCursor(10, (font_height + margin) * i);
@@ -964,13 +966,16 @@ class ContactBook {
                 // talk.start_talk_task(contacts[i].name);
                 if (select_index == base_count) {
                     // Add Friend flow: input friend code/ID, then send request
-                    std::string friend_code = wifi_input_info_proxy("Friend Code/ID", "");
+                    std::string friend_code =
+                        wifi_input_info_proxy("Friend Code/ID", "");
                     if (friend_code != "") {
                         chatapi::ChatApiClient api;
-                        std::string username = get_nvs((char*)"user_name");
-                        std::string password = get_nvs((char*)"password");
+                        std::string username = get_nvs((char *)"user_name");
+                        std::string password = get_nvs((char *)"password");
                         if (password == "") password = "password123";
-                        if (api.token().empty()) { api.login(username, password); }
+                        if (api.token().empty()) {
+                            api.login(username, password);
+                        }
 
                         sprite.fillRect(0, 0, 128, 64, 0);
                         sprite.setFont(&fonts::Font2);
@@ -980,7 +985,8 @@ class ContactBook {
 
                         std::string resp;
                         int status = 0;
-                        auto err = api.send_friend_request(friend_code, &resp, &status);
+                        auto err = api.send_friend_request(friend_code, &resp,
+                                                           &status);
                         sprite.fillRect(0, 0, 128, 64, 0);
                         sprite.setFont(&fonts::Font2);
                         if (err == ESP_OK && status >= 200 && status < 300) {
@@ -988,9 +994,11 @@ class ContactBook {
                         } else if (err == ESP_OK && status >= 400) {
                             // Try to parse error from response
                             StaticJsonDocument<256> edoc;
-                            const char* emsg = "Invalid ID";
-                            if (deserializeJson(edoc, resp) == DeserializationError::Ok && edoc["error"]) {
-                                emsg = edoc["error"].as<const char*>();
+                            const char *emsg = "Invalid ID";
+                            if (deserializeJson(edoc, resp) ==
+                                    DeserializationError::Ok &&
+                                edoc["error"]) {
+                                emsg = edoc["error"].as<const char *>();
                             }
                             sprite.drawCenterString("Error:", 64, 16);
                             sprite.drawCenterString(emsg, 64, 34);
@@ -1006,22 +1014,34 @@ class ContactBook {
                     joystick.reset_timer();
 
                     chatapi::ChatApiClient api;
-                    std::string username = get_nvs((char*)"user_name");
-                    std::string password = get_nvs((char*)"password");
+                    std::string username = get_nvs((char *)"user_name");
+                    std::string password = get_nvs((char *)"password");
                     if (password == "") password = "password123";
-                    if (api.token().empty()) { api.login(username, password); }
+                    if (api.token().empty()) {
+                        api.login(username, password);
+                    }
 
                     // Fetch pending
-                    std::vector<std::pair<std::string,std::string>> pending; // {request_id, username}
+                    std::vector<std::pair<std::string, std::string>>
+                        pending;  // {request_id, username}
                     {
                         std::string presp;
                         if (api.get_pending_requests(presp) == ESP_OK) {
                             StaticJsonDocument<2048> pdoc;
-                            if (deserializeJson(pdoc, presp) == DeserializationError::Ok) {
-                                for (JsonObject r : pdoc["requests"].as<JsonArray>()) {
-                                    std::string rid = r["request_id"].as<const char*>() ? r["request_id"].as<const char*>() : "";
-                                    std::string uname = r["username"].as<const char*>() ? r["username"].as<const char*>() : "";
-                                    if (!rid.empty()) pending.push_back({rid, uname});
+                            if (deserializeJson(pdoc, presp) ==
+                                DeserializationError::Ok) {
+                                for (JsonObject r :
+                                     pdoc["requests"].as<JsonArray>()) {
+                                    std::string rid =
+                                        r["request_id"].as<const char *>()
+                                            ? r["request_id"].as<const char *>()
+                                            : "";
+                                    std::string uname =
+                                        r["username"].as<const char *>()
+                                            ? r["username"].as<const char *>()
+                                            : "";
+                                    if (!rid.empty())
+                                        pending.push_back({rid, uname});
                                 }
                             }
                         }
@@ -1029,25 +1049,34 @@ class ContactBook {
 
                     int psel = 0;
                     while (1) {
-                        sprite.fillRect(0,0,128,64,0);
+                        sprite.fillRect(0, 0, 128, 64, 0);
                         sprite.setFont(&fonts::Font2);
-                        sprite.setTextColor(0xFFFFFFu,0x000000u);
+                        sprite.setTextColor(0xFFFFFFu, 0x000000u);
                         if (pending.empty()) {
-                            sprite.drawCenterString("No pending requests", 64, 22);
-                            sprite.pushSprite(&lcd,0,0);
+                            sprite.drawCenterString("No pending requests", 64,
+                                                    22);
+                            sprite.pushSprite(&lcd, 0, 0);
                         } else {
-                        const int row_h = 20;
-                        int start = (psel/3)*3;
-                        int show = pending.size() - start; if (show>3) show=3;
-                        for (int i=0;i<show;i++) {
-                            int idx = start+i; if (idx >= (int)pending.size()) break;
-                            int y = i*row_h;
-                            if (idx==psel) { sprite.fillRect(0,y,128,row_h-2,0xFFFF); sprite.setTextColor(0x0000,0xFFFF);} else {sprite.setTextColor(0xFFFF,0x0000);}    
-                            sprite.setCursor(10,y);
-                            std::string line = pending[idx].second;
-                            sprite.print(line.c_str());
-                        }
-                        sprite.pushSprite(&lcd,0,0);
+                            const int row_h = 20;
+                            int start = (psel / 3) * 3;
+                            int show = pending.size() - start;
+                            if (show > 3) show = 3;
+                            for (int i = 0; i < show; i++) {
+                                int idx = start + i;
+                                if (idx >= (int)pending.size()) break;
+                                int y = i * row_h;
+                                if (idx == psel) {
+                                    sprite.fillRect(0, y, 128, row_h - 2,
+                                                    0xFFFF);
+                                    sprite.setTextColor(0x0000, 0xFFFF);
+                                } else {
+                                    sprite.setTextColor(0xFFFF, 0x0000);
+                                }
+                                sprite.setCursor(10, y);
+                                std::string line = pending[idx].second;
+                                sprite.print(line.c_str());
+                            }
+                            sprite.pushSprite(&lcd, 0, 0);
                         }
 
                         // Input
@@ -1056,73 +1085,124 @@ class ContactBook {
                         auto bbs = back_button.get_button_state();
                         auto ebs = enter_button.get_button_state();
                         if (js.left || bbs.pushed) break;
-                        if (js.pushed_up_edge && psel>0) psel -= 1;
-                        if (js.pushed_down_edge && psel+1<(int)pending.size()) psel += 1;
+                        if (js.pushed_up_edge && psel > 0) psel -= 1;
+                        if (js.pushed_down_edge &&
+                            psel + 1 < (int)pending.size())
+                            psel += 1;
 
                         // Accept/Reject dialog
-                    if (!pending.empty() && (tbs.pushed || ebs.pushed)) {
-                        bool accept = tbs.pushed; // type_button=Accept, enter_button=Reject
-                        // Clear states before dialog
-                        type_button.clear_button_state();
-                        enter_button.clear_button_state();
-                        back_button.clear_button_state();
-                        joystick.reset_timer();
-                        // Confirm dialog
-                        int selar = 0; // 0:No 1:Yes
-                        while (1) {
-                            auto js2 = joystick.get_joystick_state();
-                            if (js2.pushed_left_edge || js2.pushed_up_edge) selar = 0;
-                            if (js2.pushed_right_edge || js2.pushed_down_edge) selar = 1;
+                        if (!pending.empty() && (tbs.pushed || ebs.pushed)) {
+                            bool accept = tbs.pushed;  // type_button=Accept,
+                                                       // enter_button=Reject
+                            // Clear states before dialog
+                            type_button.clear_button_state();
+                            enter_button.clear_button_state();
+                            back_button.clear_button_state();
+                            joystick.reset_timer();
+                            // Confirm dialog
+                            int selar = 0;  // 0:No 1:Yes
+                            while (1) {
+                                auto js2 = joystick.get_joystick_state();
+                                if (js2.pushed_left_edge || js2.pushed_up_edge)
+                                    selar = 0;
+                                if (js2.pushed_right_edge ||
+                                    js2.pushed_down_edge)
+                                    selar = 1;
 
-                            sprite.fillRect(0,0,128,64,0);
-                            sprite.setTextColor(0xFFFF,0x0000);
-                            sprite.drawCenterString(accept?"Accept?":"Reject?",64,14);
-                            uint16_t noFg=(selar==0)?0x0000:0xFFFF, noBg=(selar==0)?0xFFFF:0x0000;
-                            uint16_t ysFg=(selar==1)?0x0000:0xFFFF, ysBg=(selar==1)?0xFFFF:0x0000;
-                            sprite.fillRoundRect(12,34,40,18,3,noBg);
-                            sprite.drawRoundRect(12,34,40,18,3,0xFFFF);
-                            sprite.setTextColor(noFg,noBg);
-                            sprite.drawCenterString("No",32,36);
-                            sprite.fillRoundRect(76,34,40,18,3,ysBg);
-                            sprite.drawRoundRect(76,34,40,18,3,0xFFFF);
-                            sprite.setTextColor(ysFg,ysBg);
-                            sprite.drawCenterString("Yes",96,36);
-                            sprite.pushSprite(&lcd,0,0);
+                                sprite.fillRect(0, 0, 128, 64, 0);
+                                sprite.setTextColor(0xFFFF, 0x0000);
+                                sprite.drawCenterString(
+                                    accept ? "Accept?" : "Reject?", 64, 14);
+                                uint16_t noFg = (selar == 0) ? 0x0000 : 0xFFFF,
+                                         noBg = (selar == 0) ? 0xFFFF : 0x0000;
+                                uint16_t ysFg = (selar == 1) ? 0x0000 : 0xFFFF,
+                                         ysBg = (selar == 1) ? 0xFFFF : 0x0000;
+                                sprite.fillRoundRect(12, 34, 40, 18, 3, noBg);
+                                sprite.drawRoundRect(12, 34, 40, 18, 3, 0xFFFF);
+                                sprite.setTextColor(noFg, noBg);
+                                sprite.drawCenterString("No", 32, 36);
+                                sprite.fillRoundRect(76, 34, 40, 18, 3, ysBg);
+                                sprite.drawRoundRect(76, 34, 40, 18, 3, 0xFFFF);
+                                sprite.setTextColor(ysFg, ysBg);
+                                sprite.drawCenterString("Yes", 96, 36);
+                                sprite.pushSprite(&lcd, 0, 0);
 
-                            auto t2 = type_button.get_button_state();
-                            auto e2 = enter_button.get_button_state();
-                            auto b2 = back_button.get_button_state();
-                            if (b2.pushed || js2.left) break; // cancel dialog
-                            if (t2.pushed || e2.pushed) {
-                                if (selar==1) {
-                                    // Send respond
-                                    std::string rid = pending[psel].first;
-                                    std::string rresp; int rstatus=0; 
-                                    api.respond_friend_request(rid, accept, &rresp, &rstatus);
-                                    // Show outcome
-                                    sprite.fillRect(0,0,128,64,0);
-                                    sprite.setTextColor(0xFFFF,0x0000);
-                                    if (rstatus>=200 && rstatus<300) sprite.drawCenterString("Done",64,22);
-                                    else sprite.drawCenterString("Failed",64,22);
-                                    sprite.pushSprite(&lcd,0,0);
-                                    vTaskDelay(800/portTICK_PERIOD_MS);
-                                    // Refresh pending list
-                                    pending.clear();
-                                    std::string presp2; if (api.get_pending_requests(presp2)==ESP_OK){StaticJsonDocument<2048> pdoc2; if (deserializeJson(pdoc2,presp2)==DeserializationError::Ok){for(JsonObject r: pdoc2["requests"].as<JsonArray>()){std::string rid2=r["request_id"].as<const char*>()?r["request_id"].as<const char*>():""; std::string uname2=r["username"].as<const char*>()?r["username"].as<const char*>():""; if(!rid2.empty()) pending.push_back({rid2,uname2});}}}
+                                auto t2 = type_button.get_button_state();
+                                auto e2 = enter_button.get_button_state();
+                                auto b2 = back_button.get_button_state();
+                                if (b2.pushed || js2.left)
+                                    break;  // cancel dialog
+                                if (t2.pushed || e2.pushed) {
+                                    if (selar == 1) {
+                                        // Send respond
+                                        std::string rid = pending[psel].first;
+                                        std::string rresp;
+                                        int rstatus = 0;
+                                        api.respond_friend_request(
+                                            rid, accept, &rresp, &rstatus);
+                                        // Show outcome
+                                        sprite.fillRect(0, 0, 128, 64, 0);
+                                        sprite.setTextColor(0xFFFF, 0x0000);
+                                        if (rstatus >= 200 && rstatus < 300)
+                                            sprite.drawCenterString("Done", 64,
+                                                                    22);
+                                        else
+                                            sprite.drawCenterString("Failed",
+                                                                    64, 22);
+                                        sprite.pushSprite(&lcd, 0, 0);
+                                        vTaskDelay(800 / portTICK_PERIOD_MS);
+                                        // Refresh pending list
+                                        pending.clear();
+                                        std::string presp2;
+                                        if (api.get_pending_requests(presp2) ==
+                                            ESP_OK) {
+                                            StaticJsonDocument<2048> pdoc2;
+                                            if (deserializeJson(pdoc2,
+                                                                presp2) ==
+                                                DeserializationError::Ok) {
+                                                for (JsonObject r :
+                                                     pdoc2["requests"]
+                                                         .as<JsonArray>()) {
+                                                    std::string rid2 =
+                                                        r["request_id"]
+                                                                .as<const char
+                                                                        *>()
+                                                            ? r["request_id"]
+                                                                  .as<const char
+                                                                          *>()
+                                                            : "";
+                                                    std::string uname2 =
+                                                        r["username"]
+                                                                .as<const char
+                                                                        *>()
+                                                            ? r["username"]
+                                                                  .as<const char
+                                                                          *>()
+                                                            : "";
+                                                    if (!rid2.empty())
+                                                        pending.push_back(
+                                                            {rid2, uname2});
+                                                }
+                                            }
+                                        }
+                                    }
+                                    break;  // close dialog regardless of Yes/No
                                 }
-                                break; // close dialog regardless of Yes/No
+                                vTaskDelay(10 / portTICK_PERIOD_MS);
                             }
-                            vTaskDelay(10/portTICK_PERIOD_MS);
                         }
-                    }
-                        vTaskDelay(10/portTICK_PERIOD_MS);
+                        vTaskDelay(10 / portTICK_PERIOD_MS);
                     }
                 } else if (!contacts.empty() && select_index < base_count) {
                     box.running_flag = true;
-                    // Set chat title as username for UI, pass identifier for API
-                    MessageBox::chat_title = contacts[select_index].display_name;
+                    // Set chat title as username for UI, pass identifier for
+                    // API
+                    MessageBox::chat_title =
+                        contacts[select_index].display_name;
                     box.start_box_task(contacts[select_index].identifier);
-                    while (box.running_flag) { vTaskDelay(100 / portTICK_PERIOD_MS); }
+                    while (box.running_flag) {
+                        vTaskDelay(100 / portTICK_PERIOD_MS);
+                    }
 
                     // 通知の取得
                     notif_res = http_client.get_notifications();
@@ -1520,7 +1600,8 @@ class WiFiSetting {
 bool WiFiSetting::running_flag = false;
 
 // Define proxy after WiFiSetting is fully defined
-inline std::string wifi_input_info_proxy(std::string input_type, std::string type_text) {
+inline std::string wifi_input_info_proxy(std::string input_type,
+                                         std::string type_text) {
     return WiFiSetting::input_info(input_type, type_text);
 }
 
@@ -1828,35 +1909,35 @@ void Profile() {
     sprite.setFont(&fonts::Font2);
 
     // Prepare data (tokenは表示しない)
-    std::string user_name   = get_nvs((char*)"user_name");
-    std::string friend_code = get_nvs((char*)"friend_code");
-    std::string short_id    = get_nvs((char*)"short_id");
+    std::string user_name = get_nvs((char *)"user_name");
+    std::string friend_code = get_nvs((char *)"friend_code");
+    std::string short_id = get_nvs((char *)"short_id");
 
     // If friend_code is not saved, try to fetch via API and store
     if (friend_code == "") {
         chatapi::ChatApiClient api;
-        std::string password = get_nvs((char*)"password");
+        std::string password = get_nvs((char *)"password");
         if (password == "") password = "password123";
         if (api.token().empty() && user_name != "") {
             api.login(user_name, password);
         }
-        std::string code; int st=0;
+        std::string code;
+        int st = 0;
         if (api.refresh_friend_code(code, &st) == ESP_OK && !code.empty()) {
             friend_code = code;
         }
     }
 
     // Layout metrics (avoid label/value overlap across fonts)
-    const int block_h = 28;      // total block height per item
-    const int value_offset = 14; // value text offset from label
+    const int block_h = 28;       // total block height per item
+    const int value_offset = 14;  // value text offset from label
     int offset_y = 0;
-    std::vector<std::pair<std::string,std::string>> lines = {
-        {"Name",      user_name},
+    std::vector<std::pair<std::string, std::string>> lines = {
+        {"Name", user_name},
         {"Friend ID", friend_code == "" ? std::string("(none)") : friend_code},
-        {"Short ID",  short_id    == "" ? std::string("(none)") : short_id}
-    };
-    auto draw = [&](int off){
-        sprite.fillRect(0,0,128,64,0);
+        {"Short ID", short_id == "" ? std::string("(none)") : short_id}};
+    auto draw = [&](int off) {
+        sprite.fillRect(0, 0, 128, 64, 0);
         int y = 0;
         for (auto &kv : lines) {
             sprite.setCursor(0, y + off);
@@ -1890,7 +1971,8 @@ void Profile() {
             offset_y -= block_h;
         }
         int content_h = (int)lines.size() * block_h;
-        int min_off = lcd.height() - content_h; if (min_off > 0) min_off = 0;
+        int min_off = lcd.height() - content_h;
+        if (min_off > 0) min_off = 0;
         if (offset_y > 0) offset_y = 0;
         if (offset_y < min_off) offset_y = min_off;
         draw(offset_y);
