@@ -2597,8 +2597,28 @@ class ProfileSetting {
     }
 
     static void profile_setting_task() {
+        // Ensure Wi-Fi is connected before proceeding to initial setup
+        while (1) {
+            // If event group exists and connected bit is set, continue
+            if (s_wifi_event_group) {
+                EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
+                if (bits & WIFI_CONNECTED_BIT) {
+                    break;
+                }
+            }
+
+            // Launch Wi-Fi setting UI; returns to this loop when user exits
+            WiFiSetting wifi_setting;
+            wifi_setting.running_flag = true;
+            wifi_setting.start_wifi_setting_task();
+            while (wifi_setting.running_flag) {
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+            }
+
+            // Loop again to re-check connectivity; block until online
+        }
+
         // Register user to WebServer after getting profile name
-        // Requires network connection to be ready
         // Uses default password if none is set in NVS
         int cx = 64;
         int cy = 15;

@@ -34,7 +34,7 @@
 
 #define MAX_HTTP_RECV_BUFFER 512
 #define MAX_HTTP_OUTPUT_BUFFER 2048
-#define HTTP_ENDPOINT "localhost"
+#define HTTP_ENDPOINT "192.168.2.184"
 
 /* Root cert for howsmyssl.com, taken from howsmyssl_com_root_cert.pem
 
