@@ -25,10 +25,12 @@ Existing `HttpClient` uses the new API internally for send/get and maps results 
 - BLE UART-like service is implemented with UUIDs in `web_server/BLUETOOTH_RELAY_SPEC.md`.
 - The phone application MUST log in with the same account as this device. Use the same username/password you configured on the ESP32. See `web_server/BLUETOOTH_RELAY_SPEC.md` for the BLE relay protocol.
 
-NVS keys used:
-- `ble_pairing` = `"true"|"false"`
-- `ble_pair_code` = 6‑digit string
-- `ble_pair_expires_us` = expiration timestamp in microseconds since boot
+NVS keys used (<=15 chars):
+- `ble_pair` = `"true"|"false"`
+- `ble_code` = 6‑digit string
+- `ble_exp_us` = expiration timestamp (microseconds since boot)
+
+Note: To reduce memory pressure on combined Wi‑Fi + BLE usage, the BLE enable flow temporarily stops Wi‑Fi and restarts it when BLE is disabled.
 
 Build note:
 - Enable Bluetooth in menuconfig: `Component config -> Bluetooth -> Bluedroid Enable` and `BLE`.

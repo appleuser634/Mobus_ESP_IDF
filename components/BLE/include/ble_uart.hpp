@@ -21,6 +21,9 @@ void ble_uart_disable(void);
 // Returns 1 if there is an active connection and notifications are enabled.
 int ble_uart_is_ready(void);
 
+// Returns 0 on last successful enable, or a negative/ESP_ERR_* code on failure.
+int ble_uart_last_err(void);
+
 // Send bytes via TX (Notify). Splits into MTU-sized chunks. Returns 0 on ok.
 int ble_uart_send(const uint8_t* data, size_t len);
 
@@ -30,4 +33,3 @@ int ble_uart_send_str(const char* s);
 #ifdef __cplusplus
 }
 #endif
-
