@@ -2121,10 +2121,14 @@ class SettingMenu {
                     save_nvs((char*)"server_scheme", std::string("http"));
                     save_nvs((char*)"server_host",   std::string("192.168.2.184"));
                     save_nvs((char*)"server_port",   std::string("8080"));
+                    save_nvs((char*)"mqtt_host",     std::string("192.168.2.184"));
+                    save_nvs((char*)"mqtt_port",     std::string("1883"));
                 } else {
                     save_nvs((char*)"server_scheme", std::string("https"));
                     save_nvs((char*)"server_host",   std::string("mimoc.jp"));
                     save_nvs((char*)"server_port",   std::string("443"));
+                    save_nvs((char*)"mqtt_host",     std::string("mimoc.jp"));
+                    save_nvs((char*)"mqtt_port",     std::string("1883"));
                 }
                 // Feedback screen
                 sprite.fillRect(0,0,128,64,0);

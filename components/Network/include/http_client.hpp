@@ -179,6 +179,13 @@ void http_get_message_task(void *pvParameters) {
     esp_err_t err = api.get_messages(chat_from, 20, response);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "get_messages failed: %s", esp_err_to_name(err));
+        // Return empty messages to avoid indefinite Loading... UI
+        StaticJsonDocument<128> emptyDoc;
+        emptyDoc.createNestedArray("messages");
+        std::string outBuf;
+        serializeJson(emptyDoc, outBuf);
+        deserializeJson(res, outBuf);
+        res_flag = 1;
         vTaskDelete(NULL);
         return;
     }
@@ -228,10 +235,13 @@ void http_get_notifications_task(void *pvParameters) {
     if (password.empty()) password = "password123";
     if (api.token().empty()) api.login(username, password);
 
-    // Choose MQTT host
+    // Choose MQTT host/port
     std::string mqtt_host = get_nvs("mqtt_host");
-    if (mqtt_host.empty()) mqtt_host = HTTP_ENDPOINT;
-    if (g_mqtt.start(mqtt_host, 1883) != ESP_OK) {
+    if (mqtt_host.empty()) mqtt_host = api.host();
+    std::string mqtt_port_str = get_nvs((char*)"mqtt_port");
+    int mqtt_port = 1883;
+    if (!mqtt_port_str.empty()) { int p = atoi(mqtt_port_str.c_str()); if (p>0) mqtt_port = p; }
+    if (g_mqtt.start(mqtt_host, mqtt_port) != ESP_OK) {
         ESP_LOGE(TAG, "MQTT connect failed");
         vTaskDelete(NULL);
         return;
