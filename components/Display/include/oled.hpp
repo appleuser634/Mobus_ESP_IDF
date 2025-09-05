@@ -79,8 +79,10 @@ static LGFX_Sprite sprite(
 
 #include "mopping.h"
 #include <chat_api.hpp>
+#include <ota_client.hpp>
 #include <mqtt_runtime.h>
 #include <ble_uart.hpp>
+#include "esp_app_desc.h"
 
 // UTF-8 の1文字の先頭バイト数を調べる（UTF-8のみ対応）
 int utf8_char_length(unsigned char ch) {
@@ -271,21 +273,32 @@ class TalkDisplay {
                 http_client.post_message(chat_to_data);
                 // Also relay via BLE to phone app if connected
                 if (ble_uart_is_ready()) {
-                    auto esc = [](const std::string& s) {
-                        std::string o; o.reserve(s.size()+8);
+                    auto esc = [](const std::string &s) {
+                        std::string o;
+                        o.reserve(s.size() + 8);
                         for (char c : s) {
-                            if (c=='\\' || c=='"') { o.push_back('\\'); o.push_back(c); }
-                            else if (c=='\n') { o += "\\n"; }
-                            else if (c=='\r') { /* skip */ }
-                            else { o.push_back(c); }
+                            if (c == '\\' || c == '"') {
+                                o.push_back('\\');
+                                o.push_back(c);
+                            } else if (c == '\n') {
+                                o += "\\n";
+                            } else if (c == '\r') { /* skip */
+                            } else {
+                                o.push_back(c);
+                            }
                         }
                         return o;
                     };
                     long long rid = esp_timer_get_time();
-                    std::string json = std::string("{ \"id\":\"") + std::to_string(rid) +
-                        "\", \"type\": \"send_message\", \"payload\": { \"receiver_id\": \"" + esc(chat_to) +
-                        "\", \"content\": \"" + esc(message_text) + "\" } }\n";
-                    ble_uart_send(reinterpret_cast<const uint8_t*>(json.c_str()), json.size());
+                    std::string json = std::string("{ \"id\":\"") +
+                                       std::to_string(rid) +
+                                       "\", \"type\": \"send_message\", "
+                                       "\"payload\": { \"receiver_id\": \"" +
+                                       esc(chat_to) + "\", \"content\": \"" +
+                                       esc(message_text) + "\" } }\n";
+                    ble_uart_send(
+                        reinterpret_cast<const uint8_t *>(json.c_str()),
+                        json.size());
                 }
                 message_text = "";
                 pos = 0;
@@ -940,7 +953,8 @@ class ContactBook {
             sprite.setFont(&fonts::Font2);
 
             int base_count = (int)contacts.size();
-            int last_index = base_count + 1;  // +1: Add Friend, +1: Pending Requests
+            int last_index =
+                base_count + 1;  // +1: Add Friend, +1: Pending Requests
 
             int page = select_index / CONTACT_PER_PAGE;
             int start = page * CONTACT_PER_PAGE;
@@ -2053,9 +2067,9 @@ class SettingMenu {
         } setting_t;
 
         // Add Bluetooth pairing item to settings
-        setting_t settings[7] = {
-            {"Profile"}, {"Wi-Fi"}, {"Bluetooth"}, {"Sound"},
-            {"Notif"}, {"Develop"}, {"Factory Reset"}};
+        setting_t settings[8] = {{"Profile"}, {"Wi-Fi"},        {"Bluetooth"},
+                                 {"Sound"},   {"Notif"},        {"Auto Update"},
+                                 {"Develop"}, {"Factory Reset"}};
 
         int select_index = 0;
         int font_height = 13;
@@ -2097,11 +2111,18 @@ class SettingMenu {
                 } else {
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 }
-                // Render name (Develop shows ON/OFF)
+                // Render name (Develop/Auto Update show ON/OFF)
                 if (settings[i].setting_name == "Develop") {
-                    std::string dev = get_nvs((char*)"develop_mode");
+                    std::string dev = get_nvs((char *)"develop_mode");
                     bool on = (dev == "true");
-                    std::string label = settings[i].setting_name + (on?" [ON]":" [OFF]");
+                    std::string label =
+                        settings[i].setting_name + (on ? " [ON]" : " [OFF]");
+                    sprite.print(label.c_str());
+                } else if (settings[i].setting_name == "Auto Update") {
+                    std::string au = get_nvs((char *)"ota_auto");
+                    bool on = (au == "true");
+                    std::string label =
+                        settings[i].setting_name + (on ? " [ON]" : " [OFF]");
                     sprite.print(label.c_str());
                 } else {
                     sprite.print(settings[i].setting_name.c_str());
@@ -2145,11 +2166,11 @@ class SettingMenu {
                 joystick.reset_timer();
 
                 // Local state backed by NVS
-                auto nvs_str = [](const char* key) {
-                    return get_nvs((char*)key);
+                auto nvs_str = [](const char *key) {
+                    return get_nvs((char *)key);
                 };
-                auto nvs_put = [](const char* key, const std::string& v) {
-                    save_nvs((char*)key, v);
+                auto nvs_put = [](const char *key, const std::string &v) {
+                    save_nvs((char *)key, v);
                 };
 
                 // Helper to generate 6-digit code
@@ -2157,7 +2178,7 @@ class SettingMenu {
                     uint32_t r = (uint32_t)esp_timer_get_time();
                     // Very simple PRNG from timer; adequate for UI pairing hint
                     r = (1103515245u * r + 12345u);
-                    uint32_t n = (r % 900000u) + 100000u; // 100000-999999
+                    uint32_t n = (r % 900000u) + 100000u;  // 100000-999999
                     char buf[8];
                     snprintf(buf, sizeof(buf), "%06u", (unsigned)n);
                     return std::string(buf);
@@ -2186,16 +2207,19 @@ class SettingMenu {
                     ble_uart_enable();
                 }
 
-                int sel = 0; // 0: Toggle, 1: Refresh Code
+                int sel = 0;  // 0: Toggle, 1: Refresh Code
                 while (1) {
-                    Joystick::joystick_state_t jst = joystick.get_joystick_state();
+                    Joystick::joystick_state_t jst =
+                        joystick.get_joystick_state();
                     Button::button_state_t tbs = type_button.get_button_state();
                     Button::button_state_t bbs = back_button.get_button_state();
-                    Button::button_state_t ebs = enter_button.get_button_state();
+                    Button::button_state_t ebs =
+                        enter_button.get_button_state();
 
                     // Refresh time only (avoid reading from NVS in loop)
                     now_us = esp_timer_get_time();
-                    long long remain_s = pairing ? (exp_us - now_us) / 1000000LL : 0;
+                    long long remain_s =
+                        pairing ? (exp_us - now_us) / 1000000LL : 0;
                     if (pairing && remain_s <= 0) {
                         pairing = false;
                         nvs_put("ble_pair", "false");
@@ -2211,7 +2235,8 @@ class SettingMenu {
 
                     // Status line
                     char status[32];
-                    snprintf(status, sizeof(status), "Status: %s", pairing?"ON":"OFF");
+                    snprintf(status, sizeof(status), "Status: %s",
+                             pairing ? "ON" : "OFF");
                     sprite.setCursor(6, 22);
                     sprite.print(status);
 
@@ -2236,7 +2261,7 @@ class SettingMenu {
 
                     // Input handling
                     if (bbs.pushed || jst.left) {
-                        break; // exit Bluetooth menu
+                        break;  // exit Bluetooth menu
                     }
                     if (jst.pushed_left_edge) sel = 0;
                     if (jst.pushed_right_edge) sel = 1;
@@ -2245,12 +2270,14 @@ class SettingMenu {
                             // Turn on pairing, generate code and 120s window
                             code = gen_code();
                             nvs_put("ble_code", code);
-                            long long until = esp_timer_get_time() + 120LL * 1000000LL;
+                            long long until =
+                                esp_timer_get_time() + 120LL * 1000000LL;
                             exp_us = until;
                             nvs_put("ble_exp_us", std::to_string(until));
                             nvs_put("ble_pair", "true");
                             pairing = true;
-                            // Show enabling message, then free sprite to save RAM
+                            // Show enabling message, then free sprite to save
+                            // RAM
                             sprite.fillRect(0, 0, 128, 64, 0);
                             sprite.setFont(&fonts::Font2);
                             sprite.setTextColor(0xFFFFFFu, 0x000000u);
@@ -2258,7 +2285,8 @@ class SettingMenu {
                             sprite.pushSprite(&lcd, 0, 0);
                             // Pause MQTT to free memory before BLE init
                             mqtt_rt_pause();
-                            // Free sprite buffer (~8KB) to increase largest block
+                            // Free sprite buffer (~8KB) to increase largest
+                            // block
                             sprite.deleteSprite();
                             ble_uart_enable();
                             if (ble_uart_last_err() != 0) {
@@ -2270,8 +2298,10 @@ class SettingMenu {
                                 sprite.fillRect(0, 0, 128, 64, 0);
                                 sprite.setFont(&fonts::Font2);
                                 sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                                sprite.drawCenterString("BLE Init Failed", 64, 22);
-                                sprite.drawCenterString("Check memory/CFG", 64, 40);
+                                sprite.drawCenterString("BLE Init Failed", 64,
+                                                        22);
+                                sprite.drawCenterString("Check memory/CFG", 64,
+                                                        40);
                                 sprite.pushSprite(&lcd, 0, 0);
                                 vTaskDelay(1200 / portTICK_PERIOD_MS);
                                 mqtt_rt_resume();
@@ -2296,33 +2326,60 @@ class SettingMenu {
                     vTaskDelay(50 / portTICK_PERIOD_MS);
                 }
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "Develop") {
-                // Toggle develop mode ON/OFF
-                std::string dev = get_nvs((char*)"develop_mode");
-                bool on = (dev == "true");
+                       settings[select_index].setting_name == "Auto Update") {
+                // Toggle auto OTA ON/OFF
+                std::string au = get_nvs((char *)"ota_auto");
+                bool on = (au == "true");
                 on = !on;
-                save_nvs((char*)"develop_mode", on?std::string("true"):std::string("false"));
-                if (on) {
-                    save_nvs((char*)"server_scheme", std::string("http"));
-                    save_nvs((char*)"server_host",   std::string("192.168.2.184"));
-                    save_nvs((char*)"server_port",   std::string("8080"));
-                    save_nvs((char*)"mqtt_host",     std::string("192.168.2.184"));
-                    save_nvs((char*)"mqtt_port",     std::string("1883"));
-                } else {
-                    save_nvs((char*)"server_scheme", std::string("https"));
-                    save_nvs((char*)"server_host",   std::string("mimoc.jp"));
-                    save_nvs((char*)"server_port",   std::string("443"));
-                    save_nvs((char*)"mqtt_host",     std::string("mimoc.jp"));
-                    save_nvs((char*)"mqtt_port",     std::string("1883"));
-                }
-                // Feedback screen
-                sprite.fillRect(0,0,128,64,0);
+                save_nvs((char *)"ota_auto",
+                         on ? std::string("true") : std::string("false"));
+                // Feedback
+                sprite.fillRect(0, 0, 128, 64, 0);
                 sprite.setFont(&fonts::Font2);
                 sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                sprite.drawCenterString(on?"Develop: ON":"Develop: OFF", 64, 22);
-                sprite.drawCenterString(on?"http://192.168.2.184":"https://mimoc.jp", 64, 40);
+                sprite.drawCenterString(
+                    on ? "Auto Update: ON" : "Auto Update: OFF", 64, 22);
                 sprite.pushSprite(&lcd, 0, 0);
-                vTaskDelay(1200/portTICK_PERIOD_MS);
+                vTaskDelay(800 / portTICK_PERIOD_MS);
+                // Start/stop background task accordingly (best-effort)
+                if (on) {
+                    ota_client::start_background_task();
+                }
+                type_button.clear_button_state();
+                type_button.reset_timer();
+                joystick.reset_timer();
+            } else if (type_button_state.pushed &&
+                       settings[select_index].setting_name == "Develop") {
+                // Toggle develop mode ON/OFF
+                std::string dev = get_nvs((char *)"develop_mode");
+                bool on = (dev == "true");
+                on = !on;
+                save_nvs((char *)"develop_mode",
+                         on ? std::string("true") : std::string("false"));
+                if (on) {
+                    save_nvs((char *)"server_scheme", std::string("http"));
+                    save_nvs((char *)"server_host",
+                             std::string("192.168.2.184"));
+                    save_nvs((char *)"server_port", std::string("8080"));
+                    save_nvs((char *)"mqtt_host", std::string("192.168.2.184"));
+                    save_nvs((char *)"mqtt_port", std::string("1883"));
+                } else {
+                    save_nvs((char *)"server_scheme", std::string("https"));
+                    save_nvs((char *)"server_host", std::string("mimoc.jp"));
+                    save_nvs((char *)"server_port", std::string("443"));
+                    save_nvs((char *)"mqtt_host", std::string("mimoc.jp"));
+                    save_nvs((char *)"mqtt_port", std::string("1883"));
+                }
+                // Feedback screen
+                sprite.fillRect(0, 0, 128, 64, 0);
+                sprite.setFont(&fonts::Font2);
+                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                sprite.drawCenterString(on ? "Develop: ON" : "Develop: OFF", 64,
+                                        22);
+                sprite.drawCenterString(
+                    on ? "http://192.168.2.184" : "https://mimoc.jp", 64, 40);
+                sprite.pushSprite(&lcd, 0, 0);
+                vTaskDelay(1200 / portTICK_PERIOD_MS);
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 joystick.reset_timer();

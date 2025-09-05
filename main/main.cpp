@@ -58,7 +58,8 @@ static const char *TAG = "Mobus v3.14";
 // #include <notification.hpp>
 
 // #include <provisioning.h>
-#include <ota.hpp>
+// OTA client (auto update)
+#include "ota_client.hpp"
 
 extern "C" {
 void app_main();
@@ -194,6 +195,13 @@ void app_main(void) {
         profile_setting.profile_setting_task();
     }
 
+    // Start OTA auto-update background if enabled
+    {
+        std::string auto_flag = get_nvs((char*)"ota_auto");
+        if (auto_flag == "true") {
+            ota_client::start_background_task();
+        }
+    }
     // TODO:menuから各機能の画面に遷移するように実装する
     save_nvs("notif_flag", "false");
     menu.start_menu_task();
