@@ -30,7 +30,7 @@
 #include "esp_http_client.h"
 
 #include "chat_api.hpp"
-#include "mqtt_client.hpp"
+#include "mqtt_runtime.h"
 
 #define MAX_HTTP_RECV_BUFFER 512
 #define MAX_HTTP_OUTPUT_BUFFER 2048
@@ -225,10 +225,9 @@ void http_get_message_task(void *pvParameters) {
 
 static JsonDocument notif_res;
 int notif_res_flag = 0;
-static chatmqtt::MQTTClient g_mqtt;  // single instance
 
 void http_get_notifications_task(void *pvParameters) {
-    // Initialize MQTT and subscribe to user topic
+    // Initialize MQTT and subscribe to user topic (via runtime)
     chatapi::ChatApiClient api(HTTP_ENDPOINT, 8080);
     std::string username = get_nvs("user_name");
     std::string password = get_nvs("password");
@@ -241,7 +240,8 @@ void http_get_notifications_task(void *pvParameters) {
     std::string mqtt_port_str = get_nvs((char*)"mqtt_port");
     int mqtt_port = 1883;
     if (!mqtt_port_str.empty()) { int p = atoi(mqtt_port_str.c_str()); if (p>0) mqtt_port = p; }
-    if (g_mqtt.start(mqtt_host, mqtt_port) != ESP_OK) {
+    mqtt_rt_configure(mqtt_host.c_str(), mqtt_port, api.user_id().c_str());
+    if (mqtt_rt_start() != 0) {
         ESP_LOGE(TAG, "MQTT connect failed");
         vTaskDelete(NULL);
         return;
@@ -251,17 +251,17 @@ void http_get_notifications_task(void *pvParameters) {
         vTaskDelete(NULL);
         return;
     }
-    g_mqtt.subscribe_user(api.user_id());
+    mqtt_rt_update_user(api.user_id().c_str());
 
     // Pump incoming messages into legacy notif_res format
     while (1) {
-        std::string msg;
-        if (g_mqtt.pop_message(msg)) {
+        char buf[1024];
+        if (mqtt_rt_pop_message(buf, sizeof(buf))) {
             StaticJsonDocument<1024> out;
             auto arr = out.createNestedArray("notifications");
             JsonObject o = arr.createNestedObject();
             o["notification_flag"] = "true";
-            o["raw"] = msg.c_str();
+            o["raw"] = buf;
 
             std::string outBuf;
             serializeJson(out, outBuf);

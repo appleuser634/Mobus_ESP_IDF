@@ -79,6 +79,7 @@ static LGFX_Sprite sprite(
 
 #include "mopping.h"
 #include <chat_api.hpp>
+#include <mqtt_runtime.h>
 #include <ble_uart.hpp>
 
 // UTF-8 の1文字の先頭バイト数を調べる（UTF-8のみ対応）
@@ -2162,22 +2163,23 @@ class SettingMenu {
                     return std::string(buf);
                 };
 
-                // Initialize state
+                // Initialize state (read once; avoid frequent NVS I/O)
                 bool pairing = (nvs_str("ble_pair") == std::string("true"));
                 long long now_us = esp_timer_get_time();
                 long long exp_us = 0;
+                std::string code = "";
                 {
                     std::string s = nvs_str("ble_exp_us");
-                    if (!s.empty()) {
-                        exp_us = std::atoll(s.c_str());
-                    }
+                    if (!s.empty()) exp_us = std::atoll(s.c_str());
+                    code = nvs_str("ble_code");
                 }
                 if (pairing && exp_us <= now_us) {
                     pairing = false;
                     nvs_put("ble_pair", "false");
                 }
-                if (pairing && nvs_str("ble_code").empty()) {
-                    nvs_put("ble_code", gen_code());
+                if (pairing && code.empty()) {
+                    code = gen_code();
+                    nvs_put("ble_code", code);
                 }
                 if (pairing) {
                     // Ensure BLE is advertising if pairing already ON
@@ -2191,19 +2193,14 @@ class SettingMenu {
                     Button::button_state_t bbs = back_button.get_button_state();
                     Button::button_state_t ebs = enter_button.get_button_state();
 
-                    // Refresh state/time
+                    // Refresh time only (avoid reading from NVS in loop)
                     now_us = esp_timer_get_time();
-                    std::string code = nvs_str("ble_code");
-                    exp_us = 0;
-                    {
-                        std::string s = nvs_str("ble_exp_us");
-                        if (!s.empty()) exp_us = std::atoll(s.c_str());
-                    }
                     long long remain_s = pairing ? (exp_us - now_us) / 1000000LL : 0;
                     if (pairing && remain_s <= 0) {
                         pairing = false;
                         nvs_put("ble_pair", "false");
                         ble_uart_disable();
+                        mqtt_rt_resume();
                     }
 
                     // Draw screen
@@ -2246,17 +2243,30 @@ class SettingMenu {
                     if (tbs.pushed || ebs.pushed) {
                         if (!pairing) {
                             // Turn on pairing, generate code and 120s window
-                            std::string new_code = gen_code();
-                            nvs_put("ble_code", new_code);
+                            code = gen_code();
+                            nvs_put("ble_code", code);
                             long long until = esp_timer_get_time() + 120LL * 1000000LL;
+                            exp_us = until;
                             nvs_put("ble_exp_us", std::to_string(until));
                             nvs_put("ble_pair", "true");
                             pairing = true;
+                            // Show enabling message, then free sprite to save RAM
+                            sprite.fillRect(0, 0, 128, 64, 0);
+                            sprite.setFont(&fonts::Font2);
+                            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                            sprite.drawCenterString("Enabling BLE...", 64, 26);
+                            sprite.pushSprite(&lcd, 0, 0);
+                            // Pause MQTT to free memory before BLE init
+                            mqtt_rt_pause();
+                            // Free sprite buffer (~8KB) to increase largest block
+                            sprite.deleteSprite();
                             ble_uart_enable();
                             if (ble_uart_last_err() != 0) {
                                 // BLE init failed; roll back and show message
                                 pairing = false;
                                 nvs_put("ble_pair", "false");
+                                // Recreate sprite to render error
+                                sprite.createSprite(lcd.width(), lcd.height());
                                 sprite.fillRect(0, 0, 128, 64, 0);
                                 sprite.setFont(&fonts::Font2);
                                 sprite.setTextColor(0xFFFFFFu, 0x000000u);
@@ -2264,13 +2274,17 @@ class SettingMenu {
                                 sprite.drawCenterString("Check memory/CFG", 64, 40);
                                 sprite.pushSprite(&lcd, 0, 0);
                                 vTaskDelay(1200 / portTICK_PERIOD_MS);
+                                mqtt_rt_resume();
                                 break;
                             }
+                            // Success: recreate sprite for UI rendering
+                            sprite.createSprite(lcd.width(), lcd.height());
                         } else {
                             // If already on, toggle off
                             nvs_put("ble_pair", "false");
                             pairing = false;
                             ble_uart_disable();
+                            mqtt_rt_resume();
                         }
                         type_button.clear_button_state();
                         type_button.reset_timer();
