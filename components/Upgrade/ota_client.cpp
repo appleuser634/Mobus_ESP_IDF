@@ -6,8 +6,15 @@
 #include "esp_app_desc.h"
 #include "esp_http_client.h"
 #include "esp_https_ota.h"
+#if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
+extern "C" esp_err_t esp_crt_bundle_attach(void *conf);
+#define HAVE_CRT_BUNDLE 1
+#else
+#define HAVE_CRT_BUNDLE 0
+#endif
 #include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -49,7 +56,15 @@ std::string nvs_get(const char* key) {
 esp_err_t http_get(const std::string& url, std::string& out) {
     esp_http_client_config_t cfg = {};
     cfg.url = url.c_str();
-    cfg.cert_pem = (const char*)ca_cert_pem_start;
+    // Use TLS only for HTTPS endpoints
+    bool is_https = url.rfind("https://", 0) == 0;
+#if HAVE_CRT_BUNDLE
+    if (is_https) cfg.crt_bundle_attach = esp_crt_bundle_attach; else cfg.crt_bundle_attach = nullptr;
+    cfg.cert_pem = nullptr;
+#else
+    cfg.cert_pem = is_https ? (const char*)ca_cert_pem_start : nullptr;
+#endif
+    cfg.timeout_ms = 5000;
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
     if (!c) return ESP_FAIL;
     esp_err_t err = esp_http_client_open(c, 0);
@@ -73,13 +88,37 @@ bool version_is_newer(const std::string& current, const std::string& latest) {
     return current != latest && !latest.empty();
 }
 
-esp_err_t do_ota(const std::string& bin_url) {
+static std::string rewrite_dev_url_http(const std::string& url) {
+    // Force HTTP for common local dev patterns (port 3000 or dev IP/localhost)
+    auto starts_with = [](const std::string& s, const char* p){ return s.rfind(p, 0) == 0; };
+    if (url.find(":3000/") != std::string::npos ||
+        url.find("192.168.2.184") != std::string::npos ||
+        url.find("localhost") != std::string::npos ||
+        url.find("127.0.0.1") != std::string::npos) {
+        if (starts_with(url, "https://")) {
+            std::string u = url; u.replace(0, 8, "http://"); return u;
+        }
+    }
+    return url;
+}
+
+esp_err_t do_ota(const std::string& bin_url_in) {
+    std::string bin_url = rewrite_dev_url_http(bin_url_in);
     esp_http_client_config_t hc = {};
     hc.url = bin_url.c_str();
     // Use CA cert only for HTTPS
     bool is_https = bin_url.rfind("https://", 0) == 0;
+#if HAVE_CRT_BUNDLE
+    if (is_https) hc.crt_bundle_attach = esp_crt_bundle_attach; else hc.crt_bundle_attach = nullptr;
+    hc.cert_pem = nullptr;
+#else
     hc.cert_pem = is_https ? (const char*)ca_cert_pem_start : nullptr;
-    esp_https_ota_config_t ocfg = { .http_config = &hc };
+#endif
+    esp_https_ota_config_t ocfg = { };
+    ocfg.http_config = &hc;
+    ocfg.partial_http_download = true;
+    ocfg.max_http_request_size = 4096;
+    ocfg.buffer_caps = MALLOC_CAP_SPIRAM;
     ESP_LOGI(TAG_OTA, "OTA from %s", bin_url.c_str());
     auto err = esp_https_ota(&ocfg);
     if (err == ESP_OK) {
@@ -87,6 +126,29 @@ esp_err_t do_ota(const std::string& bin_url) {
         esp_restart();
     } else {
         ESP_LOGE(TAG_OTA, "OTA failed: %s", esp_err_to_name(err));
+        // Fallback: if first try was HTTPS on dev URL, retry as HTTP
+        if (is_https) {
+            std::string alt = rewrite_dev_url_http(bin_url);
+            if (alt != bin_url) {
+                ESP_LOGW(TAG_OTA, "Retry OTA via HTTP: %s", alt.c_str());
+                esp_http_client_config_t hc2 = {};
+                hc2.url = alt.c_str();
+                // no bundle for HTTP
+                hc2.cert_pem = nullptr;
+                esp_https_ota_config_t ocfg2 = {};
+                ocfg2.http_config = &hc2;
+                ocfg2.partial_http_download = true;
+                ocfg2.max_http_request_size = 4096;
+                ocfg2.buffer_caps = MALLOC_CAP_SPIRAM;
+                err = esp_https_ota(&ocfg2);
+                if (err == ESP_OK) {
+                    ESP_LOGI(TAG_OTA, "OTA succeed (fallback), rebooting");
+                    esp_restart();
+                } else {
+                    ESP_LOGE(TAG_OTA, "Fallback OTA failed: %s", esp_err_to_name(err));
+                }
+            }
+        }
     }
     return err;
 }
@@ -99,9 +161,10 @@ esp_err_t check_and_update_once() {
     std::string current = app ? std::string(app->version) : std::string("0.0.0");
     std::string manifest = nvs_get("ota_manifest");
     if (manifest.empty()) {
-        // Default to specified OTA server IP
-        manifest = "http://192.168.2.184:3000/api/firmware/latest?device=esp32s3&channel=stable";
+        // Default to production OTA server
+        manifest = "https://mimoc.jp/api/firmware/latest?device=esp32s3&channel=stable";
     }
+    manifest = rewrite_dev_url_http(manifest);
     // Append current version as hint
     std::string url = manifest + std::string("&current=") + current;
     std::string body;

@@ -64,7 +64,7 @@ void nvs_main(void) {
     ESP_ERROR_CHECK(err);
 
     // Open NVS handle
-    ESP_LOGI(TAG, "\nOpening Non-Volatile Storage (NVS) handle...");
+    // reduce logs
     nvs_handle_t my_handle;
     err = nvs_open("storage", NVS_READWRITE, &my_handle);
     if (err != ESP_OK) {
@@ -74,7 +74,7 @@ void nvs_main(void) {
 
     // Store and read an integer value
     int32_t counter = 42;
-    ESP_LOGI(TAG, "\nWriting counter to NVS...");
+    // reduce logs
     err = nvs_set_i32(my_handle, "counter", counter);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to write counter!");
@@ -82,7 +82,7 @@ void nvs_main(void) {
 
     // Read back the value
     int32_t read_counter = 0;
-    ESP_LOGI(TAG, "\nReading counter from NVS...");
+    // reduce logs
     err = nvs_get_i32(my_handle, "counter", &read_counter);
     switch (err) {
         case ESP_OK:
@@ -96,7 +96,7 @@ void nvs_main(void) {
     }
 
     // Store and read a string
-    ESP_LOGI(TAG, "\nWriting string to NVS...");
+    // reduce logs
     err = nvs_set_str(my_handle, "message", "Hello from NVS!");
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to write string!");
@@ -104,7 +104,7 @@ void nvs_main(void) {
 
     // Read back the string
     size_t required_size = 0;
-    ESP_LOGI(TAG, "\nReading string from NVS...");
+    // reduce logs
     err = nvs_get_str(my_handle, "message", NULL, &required_size);
     if (err == ESP_OK) {
         char *message = (char *)malloc(required_size);
@@ -116,7 +116,7 @@ void nvs_main(void) {
     }
 
     // Find keys in NVS
-    ESP_LOGI(TAG, "\nFinding keys in NVS...");
+    // reduce logs
     nvs_iterator_t it = NULL;
     esp_err_t res = nvs_entry_find("nvs", "storage", NVS_TYPE_ANY, &it);
     while (res == ESP_OK) {
@@ -129,7 +129,7 @@ void nvs_main(void) {
     nvs_release_iterator(it);
 
     // Delete a key from NVS
-    ESP_LOGI(TAG, "\nDeleting key from NVS...");
+    // reduce logs
     err = nvs_erase_key(my_handle, "counter");
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to erase key!");
@@ -139,7 +139,7 @@ void nvs_main(void) {
     // After setting any values, nvs_commit() must be called to ensure changes
     // are written to flash storage. Implementations may write to storage at
     // other times, but this is not guaranteed.
-    ESP_LOGI(TAG, "\nCommitting updates in NVS...");
+    // reduce logs
     err = nvs_commit(my_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to commit NVS changes!");
@@ -147,9 +147,9 @@ void nvs_main(void) {
 
     // Close
     nvs_close(my_handle);
-    ESP_LOGI(TAG, "NVS handle closed.");
+    // reduce logs
 
-    ESP_LOGI(TAG, "Returned to app_main");
+    // reduce logs
 }
 
 void save_nvs(char *key, std::string record) {
@@ -165,7 +165,7 @@ void save_nvs(char *key, std::string record) {
     ESP_ERROR_CHECK(err);
 
     // Open NVS handle
-    ESP_LOGI(TAG, "\nOpening Non-Volatile Storage (NVS) handle...");
+    // reduce logs
     nvs_handle_t my_handle;
     err = nvs_open("storage", NVS_READWRITE, &my_handle);
     if (err != ESP_OK) {
@@ -187,9 +187,9 @@ void save_nvs(char *key, std::string record) {
     }
     // Close
     nvs_close(my_handle);
-    ESP_LOGI(TAG, "NVS handle closed.");
+    // reduce logs
 
-    ESP_LOGI(TAG, "Returned to app_main");
+    // reduce logs
 }
 
 std::string get_nvs(char *key) {
@@ -205,7 +205,7 @@ std::string get_nvs(char *key) {
     ESP_ERROR_CHECK(err);
 
     // Open NVS handle
-    ESP_LOGI(TAG, "\nOpening Non-Volatile Storage (NVS) handle...");
+    // reduce logs
     nvs_handle_t my_handle;
     err = nvs_open("storage", NVS_READWRITE, &my_handle);
     if (err != ESP_OK) {
@@ -216,7 +216,11 @@ std::string get_nvs(char *key) {
     // Read string back
     size_t required_size = 0;
     err = nvs_get_str(my_handle, key, nullptr, &required_size);
-    if (err != ESP_OK) {
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        // Key not found is not an error; return empty string
+        nvs_close(my_handle);
+        return std::string("");
+    } else if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to get string size: %s", esp_err_to_name(err));
         nvs_close(my_handle);
         return "";
@@ -238,6 +242,6 @@ std::string get_nvs(char *key) {
         result.pop_back();
     }
 
-    ESP_LOGI(TAG, "Successfully read string: %s", result.c_str());
+    // reduce logs
     return result;
 }

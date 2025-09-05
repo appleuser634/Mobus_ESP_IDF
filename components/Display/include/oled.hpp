@@ -2067,9 +2067,11 @@ class SettingMenu {
         } setting_t;
 
         // Add Bluetooth pairing item to settings
-        setting_t settings[8] = {{"Profile"}, {"Wi-Fi"},        {"Bluetooth"},
-                                 {"Sound"},   {"Notif"},        {"Auto Update"},
-                                 {"Develop"}, {"Factory Reset"}};
+        setting_t settings[10] = {
+            {"Profile"},      {"Wi-Fi"},   {"Bluetooth"},   {"Sound"},
+            {"Notif"},        {"Auto Update"},               {"OTA Manifest"},
+            {"Update Now"},   {"Develop"}, {"Factory Reset"}
+        };
 
         int select_index = 0;
         int font_height = 13;
@@ -2124,6 +2126,16 @@ class SettingMenu {
                     std::string label =
                         settings[i].setting_name + (on ? " [ON]" : " [OFF]");
                     sprite.print(label.c_str());
+                } else if (settings[i].setting_name == "OTA Manifest") {
+                    // show current (or default) manifest URL
+                    std::string mf = get_nvs((char *)"ota_manifest");
+                    if (mf.empty()) {
+                        mf = "https://mimoc.jp/api/firmware/latest?device=esp32s3&channel=stable";
+                    }
+                    std::string label = "OTA Manifest";
+                    sprite.print(label.c_str());
+                } else if (settings[i].setting_name == "Update Now") {
+                    sprite.print("Update Now");
                 } else {
                     sprite.print(settings[i].setting_name.c_str());
                 }
@@ -2325,6 +2337,71 @@ class SettingMenu {
 
                     vTaskDelay(50 / portTICK_PERIOD_MS);
                 }
+            } else if (type_button_state.pushed &&
+                       settings[select_index].setting_name == "OTA Manifest") {
+                // Show current manifest URL in a simple modal
+                std::string mf = get_nvs((char *)"ota_manifest");
+                if (mf.empty()) {
+                    mf = "https://mimoc.jp/api/firmware/latest?device=esp32s3&channel=stable";
+                }
+                // Simple wrap: break into chunks that fit the screen width
+                const int max_chars = 21;
+                std::vector<std::string> lines;
+                for (size_t p = 0; p < mf.size(); p += max_chars) {
+                    lines.emplace_back(mf.substr(p, max_chars));
+                    if (lines.size() >= 3) break; // fit on 64px height
+                }
+                // Clear the triggering button state to avoid instant exit
+                type_button.clear_button_state();
+                type_button.reset_timer();
+                back_button.clear_button_state();
+                back_button.reset_timer();
+                while (1) {
+                    Joystick::joystick_state_t js = joystick.get_joystick_state();
+                    Button::button_state_t tb = type_button.get_button_state();
+                    Button::button_state_t bb = back_button.get_button_state();
+                    sprite.fillRect(0, 0, 128, 64, 0);
+                    sprite.setFont(&fonts::Font2);
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                    sprite.drawCenterString("OTA Manifest", 64, 4);
+                    int y = 22;
+                    for (auto &l : lines) {
+                        sprite.drawCenterString(l.c_str(), 64, y);
+                        y += 14;
+                    }
+                    sprite.pushSprite(&lcd, 0, 0);
+                    if (bb.pushed || js.left || tb.pushed) {
+                        break;
+                    }
+                    vTaskDelay(50 / portTICK_PERIOD_MS);
+                }
+                type_button.clear_button_state();
+                type_button.reset_timer();
+                joystick.reset_timer();
+            } else if (type_button_state.pushed &&
+                       settings[select_index].setting_name == "Update Now") {
+                // Manual OTA check and update
+                // Pause MQTT to free resources during TLS/OTA
+                mqtt_rt_pause();
+                sprite.fillRect(0, 0, 128, 64, 0);
+                sprite.setFont(&fonts::Font2);
+                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                sprite.drawCenterString("Checking update...", 64, 26);
+                sprite.pushSprite(&lcd, 0, 0);
+                esp_err_t r = ota_client::check_and_update_once();
+                // If update was available, device will reboot inside OTA
+                sprite.fillRect(0, 0, 128, 64, 0);
+                if (r == ESP_OK) {
+                    sprite.drawCenterString("Up-to-date", 64, 26);
+                } else {
+                    sprite.drawCenterString("Update failed", 64, 26);
+                }
+                sprite.pushSprite(&lcd, 0, 0);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                mqtt_rt_resume();
+                type_button.clear_button_state();
+                type_button.reset_timer();
+                joystick.reset_timer();
             } else if (type_button_state.pushed &&
                        settings[select_index].setting_name == "Auto Update") {
                 // Toggle auto OTA ON/OFF

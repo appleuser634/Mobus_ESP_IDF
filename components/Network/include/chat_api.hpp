@@ -79,14 +79,16 @@ class ChatApiClient {
         std::string h = nvs_get_string("server_host");
         std::string p = nvs_get_string("server_port");
         std::string sch = nvs_get_string("server_scheme");
-        if (!sch.empty()) scheme_ = sch; // "https" or "http"
         if (!h.empty()) host_ = h;
         if (!p.empty()) {
             int v = atoi(p.c_str());
             if (v > 0) port_ = v;
+        }
+        if (!sch.empty()) {
+            scheme_ = sch; // "https" or "http"
         } else {
-            // Default port when not specified
-            port_ = (scheme_ == "https") ? 443 : 8080;
+            // Infer scheme from port if not specified
+            scheme_ = (port_ == 443) ? std::string("https") : std::string("http");
         }
         token_ = nvs_get_string("jwt_token");
         user_id_ = nvs_get_string("user_id");
@@ -305,7 +307,7 @@ class ChatApiClient {
     int port_ = 8080;
     std::string token_;
     std::string user_id_;
-    std::string scheme_ = "https";
+    std::string scheme_ = "http";
 
     static esp_err_t _handle_events(esp_http_client_event_t* evt) {
         // No-op, but could log per-event
@@ -322,6 +324,7 @@ class ChatApiClient {
         cfg.path = path;
         cfg.event_handler = _handle_events; // no-op
         cfg.transport_type = (scheme_ == "https") ? HTTP_TRANSPORT_OVER_SSL : HTTP_TRANSPORT_OVER_TCP;
+        cfg.timeout_ms = 5000;
 #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
         if (scheme_ == "https") cfg.crt_bundle_attach = esp_crt_bundle_attach;
 #else
@@ -395,6 +398,7 @@ class ChatApiClient {
         cfg.path = path;
         cfg.event_handler = _handle_events;
         cfg.transport_type = (scheme_ == "https") ? HTTP_TRANSPORT_OVER_SSL : HTTP_TRANSPORT_OVER_TCP;
+        cfg.timeout_ms = 5000;
 #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
         if (scheme_ == "https") cfg.crt_bundle_attach = esp_crt_bundle_attach;
 #else
