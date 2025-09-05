@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <iterator>
 #include <string>
+#include <cstdlib>
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
@@ -78,6 +79,7 @@ static LGFX_Sprite sprite(
 
 #include "mopping.h"
 #include <chat_api.hpp>
+#include <ble_uart.hpp>
 
 // UTF-8 の1文字の先頭バイト数を調べる（UTF-8のみ対応）
 int utf8_char_length(unsigned char ch) {
@@ -266,6 +268,24 @@ class TalkDisplay {
                 std::string chat_to_data[] = {chat_to, message_text};
                 // std::string chat_to_data = message_text;
                 http_client.post_message(chat_to_data);
+                // Also relay via BLE to phone app if connected
+                if (ble_uart_is_ready()) {
+                    auto esc = [](const std::string& s) {
+                        std::string o; o.reserve(s.size()+8);
+                        for (char c : s) {
+                            if (c=='\\' || c=='"') { o.push_back('\\'); o.push_back(c); }
+                            else if (c=='\n') { o += "\\n"; }
+                            else if (c=='\r') { /* skip */ }
+                            else { o.push_back(c); }
+                        }
+                        return o;
+                    };
+                    long long rid = esp_timer_get_time();
+                    std::string json = std::string("{ \"id\":\"") + std::to_string(rid) +
+                        "\", \"type\": \"send_message\", \"payload\": { \"receiver_id\": \"" + esc(chat_to) +
+                        "\", \"content\": \"" + esc(message_text) + "\" } }\n";
+                    ble_uart_send(reinterpret_cast<const uint8_t*>(json.c_str()), json.size());
+                }
                 message_text = "";
                 pos = 0;
                 input_switch_pos = 0;
@@ -2031,8 +2051,10 @@ class SettingMenu {
             std::string setting_name;
         } setting_t;
 
-        setting_t settings[6] = {
-            {"Profile"}, {"Wi-Fi"}, {"Sound"}, {"Notif"}, {"Develop"}, {"Factory Reset"}};
+        // Add Bluetooth pairing item to settings
+        setting_t settings[7] = {
+            {"Profile"}, {"Wi-Fi"}, {"Bluetooth"}, {"Sound"},
+            {"Notif"}, {"Develop"}, {"Factory Reset"}};
 
         int select_index = 0;
         int font_height = 13;
@@ -2115,6 +2137,137 @@ class SettingMenu {
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 joystick.reset_timer();
+            } else if (type_button_state.pushed &&
+                       settings[select_index].setting_name == "Bluetooth") {
+                // Simple Bluetooth pairing UI (UI only, no BLE stack)
+                type_button.clear_button_state();
+                joystick.reset_timer();
+
+                // Local state backed by NVS
+                auto nvs_str = [](const char* key) {
+                    return get_nvs((char*)key);
+                };
+                auto nvs_put = [](const char* key, const std::string& v) {
+                    save_nvs((char*)key, v);
+                };
+
+                // Helper to generate 6-digit code
+                auto gen_code = []() -> std::string {
+                    uint32_t r = (uint32_t)esp_timer_get_time();
+                    // Very simple PRNG from timer; adequate for UI pairing hint
+                    r = (1103515245u * r + 12345u);
+                    uint32_t n = (r % 900000u) + 100000u; // 100000-999999
+                    char buf[8];
+                    snprintf(buf, sizeof(buf), "%06u", (unsigned)n);
+                    return std::string(buf);
+                };
+
+                // Initialize state
+                bool pairing = (nvs_str("ble_pairing") == std::string("true"));
+                long long now_us = esp_timer_get_time();
+                long long exp_us = 0;
+                {
+                    std::string s = nvs_str("ble_pair_expires_us");
+                    if (!s.empty()) {
+                        exp_us = std::atoll(s.c_str());
+                    }
+                }
+                if (pairing && exp_us <= now_us) {
+                    pairing = false;
+                    nvs_put("ble_pairing", "false");
+                }
+                if (pairing && nvs_str("ble_pair_code").empty()) {
+                    nvs_put("ble_pair_code", gen_code());
+                }
+                if (pairing) {
+                    // Ensure BLE is advertising if pairing already ON
+                    ble_uart_enable();
+                }
+
+                int sel = 0; // 0: Toggle, 1: Refresh Code
+                while (1) {
+                    Joystick::joystick_state_t jst = joystick.get_joystick_state();
+                    Button::button_state_t tbs = type_button.get_button_state();
+                    Button::button_state_t bbs = back_button.get_button_state();
+                    Button::button_state_t ebs = enter_button.get_button_state();
+
+                    // Refresh state/time
+                    now_us = esp_timer_get_time();
+                    std::string code = nvs_str("ble_pair_code");
+                    exp_us = 0;
+                    {
+                        std::string s = nvs_str("ble_pair_expires_us");
+                        if (!s.empty()) exp_us = std::atoll(s.c_str());
+                    }
+                    long long remain_s = pairing ? (exp_us - now_us) / 1000000LL : 0;
+                    if (pairing && remain_s <= 0) {
+                        pairing = false;
+                        nvs_put("ble_pairing", "false");
+                        ble_uart_disable();
+                    }
+
+                    // Draw screen
+                    sprite.fillRect(0, 0, 128, 64, 0);
+                    sprite.setFont(&fonts::Font2);
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                    sprite.drawCenterString("Bluetooth Pairing", 64, 4);
+
+                    // Status line
+                    char status[32];
+                    snprintf(status, sizeof(status), "Status: %s", pairing?"ON":"OFF");
+                    sprite.setCursor(6, 22);
+                    sprite.print(status);
+
+                    // Code + remain
+                    if (pairing && !code.empty()) {
+                        sprite.setCursor(6, 36);
+                        sprite.print("Code: ");
+                        sprite.print(code.c_str());
+                        sprite.setCursor(6, 50);
+                        char ttl[32];
+                        snprintf(ttl, sizeof(ttl), "Expires: %llds", remain_s);
+                        sprite.print(ttl);
+                    } else {
+                        sprite.setCursor(6, 36);
+                        sprite.print("Press to start pairing");
+                    }
+
+                    // Hint about same account login
+                    // (kept brief due to screen size)
+                    // Example: "Login same account on phone"
+                    sprite.pushSprite(&lcd, 0, 0);
+
+                    // Input handling
+                    if (bbs.pushed || jst.left) {
+                        break; // exit Bluetooth menu
+                    }
+                    if (jst.pushed_left_edge) sel = 0;
+                    if (jst.pushed_right_edge) sel = 1;
+                    if (tbs.pushed || ebs.pushed) {
+                        if (!pairing) {
+                            // Turn on pairing, generate code and 120s window
+                            std::string new_code = gen_code();
+                            nvs_put("ble_pair_code", new_code);
+                            long long until = esp_timer_get_time() + 120LL * 1000000LL;
+                            nvs_put("ble_pair_expires_us", std::to_string(until));
+                            nvs_put("ble_pairing", "true");
+                            pairing = true;
+                            ble_uart_enable();
+                        } else {
+                            // If already on, toggle off
+                            nvs_put("ble_pairing", "false");
+                            pairing = false;
+                            ble_uart_disable();
+                        }
+                        type_button.clear_button_state();
+                        type_button.reset_timer();
+                        enter_button.clear_button_state();
+                        enter_button.reset_timer();
+                        joystick.reset_timer();
+                    }
+
+                    vTaskDelay(50 / portTICK_PERIOD_MS);
+                }
             } else if (type_button_state.pushed &&
                        settings[select_index].setting_name == "Develop") {
                 // Toggle develop mode ON/OFF

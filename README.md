@@ -18,3 +18,18 @@ You can override via NVS keys:
 - `user_name` and optional `password` (defaults to `password123` for development)
 
 Existing `HttpClient` uses the new API internally for send/get and maps results to existing UI expectations.
+
+### Bluetooth Pairing (UI)
+- Settings now include a `Bluetooth` item that shows a simple pairing screen.
+- Press the action button to start pairing; a 6‑digit code is displayed for 120 seconds. Press again to stop.
+- BLE UART-like service is implemented with UUIDs in `web_server/BLUETOOTH_RELAY_SPEC.md`.
+- The phone application MUST log in with the same account as this device. Use the same username/password you configured on the ESP32. See `web_server/BLUETOOTH_RELAY_SPEC.md` for the BLE relay protocol.
+
+NVS keys used:
+- `ble_pairing` = `"true"|"false"`
+- `ble_pair_code` = 6‑digit string
+- `ble_pair_expires_us` = expiration timestamp in microseconds since boot
+
+Build note:
+- Enable Bluetooth in menuconfig: `Component config -> Bluetooth -> Bluedroid Enable` and `BLE`.
+- If disabled, BLE functions are no-op and only the UI is shown.
