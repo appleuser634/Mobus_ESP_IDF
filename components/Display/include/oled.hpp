@@ -650,7 +650,8 @@ class MessageBox {
         sprite.setColorDepth(8);
         sprite.setFont(&fonts::Font2);
         sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
-        sprite.createSprite(lcd.width(), lcd.height() * 2.5);
+        // 安定描画のため画面サイズのスプライトに統一
+        sprite.createSprite(lcd.width(), lcd.height());
 
         HttpClient http_client;
 
@@ -918,16 +919,21 @@ class ContactBook {
             sprite.setFont(&fonts::Font2);
 
             int base_count = (int)contacts.size();
-            int last_index =
-                base_count + 1;  // +1: Add Friend, +1: Pending Requests
+            int last_index = base_count + 1;  // +1: Add Friend, +1: Pending Requests
 
-            for (int i = 0; i <= last_index; i++) {
-                sprite.setCursor(10, (font_height + margin) * i);
+            int page = select_index / CONTACT_PER_PAGE;
+            int start = page * CONTACT_PER_PAGE;
+            int end = start + CONTACT_PER_PAGE - 1;
+            if (end > last_index) end = last_index;
+
+            for (int i = start; i <= end; i++) {
+                int row = i - start;
+                int y = (font_height + margin) * row;
+                sprite.setCursor(10, y);
 
                 if (i == select_index) {
                     sprite.setTextColor(0x000000u, 0xFFFFFFu);
-                    sprite.fillRect(0, (font_height + margin) * select_index,
-                                    128, font_height + 3, 0xFFFF);
+                    sprite.fillRect(0, y, 128, font_height + 3, 0xFFFF);
                 } else {
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 }
@@ -952,8 +958,7 @@ class ContactBook {
                 select_index = last_index;
             }
 
-            sprite.pushSprite(&lcd, 0,
-                              (int)(select_index / CONTACT_PER_PAGE) * -64);
+            sprite.pushSprite(&lcd, 0, 0);
 
             // ジョイスティック左を押されたらメニューへ戻る
             // 戻るボタンを押されたらメニューへ戻る
