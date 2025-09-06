@@ -160,7 +160,7 @@ static void host_sync_cb(void) {
     // Determine own address type
     uint8_t own_addr_type = 0;
     (void)ble_hs_id_infer_auto(0, &own_addr_type);
-    std::string name = "MoBus";
+    std::string name = "Mo-Bus";
     std::string sid = get_nvs((char*)"short_id");
     if (sid.empty()) sid = get_nvs((char*)"ble_code");
     if (!sid.empty()) name += "-" + sid.substr(0, 8);
@@ -453,7 +453,7 @@ static void gatts_cb(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
     switch (event) {
         case ESP_GATTS_REG_EVT: {
             gatts_if_global = gatts_if;
-            std::string name = "MoBus";
+            std::string name = "Mo-Bus";
             std::string sid = get_nvs((char*)"short_id");
             if (sid.empty()) sid = get_nvs((char*)"ble_code");
             if (!sid.empty()) name += "-" + sid.substr(0, 8);
