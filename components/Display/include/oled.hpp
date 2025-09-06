@@ -689,9 +689,69 @@ class MessageBox {
 
         HttpClient http_client;
 
-        // メッセージの取得
+        // メッセージの取得（BLE優先、HTTPフォールバック）
         std::string chat_to = *(std::string *)pvParameters;
-        JsonDocument res = http_client.get_message(chat_to);
+        JsonDocument res;
+        auto fetch_messages_via_ble = [&](const std::string &fid, int timeout_ms) -> bool {
+            if (!ble_uart_is_ready()) return false;
+            long long rid = esp_timer_get_time();
+            // Phone app should reply with a frame: {"type":"messages","messages":[...]} stored to NVS as "ble_messages"
+            std::string req = std::string("{ \"id\":\"") + std::to_string(rid) +
+                              "\", \"type\": \"get_messages\", \"payload\": { \"friend_id\": \"" + fid +
+                              "\", \"limit\": 20 } }\n";
+            ble_uart_send(reinterpret_cast<const uint8_t *>(req.c_str()), req.size());
+
+            int waited = 0;
+            while (waited < timeout_ms) {
+                std::string js = get_nvs((char *)"ble_messages");
+                if (!js.empty()) {
+                    StaticJsonDocument<8192> in;
+                    if (deserializeJson(in, js) == DeserializationError::Ok) {
+                        // Accept legacy shape: {messages:[{message,from},...]}
+                        // Or transform server-like shape into legacy
+                        bool legacy = false;
+                        if (in["messages"].is<JsonArray>()) {
+                            for (JsonObject m : in["messages"].as<JsonArray>()) {
+                                if (m.containsKey("message") && m.containsKey("from")) { legacy = true; break; }
+                            }
+                        }
+                        if (legacy) {
+                            // Directly use
+                            std::string outBuf; serializeJson(in, outBuf);
+                            deserializeJson(res, outBuf);
+                        } else if (in["messages"].is<JsonArray>()) {
+                            // Transform {content,sender_id,receiver_id} -> {message,from}
+                            StaticJsonDocument<8192> out;
+                            auto arr = out.createNestedArray("messages");
+                            std::string my_id = get_nvs((char *)"user_id");
+                            std::string my_name = get_nvs((char *)"user_name");
+                            for (JsonObject m : in["messages"].as<JsonArray>()) {
+                                JsonObject o = arr.createNestedObject();
+                                const char *content = m["content"].as<const char*>();
+                                o["message"] = content ? content : "";
+                                const char *sender = m["sender_id"].as<const char*>();
+                                if (sender && !my_id.empty() && my_id == sender) {
+                                    o["from"] = my_name.c_str();
+                                } else {
+                                    o["from"] = fid.c_str();
+                                }
+                            }
+                            std::string outBuf; serializeJson(out, outBuf);
+                            deserializeJson(res, outBuf);
+                        }
+                        return true;
+                    }
+                }
+                vTaskDelay(50 / portTICK_PERIOD_MS);
+                waited += 50;
+            }
+            return false;
+        };
+
+        bool got_ble = fetch_messages_via_ble(chat_to, 2500);
+        if (!got_ble) {
+            res = http_client.get_message(chat_to);
+        }
 
         // 通知を非表示
         // http.notif_flag = false;
@@ -734,7 +794,10 @@ class MessageBox {
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 joystick.reset_timer();
-                res = http_client.get_message(chat_to);
+                // 再取得（BLE優先）
+                if (!fetch_messages_via_ble(chat_to, 1500)) {
+                    res = http_client.get_message(chat_to);
+                }
             }
 
             if (offset_y > max_offset_y) offset_y = max_offset_y;
@@ -855,40 +918,99 @@ class ContactBook {
             std::string identifier;    // short_id or uuid
         } contact_t;
 
-        // Ensure Wi-Fi connected before attempting to fetch friends
-        while (true) {
-            bool connected = false;
-            if (s_wifi_event_group) {
-                EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
-                connected = bits & WIFI_CONNECTED_BIT;
-            }
-            if (connected) break;
+        // Fetch friends list via BLE (if connected) or HTTP( Wi‑Fi )
+        std::vector<contact_t> contacts;
+        bool got_from_ble = false;
+        if (ble_uart_is_ready()) {
+            // Request friends list from phone app over BLE
+            long long rid = esp_timer_get_time();
+            std::string req = std::string("{ \"id\":\"") +
+                              std::to_string(rid) +
+                              "\", \"type\": \"get_friends\" }\n";
+            ble_uart_send(reinterpret_cast<const uint8_t *>(req.c_str()),
+                          req.size());
 
-            // Simple connecting screen with cancel
-            sprite.fillRect(0, 0, 128, 64, 0);
-            sprite.setFont(&fonts::Font2);
-            sprite.setTextColor(0xFFFFFFu, 0x000000u);
-            sprite.drawCenterString("Connecting Wi-Fi...", 64, 22);
-            sprite.drawCenterString("Press Back to exit", 64, 40);
-            sprite.pushSprite(&lcd, 0, 0);
-
-            // Allow exit
-            Joystick joystick;
-            Button back_button(GPIO_NUM_3);
-            auto bs = back_button.get_button_state();
-            if (bs.pushed || joystick.get_joystick_state().left) {
-                running_flag = false;
-                vTaskDelete(NULL);
-                return;
+            // Wait briefly for response; fallback to cached NVS
+            const int timeout_ms = 2500;
+            int waited = 0;
+            while (waited < timeout_ms) {
+                std::string js = get_nvs((char *)"ble_contacts");
+                if (!js.empty()) {
+                    StaticJsonDocument<6144> doc;
+                    if (deserializeJson(doc, js) == DeserializationError::Ok) {
+                        JsonArray arr = doc["friends"].as<JsonArray>();
+                        if (!arr.isNull()) {
+                            std::string username =
+                                get_nvs((char *)"user_name");
+                            for (JsonObject f : arr) {
+                                contact_t c;
+                                c.display_name = std::string(
+                                    f["username"].as<const char *>()
+                                        ? f["username"].as<const char *>()
+                                        : "");
+                                const char *sid =
+                                    f["short_id"].as<const char *>();
+                                const char *fid =
+                                    f["friend_id"].as<const char *>();
+                                if (sid && strlen(sid) > 0)
+                                    c.identifier = sid;
+                                else if (fid)
+                                    c.identifier = fid;
+                                else
+                                    c.identifier = c.display_name;
+                                if (c.display_name != username &&
+                                    !c.identifier.empty()) {
+                                    contacts.push_back(c);
+                                }
+                            }
+                            got_from_ble = true;
+                            break;
+                        }
+                    }
+                }
+                // Show waiting UI
+                sprite.fillRect(0, 0, 128, 64, 0);
+                sprite.setFont(&fonts::Font2);
+                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                sprite.drawCenterString("Waiting phone...", 64, 22);
+                sprite.drawCenterString("Back to exit", 64, 40);
+                sprite.pushSprite(&lcd, 0, 0);
+                // Allow exit during wait
+                if (back_button.get_button_state().pushed) {
+                    running_flag = false;
+                    vTaskDelete(NULL);
+                    return;
+                }
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                waited += 100;
             }
-            vTaskDelay(100 / portTICK_PERIOD_MS);
         }
 
-        // Fetch real friends list from server
-        std::vector<contact_t> contacts;
-        {
-            chatapi::ChatApiClient api;  // uses NVS server_host/port if present
-            // Ensure we have token
+        if (!got_from_ble) {
+            // HTTP fallback (Wi‑Fi). Ensure Wi‑Fi is connected.
+            while (true) {
+                bool connected = false;
+                if (s_wifi_event_group) {
+                    EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
+                    connected = bits & WIFI_CONNECTED_BIT;
+                }
+                if (connected) break;
+
+                sprite.fillRect(0, 0, 128, 64, 0);
+                sprite.setFont(&fonts::Font2);
+                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                sprite.drawCenterString("Connecting Wi-Fi...", 64, 22);
+                sprite.drawCenterString("Press Back to exit", 64, 40);
+                sprite.pushSprite(&lcd, 0, 0);
+                if (back_button.get_button_state().pushed) {
+                    running_flag = false;
+                    vTaskDelete(NULL);
+                    return;
+                }
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+            }
+
+            chatapi::ChatApiClient api;  // uses NVS server_host/port
             std::string username = get_nvs((char *)"user_name");
             std::string password = get_nvs((char *)"password");
             if (password == "") password = "password123";
@@ -905,8 +1027,6 @@ class ContactBook {
                             std::string(f["username"].as<const char *>()
                                             ? f["username"].as<const char *>()
                                             : "");
-                        // Prefer short_id for identifier (readable), fallback
-                        // to uuid
                         const char *sid = f["short_id"].as<const char *>();
                         const char *fid = f["friend_id"].as<const char *>();
                         if (sid && strlen(sid) > 0)
@@ -915,7 +1035,6 @@ class ContactBook {
                             c.identifier = fid;
                         else
                             c.identifier = c.display_name;
-                        // Skip self if any
                         if (c.display_name != username &&
                             !c.identifier.empty()) {
                             contacts.push_back(c);

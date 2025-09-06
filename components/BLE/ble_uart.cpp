@@ -434,6 +434,17 @@ static void handle_frame_from_phone(const std::string& frame) {
     if (frame.find("\"type\":\"new_message\"") != std::string::npos) {
         save_nvs((char*)"notif_flag", std::string("true"));
     }
+    // Cache friends/contacts list sent from phone app
+    if (frame.find("\"type\":\"friends\"") != std::string::npos ||
+        frame.find("\"type\":\"contacts\"") != std::string::npos) {
+        save_nvs((char*)"ble_contacts", frame);
+        ESP_LOGI(GATTS_TAG, "Saved friends list to NVS (ble_contacts)");
+    }
+    // Cache messages list for current friend
+    if (frame.find("\"type\":\"messages\"") != std::string::npos) {
+        save_nvs((char*)"ble_messages", frame);
+        ESP_LOGI(GATTS_TAG, "Saved messages to NVS (ble_messages)");
+    }
 }
 
 static void gap_cb(esp_gap_ble_cb_event_t event,
