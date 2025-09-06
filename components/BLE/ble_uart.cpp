@@ -43,18 +43,24 @@ static int g_last_err = 0;
 
 // Network helpers used to free/recover memory around BLE usage
 static void shutdown_network_stack() {
-    // Keep default event loop/netif to satisfy controller dependencies
+    // Stop Wi‑Fi and deinit netif/event loop to free RAM for BT
     (void)esp_wifi_stop();
     (void)esp_wifi_deinit();
+    (void)esp_event_loop_delete_default();
+    (void)esp_netif_deinit();
 }
 
 static void restart_network_stack() {
+    // Re-init default netif and Wi‑Fi STA; rely on saved config
+    if (esp_netif_init() != ESP_OK) return;
+    (void)esp_event_loop_create_default();
+    esp_netif_create_default_wifi_sta();
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     if (esp_wifi_init(&cfg) != ESP_OK) return;
-    esp_wifi_set_mode(WIFI_MODE_STA);
+    (void)esp_wifi_set_mode(WIFI_MODE_STA);
     wifi_config_t conf = {};
     if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
-        esp_wifi_set_config(WIFI_IF_STA, &conf);
+        (void)esp_wifi_set_config(WIFI_IF_STA, &conf);
     }
     (void)esp_wifi_start();
 }
@@ -86,15 +92,16 @@ static void restart_network_stack() {
 #endif
 
 // 128-bit UUIDs (big-endian for NimBLE macros)
+// NimBLE expects 128-bit UUID bytes in little-endian order
 static const ble_uuid128_t UUID_SERVICE =
-    BLE_UUID128_INIT(0x6E, 0x40, 0x00, 0x01, 0xB5, 0xA3, 0xF3, 0x93, 0xE0, 0xA9,
-                     0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E);
+    BLE_UUID128_INIT(0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0, 0x93, 0xF3,
+                     0xA3, 0xB5, 0x01, 0x00, 0x40, 0x6E);
 static const ble_uuid128_t UUID_RX =
-    BLE_UUID128_INIT(0x6E, 0x40, 0x00, 0x02, 0xB5, 0xA3, 0xF3, 0x93, 0xE0, 0xA9,
-                     0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E);
+    BLE_UUID128_INIT(0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0, 0x93, 0xF3,
+                     0xA3, 0xB5, 0x02, 0x00, 0x40, 0x6E);
 static const ble_uuid128_t UUID_TX =
-    BLE_UUID128_INIT(0x6E, 0x40, 0x00, 0x03, 0xB5, 0xA3, 0xF3, 0x93, 0xE0, 0xA9,
-                     0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E);
+    BLE_UUID128_INIT(0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0, 0x93, 0xF3,
+                     0xA3, 0xB5, 0x03, 0x00, 0x40, 0x6E);
 
 static uint16_t tx_val_handle = 0;
 static std::string rx_buffer;
@@ -198,6 +205,10 @@ static void host_sync_cb(void) {
     memset(&advp, 0, sizeof(advp));
     advp.conn_mode = BLE_GAP_CONN_MODE_UND;
     advp.disc_mode = BLE_GAP_DISC_MODE_GEN;
+    // Set explicit, valid parameters to avoid controller errors
+    advp.itvl_min = 0x00A0;  // 100 ms
+    advp.itvl_max = 0x00F0;  // 150 ms
+    advp.channel_map = 0x07; // Channels 37, 38, 39
     rc = ble_gap_adv_start(own_addr_type, nullptr, BLE_HS_FOREVER, &advp,
                            nullptr, nullptr);
     if (rc != 0) {
@@ -420,7 +431,7 @@ static void stop_advertising() {
 
 static void handle_frame_from_phone(const std::string& frame) {
     ESP_LOGI(GATTS_TAG, "RXFrame: %s", frame.c_str());
-    if (frame.find("\"type\"\s*:\s*\"new_message\"") != std::string::npos) {
+    if (frame.find("\"type\":\"new_message\"") != std::string::npos) {
         save_nvs((char*)"notif_flag", std::string("true"));
     }
 }
@@ -511,31 +522,7 @@ static void gatts_cb(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
 
 // g_stack_inited / g_last_err defined above (shared)
 
-static void shutdown_network_stack() {
-    // Stop MQTT is not accessible here; best-effort to stop Wi‑Fi + netif
-    (void)esp_wifi_stop();
-    (void)esp_wifi_deinit();
-    (void)esp_event_loop_delete_default();
-    (void)esp_netif_deinit();
-}
-
-static void restart_network_stack() {
-    // Re-init default netif and Wi‑Fi in STA mode; rely on saved config
-    if (esp_netif_init() != ESP_OK) return;
-    if (esp_event_loop_create_default() != ESP_OK) {
-        // might already exist
-    }
-    esp_netif_create_default_wifi_sta();
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    if (esp_wifi_init(&cfg) != ESP_OK) return;
-    esp_wifi_set_mode(WIFI_MODE_STA);
-    // Use previously saved config from NVS
-    wifi_config_t conf = {};
-    if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
-        esp_wifi_set_config(WIFI_IF_STA, &conf);
-    }
-    (void)esp_wifi_start();
-}
+// Use the shared shutdown_network_stack()/restart_network_stack() defined above
 
 extern "C" void ble_uart_enable(void) {
     g_last_err = 0;
