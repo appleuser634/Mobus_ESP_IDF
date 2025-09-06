@@ -172,23 +172,39 @@ static void host_sync_cb(void) {
     (void)ble_gatts_start();
     ble_svc_gap_device_name_set(name.c_str());
 
+    // Keep ADV payload minimal: flags + 128-bit service UUID only
     struct ble_hs_adv_fields fields = {};
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    fields.name = (uint8_t*)name.c_str();
-    fields.name_len = (uint8_t)name.size();
-    fields.name_is_complete = 1;
     fields.uuids128 = (ble_uuid128_t*)&UUID_SERVICE;
     fields.num_uuids128 = 1;
     fields.uuids128_is_complete = 1;
-    ble_gap_adv_set_fields(&fields);
+    int rc = ble_gap_adv_set_fields(&fields);
+    if (rc != 0) {
+        ESP_LOGE(GATTS_TAG, "adv_set_fields failed: rc=%d", rc);
+    }
+
+    // Put device name into scan response to avoid 31-byte limit overflow
+    struct ble_hs_adv_fields rsp = {};
+    rsp.name = (uint8_t*)name.c_str();
+    rsp.name_len = (uint8_t)name.size();
+    rsp.name_is_complete = 1;
+    rc = ble_gap_adv_rsp_set_fields(&rsp);
+    if (rc != 0) {
+        ESP_LOGE(GATTS_TAG, "adv_rsp_set_fields failed: rc=%d", rc);
+    }
 
     // Advertising
     struct ble_gap_adv_params advp;
     memset(&advp, 0, sizeof(advp));
     advp.conn_mode = BLE_GAP_CONN_MODE_UND;
     advp.disc_mode = BLE_GAP_DISC_MODE_GEN;
-    ble_gap_adv_start(own_addr_type, nullptr, BLE_HS_FOREVER, &advp, nullptr,
-                      nullptr);
+    rc = ble_gap_adv_start(own_addr_type, nullptr, BLE_HS_FOREVER, &advp,
+                           nullptr, nullptr);
+    if (rc != 0) {
+        ESP_LOGE(GATTS_TAG, "adv_start failed: rc=%d", rc);
+    } else {
+        ESP_LOGI(GATTS_TAG, "NimBLE advertising started (%s)", name.c_str());
+    }
 }
 
 static void nimble_host_task(void* param) {
@@ -214,39 +230,16 @@ extern "C" void ble_uart_enable(void) {
     (void)esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
     (void)esp_bt_mem_release(ESP_BT_MODE_CLASSIC_BT);
 
-#if HAVE_NIMBLE_HCI
-    // Prefer NimBLE HCI helper when available (it manages controller
-    // internally)
-    esp_err_t err = esp_nimble_hci_init();
+    // Let NimBLE port manage BT controller + HCI initialization
+    // (per framework nimble_port_init implementation)
+    esp_err_t err;
+    err = nimble_port_init();
     if (err != ESP_OK) {
         g_last_err = err;
-        ESP_LOGE(GATTS_TAG, "nimble hci init err=%s", esp_err_to_name(err));
+        ESP_LOGE(GATTS_TAG, "nimble_port_init failed: %s", esp_err_to_name(err));
         restart_network_stack();
         return;
     }
-    ESP_LOGI(GATTS_TAG, "nimble hci init OK");
-#else
-    // Fallback: manually init/enable BLE controller
-    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-    esp_err_t err = esp_bt_controller_init(&bt_cfg);
-    if (err != ESP_OK) {
-        g_last_err = err;
-        ESP_LOGE(GATTS_TAG, "controller init err=%s", esp_err_to_name(err));
-        restart_network_stack();
-        return;
-    }
-    ESP_LOGI(GATTS_TAG, "controller init OK");
-    err = esp_bt_controller_enable(ESP_BT_MODE_BLE);
-    if (err != ESP_OK) {
-        g_last_err = err;
-        ESP_LOGE(GATTS_TAG, "controller enable err=%s", esp_err_to_name(err));
-        (void)esp_bt_controller_deinit();
-        restart_network_stack();
-        return;
-    }
-    ESP_LOGI(GATTS_TAG, "controller enable OK");
-#endif
-    nimble_port_init();
     ESP_LOGI(GATTS_TAG, "nimble_port_init OK");
     // Configure host callbacks and persistent storage
     ble_hs_cfg.reset_cb = on_reset_cb;
@@ -265,13 +258,6 @@ extern "C" void ble_uart_disable(void) {
         ble_gap_adv_stop();
         nimble_port_stop();
         nimble_port_deinit();
-#if HAVE_NIMBLE_HCI
-        (void)esp_nimble_hci_deinit();
-#else
-        (void)esp_bt_controller_disable();
-        (void)esp_bt_controller_deinit();
-        (void)esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
-#endif
         g_stack_inited = false;
     }
     restart_network_stack();
@@ -337,6 +323,10 @@ static uint16_t conn_id_global = 0xFFFF;
 static bool notify_enabled = false;
 static uint16_t current_mtu = 23;  // default
 static bool adv_started = false;
+// Track ADV/Scan Rsp config completion to start advertising at right time
+static uint8_t adv_config_done = 0;
+#define ADV_CONFIG_FLAG        (1 << 0)
+#define SCAN_RSP_CONFIG_FLAG   (1 << 1)
 
 // RX buffer to collect newline-terminated frames
 static std::string rx_buffer;
@@ -389,12 +379,13 @@ static esp_ble_adv_params_t adv_params = {
     .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
 };
 
+// Keep ADV payload minimal to avoid exceeding 31 bytes
 static esp_ble_adv_data_t adv_data = {
     .set_scan_rsp = false,
-    .include_name = true,
-    .include_txpower = true,
-    .min_interval = 0x0006,
-    .max_interval = 0x0010,
+    .include_name = false,
+    .include_txpower = false,
+    .min_interval = 0x0000,
+    .max_interval = 0x0000,
     .appearance = 0x00,
     .manufacturer_len = 0,
     .p_manufacturer_data = nullptr,
@@ -403,6 +394,12 @@ static esp_ble_adv_data_t adv_data = {
     .service_uuid_len = 16,
     .p_service_uuid = (uint8_t*)UUID_SERVICE,
     .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
+};
+
+// Put device name into Scan Response
+static esp_ble_adv_data_t scan_rsp_data = {
+    .set_scan_rsp = true,
+    .include_name = true,
 };
 
 static void start_advertising() {
@@ -432,7 +429,12 @@ static void gap_cb(esp_gap_ble_cb_event_t event,
                    esp_ble_gap_cb_param_t* param) {
     switch (event) {
         case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
-            start_advertising();
+            adv_config_done &= ~ADV_CONFIG_FLAG;
+            if (adv_config_done == 0) start_advertising();
+            break;
+        case ESP_GAP_BLE_SCAN_RSP_DATA_SET_COMPLETE_EVT:
+            adv_config_done &= ~SCAN_RSP_CONFIG_FLAG;
+            if (adv_config_done == 0) start_advertising();
             break;
         case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
             if (param->adv_start_cmpl.status != ESP_BT_STATUS_SUCCESS) {
@@ -456,7 +458,10 @@ static void gatts_cb(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
             if (sid.empty()) sid = get_nvs((char*)"ble_code");
             if (!sid.empty()) name += "-" + sid.substr(0, 8);
             esp_ble_gap_set_device_name(name.c_str());
+            adv_config_done = ADV_CONFIG_FLAG | SCAN_RSP_CONFIG_FLAG;
             esp_ble_gap_config_adv_data(&adv_data);
+            // Ensure scan response is (re)configured to carry the name
+            esp_ble_gap_config_adv_data(&scan_rsp_data);
             esp_ble_gatts_create_attr_tab(gatt_db, gatts_if, HRS_IDX_NB, 0);
             break;
         }
