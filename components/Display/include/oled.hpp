@@ -130,25 +130,26 @@ class TalkDisplay {
 
     static void SendAnimation() {
         sprite.fillRect(0, 0, 128, 64, 0);
-        sprite.drawBitmap(16, 16, elekey_1, 64, 32, TFT_WHITE, TFT_BLACK);
-        sprite.fillRect(80, 46, 48, 2, 0xFFFF);
+        sprite.drawBitmap(55, 27, small_elekey_1, 18, 10, TFT_WHITE, TFT_BLACK);
+        sprite.fillRect(73, 36, 55, 1, 0xFFFF);
         sprite.pushSprite(&lcd, 0, 0);
         vTaskDelay(250 / portTICK_PERIOD_MS);
         sprite.fillRect(0, 0, 128, 64, 0);
-        sprite.drawBitmap(16, 16, elekey_2, 64, 32, TFT_WHITE, TFT_BLACK);
-        sprite.fillRect(80, 46, 48, 2, 0xFFFF);
+        sprite.drawBitmap(55, 27, small_elekey_2, 18, 10, TFT_WHITE, TFT_BLACK);
+        sprite.fillRect(73, 36, 55, 1, 0xFFFF);
         sprite.pushSprite(&lcd, 0, 0);
         vTaskDelay(250 / portTICK_PERIOD_MS);
         sprite.fillRect(0, 0, 128, 64, 0);
-        sprite.drawBitmap(16, 16, elekey_1, 64, 32, TFT_WHITE, TFT_BLACK);
-        sprite.fillRect(80, 46, 48, 2, 0xFFFF);
+        sprite.drawBitmap(55, 27, small_elekey_1, 18, 10, TFT_WHITE, TFT_BLACK);
+        sprite.fillRect(73, 36, 55, 1, 0xFFFF);
         sprite.pushSprite(&lcd, 0, 0);
 
         for (int i = 0; i < 48; i++) {
             sprite.fillRect(0, 0, 128, 64, 0);
-            sprite.drawBitmap(16, 16, elekey_1, 64, 32, TFT_WHITE, TFT_BLACK);
-            sprite.fillRect(80, 46, 48, 2, 0xFFFF);
-            sprite.fillRoundRect(80 + i, 44, 4, 4, 2, 0xFFFF);
+            sprite.drawBitmap(55, 27, small_elekey_1, 18, 10, TFT_WHITE,
+                              TFT_BLACK);
+            sprite.fillRect(73, 36, 55, 1, 0xFFFF);
+            sprite.fillRect(80 + i, 34, 2, 2, 0xFFFF);
             sprite.pushSprite(&lcd, 0, 0);
             vTaskDelay(15 / portTICK_PERIOD_MS);
         }
