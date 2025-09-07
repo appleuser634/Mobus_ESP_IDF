@@ -130,14 +130,29 @@ class TalkDisplay {
 
     static void SendAnimation() {
         sprite.fillRect(0, 0, 128, 64, 0);
-
-        sprite.setCursor(30, 20);
-        sprite.setFont(&fonts::Font4);
-        sprite.print("Send!");
-        sprite.setFont(&fonts::Font2);
+        sprite.drawBitmap(16, 16, elekey_1, 64, 32, TFT_WHITE, TFT_BLACK);
+        sprite.fillRect(80, 46, 48, 2, 0xFFFF);
+        sprite.pushSprite(&lcd, 0, 0);
+        vTaskDelay(250 / portTICK_PERIOD_MS);
+        sprite.fillRect(0, 0, 128, 64, 0);
+        sprite.drawBitmap(16, 16, elekey_2, 64, 32, TFT_WHITE, TFT_BLACK);
+        sprite.fillRect(80, 46, 48, 2, 0xFFFF);
+        sprite.pushSprite(&lcd, 0, 0);
+        vTaskDelay(250 / portTICK_PERIOD_MS);
+        sprite.fillRect(0, 0, 128, 64, 0);
+        sprite.drawBitmap(16, 16, elekey_1, 64, 32, TFT_WHITE, TFT_BLACK);
+        sprite.fillRect(80, 46, 48, 2, 0xFFFF);
         sprite.pushSprite(&lcd, 0, 0);
 
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        for (int i = 0; i < 48; i++) {
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.drawBitmap(16, 16, elekey_1, 64, 32, TFT_WHITE, TFT_BLACK);
+            sprite.fillRect(80, 46, 48, 2, 0xFFFF);
+            sprite.fillRoundRect(80 + i, 44, 4, 4, 2, 0xFFFF);
+            sprite.pushSprite(&lcd, 0, 0);
+            vTaskDelay(15 / portTICK_PERIOD_MS);
+        }
+        vTaskDelay(250 / portTICK_PERIOD_MS);
     };
 
     static bool running_flag;
