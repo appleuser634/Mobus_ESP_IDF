@@ -333,7 +333,6 @@ bool game_loop() {
     Button enter_button(GPIO_NUM_5);
 
     Led led;
-    Neopixel neopixel;
 
     while (loop_flag) {
         // Joystickの状態を取得

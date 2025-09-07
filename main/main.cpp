@@ -52,6 +52,7 @@ static const char *TAG = "Mobus v3.14";
 #include <wifi.hpp>
 #include <http_client.hpp>
 #include <neopixel.hpp>
+Neopixel neopixel;
 #include <oled.hpp>
 #include <ntp.hpp>
 
@@ -71,7 +72,6 @@ void check_notification() {
     Oled oled;
     Buzzer buzzer;
     Led led;
-    Neopixel neopixel;
 
     printf("通知チェック中...");
     HttpClient http_client;
@@ -127,7 +127,6 @@ void app_main(void) {
     esp_err_t err = nvs_flash_init();
 
     Oled oled;
-    Neopixel neopixel;
     MenuDisplay menu;
     ProfileSetting profile_setting;
 

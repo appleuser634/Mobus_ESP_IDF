@@ -692,14 +692,19 @@ class MessageBox {
         // メッセージの取得（BLE優先、HTTPフォールバック）
         std::string chat_to = *(std::string *)pvParameters;
         JsonDocument res;
-        auto fetch_messages_via_ble = [&](const std::string &fid, int timeout_ms) -> bool {
+        auto fetch_messages_via_ble = [&](const std::string &fid,
+                                          int timeout_ms) -> bool {
             if (!ble_uart_is_ready()) return false;
             long long rid = esp_timer_get_time();
-            // Phone app should reply with a frame: {"type":"messages","messages":[...]} stored to NVS as "ble_messages"
+            // Phone app should reply with a frame:
+            // {"type":"messages","messages":[...]} stored to NVS as
+            // "ble_messages"
             std::string req = std::string("{ \"id\":\"") + std::to_string(rid) +
-                              "\", \"type\": \"get_messages\", \"payload\": { \"friend_id\": \"" + fid +
-                              "\", \"limit\": 20 } }\n";
-            ble_uart_send(reinterpret_cast<const uint8_t *>(req.c_str()), req.size());
+                              "\", \"type\": \"get_messages\", \"payload\": { "
+                              "\"friend_id\": \"" +
+                              fid + "\", \"limit\": 20 } }\n";
+            ble_uart_send(reinterpret_cast<const uint8_t *>(req.c_str()),
+                          req.size());
 
             int waited = 0;
             while (waited < timeout_ms) {
@@ -711,32 +716,44 @@ class MessageBox {
                         // Or transform server-like shape into legacy
                         bool legacy = false;
                         if (in["messages"].is<JsonArray>()) {
-                            for (JsonObject m : in["messages"].as<JsonArray>()) {
-                                if (m.containsKey("message") && m.containsKey("from")) { legacy = true; break; }
+                            for (JsonObject m :
+                                 in["messages"].as<JsonArray>()) {
+                                if (m.containsKey("message") &&
+                                    m.containsKey("from")) {
+                                    legacy = true;
+                                    break;
+                                }
                             }
                         }
                         if (legacy) {
                             // Directly use
-                            std::string outBuf; serializeJson(in, outBuf);
+                            std::string outBuf;
+                            serializeJson(in, outBuf);
                             deserializeJson(res, outBuf);
                         } else if (in["messages"].is<JsonArray>()) {
-                            // Transform {content,sender_id,receiver_id} -> {message,from}
+                            // Transform {content,sender_id,receiver_id} ->
+                            // {message,from}
                             StaticJsonDocument<8192> out;
                             auto arr = out.createNestedArray("messages");
                             std::string my_id = get_nvs((char *)"user_id");
                             std::string my_name = get_nvs((char *)"user_name");
-                            for (JsonObject m : in["messages"].as<JsonArray>()) {
+                            for (JsonObject m :
+                                 in["messages"].as<JsonArray>()) {
                                 JsonObject o = arr.createNestedObject();
-                                const char *content = m["content"].as<const char*>();
+                                const char *content =
+                                    m["content"].as<const char *>();
                                 o["message"] = content ? content : "";
-                                const char *sender = m["sender_id"].as<const char*>();
-                                if (sender && !my_id.empty() && my_id == sender) {
+                                const char *sender =
+                                    m["sender_id"].as<const char *>();
+                                if (sender && !my_id.empty() &&
+                                    my_id == sender) {
                                     o["from"] = my_name.c_str();
                                 } else {
                                     o["from"] = fid.c_str();
                                 }
                             }
-                            std::string outBuf; serializeJson(out, outBuf);
+                            std::string outBuf;
+                            serializeJson(out, outBuf);
                             deserializeJson(res, outBuf);
                         }
                         return true;
@@ -924,8 +941,7 @@ class ContactBook {
         if (ble_uart_is_ready()) {
             // Request friends list from phone app over BLE
             long long rid = esp_timer_get_time();
-            std::string req = std::string("{ \"id\":\"") +
-                              std::to_string(rid) +
+            std::string req = std::string("{ \"id\":\"") + std::to_string(rid) +
                               "\", \"type\": \"get_friends\" }\n";
             ble_uart_send(reinterpret_cast<const uint8_t *>(req.c_str()),
                           req.size());
@@ -940,8 +956,7 @@ class ContactBook {
                     if (deserializeJson(doc, js) == DeserializationError::Ok) {
                         JsonArray arr = doc["friends"].as<JsonArray>();
                         if (!arr.isNull()) {
-                            std::string username =
-                                get_nvs((char *)"user_name");
+                            std::string username = get_nvs((char *)"user_name");
                             for (JsonObject f : arr) {
                                 contact_t c;
                                 c.display_name = std::string(
@@ -2187,10 +2202,9 @@ class SettingMenu {
 
         // Add Bluetooth pairing item to settings
         setting_t settings[10] = {
-            {"Profile"},      {"Wi-Fi"},   {"Bluetooth"},   {"Sound"},
-            {"Notif"},        {"Auto Update"},               {"OTA Manifest"},
-            {"Update Now"},   {"Develop"}, {"Factory Reset"}
-        };
+            {"Profile"}, {"Wi-Fi"},        {"Bluetooth"},    {"Sound"},
+            {"Notif"},   {"Auto Update"},  {"OTA Manifest"}, {"Update Now"},
+            {"Develop"}, {"Factory Reset"}};
 
         int select_index = 0;
         int font_height = 13;
@@ -2249,7 +2263,8 @@ class SettingMenu {
                     // show current (or default) manifest URL
                     std::string mf = get_nvs((char *)"ota_manifest");
                     if (mf.empty()) {
-                        mf = "https://mimoc.jp/api/firmware/latest?device=esp32s3&channel=stable";
+                        mf = "https://mimoc.jp/api/firmware/"
+                             "latest?device=esp32s3&channel=stable";
                     }
                     std::string label = "OTA Manifest";
                     sprite.print(label.c_str());
@@ -2461,14 +2476,15 @@ class SettingMenu {
                 // Show current manifest URL in a simple modal
                 std::string mf = get_nvs((char *)"ota_manifest");
                 if (mf.empty()) {
-                    mf = "https://mimoc.jp/api/firmware/latest?device=esp32s3&channel=stable";
+                    mf = "https://mimoc.jp/api/firmware/"
+                         "latest?device=esp32s3&channel=stable";
                 }
                 // Simple wrap: break into chunks that fit the screen width
                 const int max_chars = 21;
                 std::vector<std::string> lines;
                 for (size_t p = 0; p < mf.size(); p += max_chars) {
                     lines.emplace_back(mf.substr(p, max_chars));
-                    if (lines.size() >= 3) break; // fit on 64px height
+                    if (lines.size() >= 3) break;  // fit on 64px height
                 }
                 // Clear the triggering button state to avoid instant exit
                 type_button.clear_button_state();
@@ -2476,7 +2492,8 @@ class SettingMenu {
                 back_button.clear_button_state();
                 back_button.reset_timer();
                 while (1) {
-                    Joystick::joystick_state_t js = joystick.get_joystick_state();
+                    Joystick::joystick_state_t js =
+                        joystick.get_joystick_state();
                     Button::button_state_t tb = type_button.get_button_state();
                     Button::button_state_t bb = back_button.get_button_state();
                     sprite.fillRect(0, 0, 128, 64, 0);
@@ -2700,7 +2717,6 @@ class Game {
 
         Buzzer buzzer;
         Led led;
-        Neopixel neopixel;
 
         Joystick joystick;
 
