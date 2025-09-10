@@ -1992,18 +1992,9 @@ class P2P_Display {
 
             // Enter(送信)キーの判定ロジック
             if (enter_button_state.pushed and message_text != "") {
-                printf("Button pushed!\n");
-                printf("Pushing time:%lld\n", enter_button_state.pushing_sec);
-                printf("Push type:%c\n", enter_button_state.push_type);
-
-                std::string chat_to_data[] = {chat_to, message_text};
-                // std::string chat_to_data = message_text;
                 message_text = "";
                 pos = 0;
                 input_switch_pos = 9;
-
-                SendAnimation();
-
                 enter_button.clear_button_state();
             }
 
@@ -2217,10 +2208,11 @@ class SettingMenu {
         } setting_t;
 
         // Add Bluetooth pairing item to settings
-        setting_t settings[10] = {
-            {"Profile"}, {"Wi-Fi"},        {"Bluetooth"},    {"Sound"},
-            {"Notif"},   {"Auto Update"},  {"OTA Manifest"}, {"Update Now"},
-            {"Develop"}, {"Factory Reset"}};
+        setting_t settings[10] = {{"Profile"},        {"Wi-Fi"},
+                                  {"Bluetooth"},      {"Sound"},
+                                  {"Real Time Chat"}, {"Auto Update"},
+                                  {"OTA Manifest"},   {"Update Now"},
+                                  {"Develop"},        {"Factory Reset"}};
 
         int select_index = 0;
         int font_height = 13;
@@ -2620,7 +2612,8 @@ class SettingMenu {
                 joystick.reset_timer();
 
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "Notif") {
+                       settings[select_index].setting_name ==
+                           "Real Time Chat") {
                 P2P_Display p2p;
                 p2p.morse_p2p();
             } else if (type_button_state.pushed &&

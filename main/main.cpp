@@ -163,8 +163,17 @@ void app_main(void) {
         // 起動音を鳴らす
         Buzzer buzzer;
         buzzer.boot_sound();
-        // Show Watch
-        oled.WatchDisplay();
+        // 起動時のロゴを表示
+        oled.BootDisplay();
+        // LEDを光らす
+        for (int i = 0; i < 50; i++) {
+            neopixel.set_color(i, i, i);
+            vTaskDelay(20 / portTICK_PERIOD_MS);
+        }
+        for (int i = 50; i > 0; i--) {
+            neopixel.set_color(i, i, i);
+            vTaskDelay(20 / portTICK_PERIOD_MS);
+        }
 
     } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
         std::string notif_flag = get_nvs("notif_flag");
