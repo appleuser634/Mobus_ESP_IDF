@@ -19,6 +19,7 @@
 #include <ArduinoJson.h>
 #include "esp_now.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "nvs_flash.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -121,6 +122,21 @@ void check_notification() {
 
 void app_main(void) {
     printf("Hello world!!!!\n");
+
+    // If this image was just booted after OTA, mark it valid to cancel rollback
+    {
+        const esp_partition_t* running = esp_ota_get_running_partition();
+        if (running) {
+            esp_ota_img_states_t state;
+            if (esp_ota_get_state_partition(running, &state) == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY) {
+                ESP_LOGI(TAG, "OTA image pending verify; marking as valid");
+                esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
+                if (err != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to mark app valid: %s", esp_err_to_name(err));
+                }
+            }
+        }
+    }
 
     Max98357A spk;
     Oled oled;

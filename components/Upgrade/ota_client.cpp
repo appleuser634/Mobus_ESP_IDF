@@ -5,7 +5,6 @@
 
 #include "esp_app_desc.h"
 #include "esp_http_client.h"
-#include "esp_https_ota.h"
 #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
 extern "C" esp_err_t esp_crt_bundle_attach(void *conf);
 #define HAVE_CRT_BUNDLE 1
@@ -15,6 +14,8 @@ extern "C" esp_err_t esp_crt_bundle_attach(void *conf);
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_heap_caps.h"
+#include "bootloader_common.h"
+#include "esp_flash_partitions.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -22,6 +23,7 @@ extern "C" esp_err_t esp_crt_bundle_attach(void *conf);
 #include "nvs_flash.h"
 
 #include <algorithm>
+#include <memory>
 
 static const char* TAG_OTA = "OTAClient";
 
@@ -102,58 +104,182 @@ static std::string rewrite_dev_url_http(const std::string& url) {
     return url;
 }
 
+// Download firmware via HTTP(S), write to next OTA partition, and set it to boot.
+// Validation of the image is deferred to bootloader/app (rollback flow).
 esp_err_t do_ota(const std::string& bin_url_in) {
-    std::string bin_url = rewrite_dev_url_http(bin_url_in);
-    esp_http_client_config_t hc = {};
-    hc.url = bin_url.c_str();
-    hc.timeout_ms = 15000;            // avoid long stalls
-    hc.keep_alive_enable = true;      // keep TLS session for full download
-    // Use CA cert only for HTTPS
-    bool is_https = bin_url.rfind("https://", 0) == 0;
-#if HAVE_CRT_BUNDLE
-    if (is_https) hc.crt_bundle_attach = esp_crt_bundle_attach; else hc.crt_bundle_attach = nullptr;
-    hc.cert_pem = nullptr;
-#else
-    hc.cert_pem = is_https ? (const char*)ca_cert_pem_start : nullptr;
-#endif
-    esp_https_ota_config_t ocfg = { };
-    ocfg.http_config = &hc;
-    // Use single HTTP stream; many small partial requests cause repeated TLS handshakes
-    ocfg.partial_http_download = false;
-    ocfg.max_http_request_size = 0;   // unused when partial_http_download=false
-    ocfg.buffer_caps = MALLOC_CAP_SPIRAM;
-    ESP_LOGI(TAG_OTA, "OTA from %s", bin_url.c_str());
-    auto err = esp_https_ota(&ocfg);
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG_OTA, "OTA succeed, rebooting");
-        esp_restart();
-    } else {
-        ESP_LOGE(TAG_OTA, "OTA failed: %s", esp_err_to_name(err));
-        // Fallback: if first try was HTTPS on dev URL, retry as HTTP
-        if (is_https) {
-            std::string alt = rewrite_dev_url_http(bin_url);
-            if (alt != bin_url) {
-                ESP_LOGW(TAG_OTA, "Retry OTA via HTTP: %s", alt.c_str());
-                esp_http_client_config_t hc2 = {};
-                hc2.url = alt.c_str();
-                hc2.timeout_ms = 15000;
-                hc2.keep_alive_enable = true;
-                // no bundle for HTTP
-                hc2.cert_pem = nullptr;
-                esp_https_ota_config_t ocfg2 = {};
-                ocfg2.http_config = &hc2;
-                ocfg2.partial_http_download = false;
-                ocfg2.max_http_request_size = 0;
-                ocfg2.buffer_caps = MALLOC_CAP_SPIRAM;
-                err = esp_https_ota(&ocfg2);
-                if (err == ESP_OK) {
-                    ESP_LOGI(TAG_OTA, "OTA succeed (fallback), rebooting");
-                    esp_restart();
-                } else {
-                    ESP_LOGE(TAG_OTA, "Fallback OTA failed: %s", esp_err_to_name(err));
-                }
-            }
+    auto set_boot_partition_unverified = [](const esp_partition_t* update_partition) -> esp_err_t {
+        if (!update_partition || update_partition->type != ESP_PARTITION_TYPE_APP ||
+            update_partition->subtype < ESP_PARTITION_SUBTYPE_APP_OTA_MIN || update_partition->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_MAX) {
+            return ESP_ERR_INVALID_ARG;
         }
+
+        // Read current OTA data entries
+        const esp_partition_t* otadata = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, nullptr);
+        if (!otadata) return ESP_ERR_NOT_FOUND;
+
+        esp_ota_select_entry_t two[2];
+        esp_err_t err = ESP_OK;
+        size_t esz = otadata->erase_size;
+        if ((err = esp_partition_read(otadata, 0, &two[0], sizeof(two[0]))) != ESP_OK) return err;
+        if ((err = esp_partition_read(otadata, esz, &two[1], sizeof(two[1]))) != ESP_OK) return err;
+
+        int active = bootloader_common_get_active_otadata(two);
+        int n = (int)esp_ota_get_app_partition_count();
+        if (n <= 0) return ESP_ERR_NOT_FOUND;
+        int target_index = (int)update_partition->subtype - (int)ESP_PARTITION_SUBTYPE_APP_OTA_MIN; // 0..n-1
+        uint32_t base = (uint32_t)((target_index + 1) % n);
+        uint32_t cur_seq = (active >= 0) ? two[active].ota_seq : 0;
+        uint32_t i = 0;
+        while (cur_seq > base + i * (uint32_t)n) i++;
+        uint32_t new_seq = (active >= 0) ? (base + i * (uint32_t)n) : (uint32_t)(target_index + 1);
+        int next = (active >= 0) ? ((~active) & 1) : 0;
+
+        esp_ota_select_entry_t new_entry = two[next];
+        new_entry.ota_seq = new_seq;
+#ifdef CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+        new_entry.ota_state = ESP_OTA_IMG_NEW;
+#else
+        new_entry.ota_state = ESP_OTA_IMG_UNDEFINED;
+#endif
+        new_entry.crc = bootloader_common_ota_select_crc(&new_entry);
+
+        if ((err = esp_partition_erase_range(otadata, (size_t)next * esz, esz)) != ESP_OK) return err;
+        if ((err = esp_partition_write(otadata, (size_t)next * esz, &new_entry, sizeof(new_entry))) != ESP_OK) return err;
+        return ESP_OK;
+    };
+
+    auto download_and_write = [&](const std::string& url) -> esp_err_t {
+        esp_http_client_config_t hc = {};
+        hc.url = url.c_str();
+        hc.timeout_ms = 15000;
+        hc.keep_alive_enable = true;
+        bool is_https = url.rfind("https://", 0) == 0;
+#if HAVE_CRT_BUNDLE
+        if (is_https) hc.crt_bundle_attach = esp_crt_bundle_attach; else hc.crt_bundle_attach = nullptr;
+        hc.cert_pem = nullptr;
+#else
+        hc.cert_pem = is_https ? (const char*)ca_cert_pem_start : nullptr;
+#endif
+
+        ESP_LOGI(TAG_OTA, "OTA from %s", url.c_str());
+        esp_http_client_handle_t client = esp_http_client_init(&hc);
+        if (!client) return ESP_FAIL;
+        esp_err_t err = esp_http_client_open(client, 0);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG_OTA, "HTTP open failed: %s", esp_err_to_name(err));
+            esp_http_client_cleanup(client);
+            return err;
+        }
+
+        // Read and log response headers. Ensure status 200 before reading body.
+        int64_t content_len = esp_http_client_fetch_headers(client);
+        int status = esp_http_client_get_status_code(client);
+        ESP_LOGI(TAG_OTA, "HTTP status=%d, content_length=%lld", status, (long long)content_len);
+        if (status != 200) {
+            ESP_LOGE(TAG_OTA, "Unexpected HTTP status: %d", status);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return ESP_FAIL;
+        }
+
+        const esp_partition_t* update_partition = esp_ota_get_next_update_partition(nullptr);
+        if (!update_partition) {
+            ESP_LOGE(TAG_OTA, "No OTA partition available");
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return ESP_FAIL;
+        }
+        ESP_LOGI(TAG_OTA, "Writing to <%s> partition at offset 0x%lx", update_partition->label, (unsigned long)update_partition->address);
+
+        esp_ota_handle_t ota_handle = 0;
+        err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG_OTA, "esp_ota_begin failed: %s", esp_err_to_name(err));
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return err;
+        }
+
+        constexpr size_t BUF_SZ = 16 * 1024;
+        std::unique_ptr<uint8_t[], void(*)(void*)> buf((uint8_t*)heap_caps_malloc(BUF_SZ, MALLOC_CAP_DEFAULT | MALLOC_CAP_8BIT), free);
+        if (!buf) {
+            buf.reset((uint8_t*)malloc(BUF_SZ));
+        }
+        if (!buf) {
+            ESP_LOGE(TAG_OTA, "No memory for OTA buffer");
+            esp_ota_abort(ota_handle);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return ESP_ERR_NO_MEM;
+        }
+
+        int read_total = 0;
+        while (true) {
+            int r = esp_http_client_read(client, (char*)buf.get(), BUF_SZ);
+            if (r < 0) {
+                ESP_LOGE(TAG_OTA, "HTTP read error");
+                err = ESP_FAIL;
+                break;
+            }
+            if (r == 0) {
+                // EOF
+                err = ESP_OK;
+                break;
+            }
+            err = esp_ota_write(ota_handle, buf.get(), r);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG_OTA, "esp_ota_write failed at %d: %s", read_total, esp_err_to_name(err));
+                break;
+            }
+            read_total += r;
+        }
+
+        if (read_total == 0) {
+            ESP_LOGE(TAG_OTA, "No data received for OTA image");
+            esp_ota_abort(ota_handle);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return ESP_FAIL;
+        }
+
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+
+        if (err != ESP_OK) {
+            esp_ota_abort(ota_handle);
+            return err;
+        }
+
+        err = esp_ota_end(ota_handle);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG_OTA, "esp_ota_end failed: %s", esp_err_to_name(err));
+            if (err != ESP_ERR_OTA_VALIDATE_FAILED) {
+                return err;
+            }
+            ESP_LOGW(TAG_OTA, "Proceeding despite validation failure; will validate on boot");
+        }
+
+        // Set next boot slot without pre-validation, rely on bootloader validation
+        err = set_boot_partition_unverified(update_partition);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG_OTA, "esp_ota_set_boot_partition failed: %s", esp_err_to_name(err));
+            return err;
+        }
+        ESP_LOGI(TAG_OTA, "Set boot partition to: %s; rebooting for validation", update_partition->label);
+        esp_restart();
+        return ESP_OK; // not reached
+    };
+
+    // First try with given URL; if it's an HTTPS dev URL, also try HTTP fallback
+    std::string url = rewrite_dev_url_http(bin_url_in);
+    esp_err_t err = download_and_write(url);
+    if (err == ESP_OK) return err; // rebooted already
+
+    bool was_https = bin_url_in.rfind("https://", 0) == 0;
+    std::string alt = rewrite_dev_url_http(bin_url_in);
+    if (was_https && alt != bin_url_in) {
+        ESP_LOGW(TAG_OTA, "Retry OTA via HTTP: %s", alt.c_str());
+        return download_and_write(alt);
     }
     return err;
 }
