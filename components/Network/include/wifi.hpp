@@ -78,11 +78,26 @@ class WiFi {
 
         wifi_config_t wifi_config = {};
 
+        // Avoid driver writing config to NVS (suspected crash path)
+        ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+
         if (WIFI_SSID == "" && WIFI_PASS == "") {
             ESP_ERROR_CHECK(esp_wifi_get_config(WIFI_IF_STA, &wifi_config));
         } else {
-            strcpy((char *)wifi_config.sta.ssid, WIFI_SSID.c_str());
-            strcpy((char *)wifi_config.sta.password, WIFI_PASS.c_str());
+            // Safe copy with bounds to avoid overflow and keep NUL-termination
+            size_t ssid_len = WIFI_SSID.size();
+            if (ssid_len >= sizeof(wifi_config.sta.ssid)) {
+                ssid_len = sizeof(wifi_config.sta.ssid) - 1;
+            }
+            memcpy(wifi_config.sta.ssid, WIFI_SSID.c_str(), ssid_len);
+            wifi_config.sta.ssid[ssid_len] = '\0';
+
+            size_t pass_len = WIFI_PASS.size();
+            if (pass_len >= sizeof(wifi_config.sta.password)) {
+                pass_len = sizeof(wifi_config.sta.password) - 1;
+            }
+            memcpy(wifi_config.sta.password, WIFI_PASS.c_str(), pass_len);
+            wifi_config.sta.password[pass_len] = '\0';
         }
 
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -133,6 +148,8 @@ class WiFi {
 
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
         ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+        // Keep Wi-Fi config in RAM to avoid NVS writes from driver
+        ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
         wifi_set_sta();
     }
 

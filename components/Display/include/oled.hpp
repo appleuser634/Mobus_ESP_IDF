@@ -1425,11 +1425,11 @@ class WiFiSetting {
     }
 
     static std::string char_to_string_ssid(uint8_t *uint_ssid) {
-        char char_ssid[33];
-        sprintf(char_ssid, "%s", uint_ssid);
-        std::string ssid(char_ssid);
-
-        return ssid;
+        if (uint_ssid == nullptr) return std::string("");
+        char char_ssid[33] = {0};
+        // ensure null-terminated copy up to 32 bytes
+        snprintf(char_ssid, sizeof(char_ssid), "%s", reinterpret_cast<const char *>(uint_ssid));
+        return std::string(char_ssid);
     }
 
     static std::string get_omitted_ssid(uint8_t *uint_ssid) {
@@ -1514,15 +1514,16 @@ class WiFiSetting {
             }
 
             // 文字選択のスクロールの設定
-            if (char_set[select_y_index][select_x_index] == '\0') {
-                // 一番右へ行ったら左へ戻る
-                select_x_index = 0;
-            } else if (select_y_index < 0) {
-                // 一番左へ行ったら右へ戻る
+            if (select_x_index < 0) {
+                // 一番左へ行ったら右端へ戻る
                 select_x_index = 0;
                 for (int i = 0; char_set[select_y_index][i] != '\0'; i++) {
                     select_x_index += 1;
                 }
+                select_x_index -= 1;  // 最後の有効インデックス
+            } else if (char_set[select_y_index][select_x_index] == '\0') {
+                // 一番右へ行ったら左へ戻る
+                select_x_index = 0;
             }
 
             int draw_x = 0;
@@ -1545,6 +1546,8 @@ class WiFiSetting {
             sprite.print(type_text.c_str());
 
             sprite.pushSprite(&lcd, 0, 0);
+            // Avoid starving the watchdog while waiting for input
+            vTaskDelay(10 / portTICK_PERIOD_MS);
         }
 
         return type_text;
@@ -1738,30 +1741,32 @@ class WiFiSetting {
                 joystick.reset_timer();
             }
 
-            for (int i = 0; i <= ssid_n; i++) {
-                sprite.setCursor(10, (font_height + margin) * i);
+        for (int i = 0; i <= ssid_n; i++) {
+            sprite.setCursor(10, (font_height + margin) * i);
 
+            if (i < ssid_n) {
                 ESP_LOGI(TAG, "SSID \t\t%s", ap_info[i].ssid);
                 ESP_LOGI(TAG, "RSSI \t\t%d", ap_info[i].rssi);
                 ESP_LOGI(TAG, "Channel \t\t%d", ap_info[i].primary);
-
-                if (i == select_index) {
-                    sprite.setTextColor(0x000000u, 0xFFFFFFu);
-                    sprite.fillRect(0, (font_height + margin) * select_index,
-                                    128, font_height + 3, 0xFFFF);
-                } else {
-                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                }
-
-                if (ssid_n == i) {
-                    // 手動入力のためのOtherを表示
-                    std::string disp_ssid = "Other";
-                    sprite.print(disp_ssid.c_str());
-                } else {
-                    // スキャンの結果取得できたSSIDを表示
-                    sprite.print(get_omitted_ssid(ap_info[i].ssid).c_str());
-                }
             }
+
+            if (i == select_index) {
+                sprite.setTextColor(0x000000u, 0xFFFFFFu);
+                sprite.fillRect(0, (font_height + margin) * select_index,
+                                128, font_height + 3, 0xFFFF);
+            } else {
+                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            }
+
+            if (ssid_n == i) {
+                // 手動入力のためのOtherを表示
+                std::string disp_ssid = "Other";
+                sprite.print(disp_ssid.c_str());
+            } else {
+                // スキャンの結果取得できたSSIDを表示
+                sprite.print(get_omitted_ssid(ap_info[i].ssid).c_str());
+            }
+        }
 
             sprite.pushSprite(&lcd, 0, 0);
 
