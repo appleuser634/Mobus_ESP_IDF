@@ -174,17 +174,67 @@ class WiFi {
     wifi_state_t get_wifi_state() { return wifi_state; }
 
     static void wifi_scan(uint16_t *number, wifi_ap_record_t *ap_info) {
+        if (number == nullptr || ap_info == nullptr) {
+            ESP_LOGE(TAG, "wifi_scan: invalid args (number/ap_info is null)");
+            return;
+        }
+
+        // Clear caller-provided buffer up to its capacity
+        memset(ap_info, 0, sizeof(wifi_ap_record_t) * (*number));
+
+        // Ensure Wi‑Fi is started and in a mode that supports scanning
+        wifi_mode_t mode = WIFI_MODE_NULL;
+        esp_err_t err = esp_wifi_get_mode(&mode);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "wifi_scan: esp_wifi_get_mode failed: %s", esp_err_to_name(err));
+            return;
+        }
+        if (!(mode == WIFI_MODE_STA || mode == WIFI_MODE_APSTA)) {
+            ESP_LOGW(TAG, "wifi_scan: forcing WIFI_MODE_STA for scanning (was %d)", mode);
+            if ((err = esp_wifi_set_mode(WIFI_MODE_STA)) != ESP_OK) {
+                ESP_LOGE(TAG, "wifi_scan: esp_wifi_set_mode failed: %s", esp_err_to_name(err));
+                return;
+            }
+        }
+
+        // Starting twice safely returns INVALID_STATE; ignore for robustness
+        (void)esp_wifi_start();
+
+        wifi_scan_config_t scan_config = {};
+        scan_config.ssid = nullptr;
+        scan_config.bssid = nullptr;
+        scan_config.channel = 0;        // all channels
+        scan_config.show_hidden = false; // do not show hidden by default
+
+        err = esp_wifi_scan_start(&scan_config, true /* block until done */);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "wifi_scan: scan_start failed: %s", esp_err_to_name(err));
+            *number = 0;
+            return;
+        }
+
         uint16_t ap_count = 0;
-        memset(ap_info, 0, sizeof(*ap_info));
+        err = esp_wifi_scan_get_ap_num(&ap_count);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "wifi_scan: scan_get_ap_num failed: %s", esp_err_to_name(err));
+            *number = 0;
+            return;
+        }
 
-        esp_wifi_scan_start(NULL, true);
+        uint16_t to_copy = (*number < ap_count) ? *number : ap_count;
+        ESP_LOGI(TAG, "Max AP slots = %u, scanned APs = %u, copying = %u", *number, ap_count, to_copy);
+        if (to_copy == 0) {
+            *number = 0;
+            return;
+        }
 
-        ESP_LOGI(TAG, "Max AP number ap_info can hold = %u", *number);
-        ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(number, ap_info));
-        ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
-        ESP_LOGI(TAG,
-                 "Total APs scanned = %u, actual AP number ap_info holds = %u",
-                 ap_count, *number);
+        err = esp_wifi_scan_get_ap_records(&to_copy, ap_info);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "wifi_scan: get_ap_records failed: %s", esp_err_to_name(err));
+            *number = 0;
+            return;
+        }
+        *number = to_copy;
     }
 
     void main(void) {

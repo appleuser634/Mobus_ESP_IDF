@@ -14,8 +14,11 @@ static void wait_for_time_sync(void) {
     int retry = 0;
     const int retry_count = 10;
     while (timeinfo.tm_year < (2016 - 1900) && ++retry < retry_count) {
-        ESP_LOGI(TAG, "Waiting for system time to be set... (%d/%d)", retry,
-                 retry_count);
+        // Use ROM-backed logging to avoid VFS/stdout interactions during early
+        // network bring-up or unusual console states.
+        ESP_DRAM_LOGI(TAG,
+                      "Waiting for system time to be set... (%d/%d)", retry,
+                      retry_count);
         vTaskDelay(2000 / portTICK_PERIOD_MS);
         time(&now);
         localtime_r(&now, &timeinfo);
