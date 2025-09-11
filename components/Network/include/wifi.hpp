@@ -164,6 +164,6 @@ class WiFi {
 
         ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
         wifi_init_sta();
-        // esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+        esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
     }
 };

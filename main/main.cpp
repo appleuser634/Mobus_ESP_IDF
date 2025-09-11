@@ -113,19 +113,6 @@ void check_notification() {
 void app_main(void) {
     printf("Hello world!!!!\n");
 
-    bool ok =
-        esp_psram_is_initialized();  // 古いIDF: esp_spiram_is_initialized()
-    printf("PSRAM initialized: %s\n", ok ? "YES" : "NO");
-
-    // ② 物理サイズ（わかる範囲で）
-    size_t total_psram = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
-    size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    printf("PSRAM total=%u, free=%u bytes\n", (unsigned)total_psram,
-           (unsigned)free_psram);
-
-    check_heap();
-    esp_err_t err = nvs_flash_init();
-
     Oled oled;
     MenuDisplay menu;
     ProfileSetting profile_setting;
