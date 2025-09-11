@@ -55,6 +55,8 @@ static const char *TAG = "Mobus v3.14";
 Neopixel neopixel;
 #include <oled.hpp>
 #include <ntp.hpp>
+#include <buzzer.hpp>
+#include <max98357a.h>
 
 #define uS_TO_S_FACTOR 1000000ULL  // 秒→マイクロ秒
 
@@ -113,6 +115,7 @@ void check_notification() {
 void app_main(void) {
     printf("Hello world!!!!\n");
 
+    Max98357A spk;
     Oled oled;
     MenuDisplay menu;
     ProfileSetting profile_setting;
@@ -148,8 +151,9 @@ void app_main(void) {
         //}
 
         // 起動音を鳴らす
-        Buzzer buzzer;
-        buzzer.boot_sound();
+        spk.init();                         // LRC=39, BCLK=40, DIN=41, 44.1kHz
+        spk.play_tone(1000.0f, 500, 0.4f);  // 1kHzを0.5秒、音量40%
+        spk.deinit();                       // 他タスクのI2S利用に備えて解放
         // 起動時のロゴを表示
         oled.BootDisplay();
         // LEDを光らす

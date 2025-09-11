@@ -6,7 +6,7 @@
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include <button.h>
-#include <buzzer.hpp>
+#include <max98357a.h>
 #include <images.hpp>
 #include <led.hpp>
 #include <ctype.h>
@@ -169,7 +169,7 @@ class TalkDisplay {
         lcd.init();
         lcd.setRotation(0);
 
-        Buzzer buzzer;
+        Max98357A buzzer;
 
         Joystick joystick;
 
@@ -211,7 +211,7 @@ class TalkDisplay {
                 enter_button.get_button_state();
 
             if (type_button_state.push_edge and !back_button_state.pushing) {
-                buzzer.buzzer_on();
+                buzzer.start_tone(2300.0f, 0.6f);
             }
 
             if (type_button_state.pushed and !back_button_state.pushing) {
@@ -225,7 +225,7 @@ class TalkDisplay {
                 }
 
                 type_button.clear_button_state();
-                buzzer.buzzer_off();
+                buzzer.stop_tone();
             }
 
             // printf("Release time:%lld\n",button_state.release_sec);
@@ -934,7 +934,7 @@ class ContactBook {
     }
 
     static void message_menue_task(void *pvParameters) {
-        Buzzer buzzer;
+        Max98357A buzzer;
         Led led;
 
         Joystick joystick;
@@ -1888,7 +1888,7 @@ class P2P_Display {
     void morse_p2p() {
         p2p_init();
 
-        Buzzer buzzer;
+        Max98357A buzzer;
         Joystick joystick;
 
         Button type_button(GPIO_NUM_46);
@@ -1923,7 +1923,7 @@ class P2P_Display {
                 enter_button.get_button_state();
 
             if (type_button_state.push_edge and !back_button_state.pushing) {
-                buzzer.buzzer_on();
+                buzzer.start_tone(2300.0f, 0.6f);
             }
 
             if (type_button_state.pushed and !back_button_state.pushing) {
@@ -1937,7 +1937,7 @@ class P2P_Display {
                 }
 
                 type_button.clear_button_state();
-                buzzer.buzzer_off();
+                buzzer.stop_tone();
             }
 
             // printf("Release time:%lld\n",button_state.release_sec);
@@ -2185,7 +2185,7 @@ class SettingMenu {
 
         WiFiSetting wifi_setting;
 
-        Buzzer buzzer;
+        Max98357A buzzer;
         Led led;
 
         Joystick joystick;
@@ -2724,7 +2724,7 @@ class Game {
         lcd.init();
         lcd.setRotation(0);
 
-        Buzzer buzzer;
+        Max98357A buzzer;
         Led led;
 
         Joystick joystick;
@@ -2785,7 +2785,7 @@ class Game {
 
                 if (type_button_state.push_edge and
                     !back_button_state.pushing) {
-                    buzzer.buzzer_on();
+                    buzzer.start_tone(2300.0f, 0.6f);
                 }
 
                 if (type_button_state.pushed and !back_button_state.pushing) {
@@ -2800,7 +2800,7 @@ class Game {
                     }
 
                     type_button.clear_button_state();
-                    buzzer.buzzer_off();
+                    buzzer.stop_tone();
                 }
 
                 // printf("Release time:%lld\n",button_state.release_sec);
@@ -3412,7 +3412,7 @@ class ProfileSetting {
 
     static void morse_greeting(char greet_txt[], char last_greet_txt[] = "",
                                int cx = 64, int cy = 32) {
-        Buzzer buzzer;
+        Max98357A buzzer;
 
         sprite.setColorDepth(8);
         sprite.setFont(&fonts::Font2);
@@ -3440,14 +3440,14 @@ class ProfileSetting {
                 char m = morse_txt[j];
 
                 if (m == '.') {
-                    buzzer.buzzer_on();
+                    buzzer.start_tone(2300.0f, 0.6f);
                     vTaskDelay(50 / portTICK_PERIOD_MS);
-                    buzzer.buzzer_off();
+                    buzzer.stop_tone();
 
                 } else if (m == '_') {
-                    buzzer.buzzer_on();
+                    buzzer.start_tone(2300.0f, 0.6f);
                     vTaskDelay(150 / portTICK_PERIOD_MS);
-                    buzzer.buzzer_off();
+                    buzzer.stop_tone();
                 }
                 morse_str += m;
                 sprite.drawCenterString((show_greet_str + morse_str).c_str(),
