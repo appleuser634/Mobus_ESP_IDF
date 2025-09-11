@@ -29,9 +29,8 @@
 #define HAVE_BT_HEADERS 0
 #endif
 
-// Forward declare NVS helpers (defined elsewhere)
-std::string get_nvs(char* key);
-void save_nvs(char* key, std::string record);
+// Use shared NVS helpers
+#include <nvs_rw.hpp>
 
 #include "include/ble_uart.hpp"
 

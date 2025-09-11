@@ -25,9 +25,13 @@ static void wait_for_time_sync(void) {
 void set_rtc(void *pvParameters) {
     // Set RTC
     while (1) {
-        EventBits_t bits =
-            xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE,
-                                pdTRUE, pdMS_TO_TICKS(10000));
+        if (s_wifi_event_group == nullptr) {
+            vTaskDelay(500 / portTICK_PERIOD_MS);
+            continue;
+        }
+        EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+                                               WIFI_CONNECTED_BIT, pdFALSE,
+                                               pdTRUE, pdMS_TO_TICKS(10000));
         if (bits & WIFI_CONNECTED_BIT) {
             ESP_LOGI(TAG, "Wi-Fi Connected");
             wait_for_time_sync();

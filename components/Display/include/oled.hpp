@@ -680,7 +680,7 @@ class MessageBox {
     }
 
     static void box_task(void *pvParameters) {
-        nvs_main();
+        // nvs_main(); // removed demo call
         lcd.init();
 
         TalkDisplay talk;
@@ -1084,7 +1084,7 @@ class ContactBook {
         // 通知の取得
         JsonDocument notif_res = http_client.get_notifications();
 
-        MessageBox box;
+        MessageBox box; (void)box;
         while (1) {
             // Joystickの状態を取得
             Joystick::joystick_state_t joystick_state =
@@ -1462,8 +1462,8 @@ class WiFiSetting {
         sprintf(char_set[5], "!\"#$%%&\\'()*+,");
         sprintf(char_set[6], "-./:;<=>?@[]^_`{|}~");
 
-        int font_ = 13;
-        int margin = 3;
+        // int font_ = 13; // unused
+        // int margin = 3; // unused
 
         Joystick joystick;
 
@@ -1650,6 +1650,8 @@ class WiFiSetting {
                         pdMS_TO_TICKS(10000));
 
                     if (bits & WIFI_CONNECTED_BIT) {
+                        // Save credentials to NVS (max 5)
+                        save_wifi_credential(input_ssid, input_pass);
                         sprite.fillRect(0, 0, 128, 64, 0);
                         sprite.setFont(&fonts::Font2);
                         sprite.drawCenterString("Connected!", 64, 22);
@@ -2200,7 +2202,7 @@ class SettingMenu {
         Button enter_button(GPIO_NUM_5);
 
         lcd.setRotation(2);
-        int MAX_SETTINGS = 20;
+        // int MAX_SETTINGS = 20; // unused
         int ITEM_PER_PAGE = 4;
 
         sprite.setColorDepth(8);
@@ -3415,7 +3417,7 @@ class ProfileSetting {
         return user_name;
     }
 
-    static void morse_greeting(char greet_txt[], char last_greet_txt[] = "",
+    static void morse_greeting(const char* greet_txt, const char* last_greet_txt = "",
                                int cx = 64, int cy = 32) {
         Max98357A buzzer;
 

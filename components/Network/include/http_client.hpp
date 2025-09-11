@@ -227,6 +227,24 @@ static JsonDocument notif_res;
 int notif_res_flag = 0;
 
 void http_get_notifications_task(void *pvParameters) {
+    // Ensure Wi‑Fi is connected before starting MQTT
+    {
+        wifi_ap_record_t ap;
+        const int max_wait_ms = 20000;
+        int waited = 0;
+        while (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+            waited += 100;
+            if (waited >= max_wait_ms) break;
+        }
+        if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
+            ESP_LOGW(TAG, "Wi-Fi not connected; postponing MQTT start");
+            // keep waiting a bit more to avoid tight loop
+            while (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
+                vTaskDelay(500 / portTICK_PERIOD_MS);
+            }
+        }
+    }
     // Initialize MQTT and subscribe to user topic (via runtime)
     chatapi::ChatApiClient api(HTTP_ENDPOINT, 8080);
     std::string username = get_nvs("user_name");

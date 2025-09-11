@@ -1,3 +1,6 @@
+// Prevent multiple inclusion across translation units
+#pragma once
+
 /*
  * SPDX-FileCopyrightText: 2025 Espressif Systems (Shanghai) CO LTD
  *
@@ -22,137 +25,12 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include <vector>
+#include <utility>
 
-typedef struct {
-    nvs_type_t type;
-    const char *str;
-} type_str_pair_t;
+// Demo utilities removed to avoid unused warnings
 
-static const type_str_pair_t type_str_pair[] = {
-    {NVS_TYPE_I8, "i8"},     {NVS_TYPE_U8, "u8"},   {NVS_TYPE_U16, "u16"},
-    {NVS_TYPE_I16, "i16"},   {NVS_TYPE_U32, "u32"}, {NVS_TYPE_I32, "i32"},
-    {NVS_TYPE_U64, "u64"},   {NVS_TYPE_I64, "i64"}, {NVS_TYPE_STR, "str"},
-    {NVS_TYPE_BLOB, "blob"}, {NVS_TYPE_ANY, "any"},
-};
-
-static const size_t TYPE_STR_PAIR_SIZE =
-    sizeof(type_str_pair) / sizeof(type_str_pair[0]);
-
-static const char *type_to_str(nvs_type_t type) {
-    for (int i = 0; i < TYPE_STR_PAIR_SIZE; i++) {
-        const type_str_pair_t *p = &type_str_pair[i];
-        if (p->type == type) {
-            return p->str;
-        }
-    }
-
-    return "Unknown";
-}
-
-void set_value_nvs(char[]) {}
-
-void nvs_main(void) {
-    // Initialize NVS
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
-        err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        // NVS partition was truncated and needs to be erased
-        // Retry nvs_flash_init
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(err);
-
-    // Open NVS handle
-    // reduce logs
-    nvs_handle_t my_handle;
-    err = nvs_open("storage", NVS_READWRITE, &my_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) opening NVS handle!", esp_err_to_name(err));
-        return;
-    }
-
-    // Store and read an integer value
-    int32_t counter = 42;
-    // reduce logs
-    err = nvs_set_i32(my_handle, "counter", counter);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to write counter!");
-    }
-
-    // Read back the value
-    int32_t read_counter = 0;
-    // reduce logs
-    err = nvs_get_i32(my_handle, "counter", &read_counter);
-    switch (err) {
-        case ESP_OK:
-            ESP_LOGI(TAG, "Read counter = %" PRIu32, read_counter);
-            break;
-        case ESP_ERR_NVS_NOT_FOUND:
-            ESP_LOGW(TAG, "The value is not initialized yet!");
-            break;
-        default:
-            ESP_LOGE(TAG, "Error (%s) reading!", esp_err_to_name(err));
-    }
-
-    // Store and read a string
-    // reduce logs
-    err = nvs_set_str(my_handle, "message", "Hello from NVS!");
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to write string!");
-    }
-
-    // Read back the string
-    size_t required_size = 0;
-    // reduce logs
-    err = nvs_get_str(my_handle, "message", NULL, &required_size);
-    if (err == ESP_OK) {
-        char *message = (char *)malloc(required_size);
-        err = nvs_get_str(my_handle, "message", message, &required_size);
-        if (err == ESP_OK) {
-            ESP_LOGI(TAG, "Read string: %s", message);
-        }
-        free(message);
-    }
-
-    // Find keys in NVS
-    // reduce logs
-    nvs_iterator_t it = NULL;
-    esp_err_t res = nvs_entry_find("nvs", "storage", NVS_TYPE_ANY, &it);
-    while (res == ESP_OK) {
-        nvs_entry_info_t info;
-        nvs_entry_info(it, &info);
-        const char *type_str = type_to_str(info.type);
-        ESP_LOGI(TAG, "Key: '%s', Type: %s", info.key, type_str);
-        res = nvs_entry_next(&it);
-    }
-    nvs_release_iterator(it);
-
-    // Delete a key from NVS
-    // reduce logs
-    err = nvs_erase_key(my_handle, "counter");
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to erase key!");
-    }
-
-    // Commit changes
-    // After setting any values, nvs_commit() must be called to ensure changes
-    // are written to flash storage. Implementations may write to storage at
-    // other times, but this is not guaranteed.
-    // reduce logs
-    err = nvs_commit(my_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to commit NVS changes!");
-    }
-
-    // Close
-    nvs_close(my_handle);
-    // reduce logs
-
-    // reduce logs
-}
-
-void save_nvs(char *key, std::string record) {
+inline void save_nvs(const char *key, const std::string &record) {
     // Initialize Non-VolatileVS
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
@@ -169,20 +47,20 @@ void save_nvs(char *key, std::string record) {
     nvs_handle_t my_handle;
     err = nvs_open("storage", NVS_READWRITE, &my_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) opening NVS handle!", esp_err_to_name(err));
+        ESP_LOGE("NVS", "Error (%s) opening NVS handle!", esp_err_to_name(err));
     }
 
     // Write string
     err = nvs_set_str(my_handle, key, record.c_str());
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to write string: %s", esp_err_to_name(err));
+        ESP_LOGE("NVS", "Failed to write string: %s", esp_err_to_name(err));
         nvs_close(my_handle);
     }
 
     // Commit written value
     err = nvs_commit(my_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to commit changes: %s", esp_err_to_name(err));
+        ESP_LOGE("NVS", "Failed to commit changes: %s", esp_err_to_name(err));
         nvs_close(my_handle);
     }
     // Close
@@ -192,7 +70,7 @@ void save_nvs(char *key, std::string record) {
     // reduce logs
 }
 
-std::string get_nvs(char *key) {
+inline std::string get_nvs(const char *key) {
     // Initialize NVS
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
@@ -209,7 +87,7 @@ std::string get_nvs(char *key) {
     nvs_handle_t my_handle;
     err = nvs_open("storage", NVS_READWRITE, &my_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) opening NVS handle!", esp_err_to_name(err));
+        ESP_LOGE("NVS", "Error (%s) opening NVS handle!", esp_err_to_name(err));
         return "";
     }
 
@@ -221,7 +99,7 @@ std::string get_nvs(char *key) {
         nvs_close(my_handle);
         return std::string("");
     } else if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to get string size: %s", esp_err_to_name(err));
+        ESP_LOGE("NVS", "Failed to get string size: %s", esp_err_to_name(err));
         nvs_close(my_handle);
         return "";
     }
@@ -233,7 +111,7 @@ std::string get_nvs(char *key) {
     nvs_close(my_handle);
 
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to read string: %s", esp_err_to_name(err));
+        ESP_LOGE("NVS", "Failed to read string: %s", esp_err_to_name(err));
         return "";
     }
 
@@ -244,4 +122,91 @@ std::string get_nvs(char *key) {
 
     // reduce logs
     return result;
+}
+
+// ---- Wi-Fi credentials helpers (max 5 entries) ----
+// Keys layout:
+//   wifi_ssid_0 .. wifi_ssid_4
+//   wifi_pass_0 .. wifi_pass_4
+//   wifi_next (u8): next index to overwrite when adding new entry
+
+inline static esp_err_t nvs_open_storage(nvs_handle_t* out)
+{
+    // Ensure NVS ready
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
+    return nvs_open("storage", NVS_READWRITE, out);
+}
+
+inline void save_wifi_credential(const std::string& ssid, const std::string& pass)
+{
+    if (ssid.empty()) return;
+    nvs_handle_t h; if (nvs_open_storage(&h) != ESP_OK) return;
+
+    // If SSID exists, update password only
+    for (int i = 0; i < 5; ++i) {
+        char key[16]; snprintf(key, sizeof(key), "wifi_ssid_%d", i);
+        size_t sz = 0;
+        if (nvs_get_str(h, key, nullptr, &sz) == ESP_OK && sz > 1) {
+            std::string cur; cur.resize(sz);
+            if (nvs_get_str(h, key, cur.data(), &sz) == ESP_OK) {
+                if (!cur.empty() && cur.back() == '\0') cur.pop_back();
+                if (cur == ssid) {
+                    // update password
+                    char pkey[16]; snprintf(pkey, sizeof(pkey), "wifi_pass_%d", i);
+                    nvs_set_str(h, pkey, pass.c_str());
+                    nvs_commit(h); nvs_close(h);
+                    return;
+                }
+            }
+        }
+    }
+
+    // New entry: write to wifi_next index
+    uint8_t next = 0; (void)next;
+    if (nvs_get_u8(h, "wifi_next", &next) != ESP_OK) next = 0;
+    if (next >= 5) next = 0;
+    {
+        char skey[16]; snprintf(skey, sizeof(skey), "wifi_ssid_%d", next);
+        char pkey[16]; snprintf(pkey, sizeof(pkey), "wifi_pass_%d", next);
+        nvs_set_str(h, skey, ssid.c_str());
+        nvs_set_str(h, pkey, pass.c_str());
+        uint8_t nn = (uint8_t)((next + 1) % 5);
+        nvs_set_u8(h, "wifi_next", nn);
+        nvs_commit(h);
+    }
+    nvs_close(h);
+}
+
+inline std::vector<std::pair<std::string,std::string>> get_wifi_credentials()
+{
+    std::vector<std::pair<std::string,std::string>> out;
+    nvs_handle_t h; if (nvs_open_storage(&h) != ESP_OK) return out;
+    for (int i = 0; i < 5; ++i) {
+        char skey[16]; snprintf(skey, sizeof(skey), "wifi_ssid_%d", i);
+        char pkey[16]; snprintf(pkey, sizeof(pkey), "wifi_pass_%d", i);
+        size_t ssz = 0;
+        if (nvs_get_str(h, skey, nullptr, &ssz) == ESP_OK && ssz > 1) {
+            std::string ssid; ssid.resize(ssz);
+            if (nvs_get_str(h, skey, ssid.data(), &ssz) == ESP_OK) {
+                if (!ssid.empty() && ssid.back() == '\0') ssid.pop_back();
+                size_t psz = 0; std::string pass;
+                if (nvs_get_str(h, pkey, nullptr, &psz) == ESP_OK && psz > 0) {
+                    pass.resize(psz);
+                    if (nvs_get_str(h, pkey, pass.data(), &psz) == ESP_OK) {
+                        if (!pass.empty() && pass.back() == '\0') pass.pop_back();
+                    } else {
+                        pass.clear();
+                    }
+                }
+                out.emplace_back(std::move(ssid), std::move(pass));
+            }
+        }
+    }
+    nvs_close(h);
+    return out;
 }

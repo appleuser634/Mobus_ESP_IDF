@@ -55,10 +55,16 @@ static const char *TAG = "Mobus v3.14";
 Neopixel neopixel;
 #include <oled.hpp>
 #include <ntp.hpp>
-#include <buzzer.hpp>
 #include <max98357a.h>
 
 #define uS_TO_S_FACTOR 1000000ULL  // 秒→マイクロ秒
+
+// Provide a strong definition for Wi‑Fi event group
+extern "C" {
+#include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
+}
+EventGroupHandle_t s_wifi_event_group = nullptr;
 
 // #include <notification.hpp>
 
@@ -72,7 +78,8 @@ void app_main();
 
 void check_notification() {
     Oled oled;
-    Buzzer buzzer;
+    (void)oled; // suppress unused warning
+    Max98357A buzzer;
     Led led;
 
     printf("通知チェック中...");
@@ -91,11 +98,11 @@ void check_notification() {
                 printf("got notification!");
 
                 for (int n = 0; n < 2; n++) {
-                    buzzer.buzzer_on(2600);
+                    buzzer.start_tone(2600.0f, 0.6f);
                     led.led_on();
                     neopixel.set_color(0, 10, 100);
                     vTaskDelay(50 / portTICK_PERIOD_MS);
-                    buzzer.buzzer_off();
+                    buzzer.stop_tone();
                     led.led_off();
                     neopixel.set_color(0, 0, 0);
                     vTaskDelay(50 / portTICK_PERIOD_MS);
@@ -182,9 +189,11 @@ void app_main(void) {
         }
         esp_deep_sleep_start();
     } else {
-        // 起動音を鳴らす
-        Buzzer buzzer;
-        buzzer.boot_sound();
+        // 起動音を鳴らす (MAX98357A)
+        Max98357A spk2;
+        spk2.init();
+        spk2.play_tone(1000.0f, 500, 0.4f);
+        spk2.deinit();
         // 起動時のロゴを表示
         oled.BootDisplay();
         // LEDを光らす
@@ -208,7 +217,7 @@ void app_main(void) {
 
     // Start OTA auto-update background if enabled
     {
-        std::string auto_flag = get_nvs((char *)"ota_auto");
+        std::string auto_flag = get_nvs("ota_auto");
         if (auto_flag == "true") {
             ota_client::start_background_task();
         }

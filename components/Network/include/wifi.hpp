@@ -7,6 +7,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include <nvs_rw.hpp>
 
 #include "lwip/err.h"
 #include "lwip/sys.h"
@@ -20,7 +21,7 @@
 #define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD WIFI_AUTH_WPA2_PSK
 
 /* FreeRTOS event group to signal when we are connected*/
-static EventGroupHandle_t s_wifi_event_group;
+extern EventGroupHandle_t s_wifi_event_group;
 
 /* The event group allows multiple bits for each event, but we only care about
  * two events:
@@ -150,7 +151,24 @@ class WiFi {
         ESP_ERROR_CHECK(esp_wifi_init(&cfg));
         // Keep Wi-Fi config in RAM to avoid NVS writes from driver
         ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-        wifi_set_sta();
+    }
+
+    bool wifi_connect_saved_any(uint32_t timeout_ms_per = 12000) {
+        auto creds = get_wifi_credentials();
+        for (auto &p : creds) {
+            ESP_LOGI(TAG, "Trying Wi-Fi SSID:%s", p.first.c_str());
+            wifi_set_sta(p.first, p.second);
+            // Wait until connected or fail bit
+            EventBits_t bits = xEventGroupWaitBits(
+                s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+                pdFALSE, pdFALSE, pdMS_TO_TICKS(timeout_ms_per));
+            if (bits & WIFI_CONNECTED_BIT) {
+                ESP_LOGI(TAG, "Connected to SSID:%s", p.first.c_str());
+                return true;
+            }
+            ESP_LOGW(TAG, "Failed to connect SSID:%s", p.first.c_str());
+        }
+        return false;
     }
 
     wifi_state_t get_wifi_state() { return wifi_state; }
@@ -181,6 +199,8 @@ class WiFi {
 
         ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
         wifi_init_sta();
+        // Try saved credentials first (if any); otherwise leave Wi‑Fi idle until user configures
+        wifi_connect_saved_any();
         esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
     }
 };
