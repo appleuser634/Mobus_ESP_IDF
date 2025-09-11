@@ -106,6 +106,8 @@ esp_err_t do_ota(const std::string& bin_url_in) {
     std::string bin_url = rewrite_dev_url_http(bin_url_in);
     esp_http_client_config_t hc = {};
     hc.url = bin_url.c_str();
+    hc.timeout_ms = 15000;            // avoid long stalls
+    hc.keep_alive_enable = true;      // keep TLS session for full download
     // Use CA cert only for HTTPS
     bool is_https = bin_url.rfind("https://", 0) == 0;
 #if HAVE_CRT_BUNDLE
@@ -116,8 +118,9 @@ esp_err_t do_ota(const std::string& bin_url_in) {
 #endif
     esp_https_ota_config_t ocfg = { };
     ocfg.http_config = &hc;
-    ocfg.partial_http_download = true;
-    ocfg.max_http_request_size = 4096;
+    // Use single HTTP stream; many small partial requests cause repeated TLS handshakes
+    ocfg.partial_http_download = false;
+    ocfg.max_http_request_size = 0;   // unused when partial_http_download=false
     ocfg.buffer_caps = MALLOC_CAP_SPIRAM;
     ESP_LOGI(TAG_OTA, "OTA from %s", bin_url.c_str());
     auto err = esp_https_ota(&ocfg);
@@ -133,12 +136,14 @@ esp_err_t do_ota(const std::string& bin_url_in) {
                 ESP_LOGW(TAG_OTA, "Retry OTA via HTTP: %s", alt.c_str());
                 esp_http_client_config_t hc2 = {};
                 hc2.url = alt.c_str();
+                hc2.timeout_ms = 15000;
+                hc2.keep_alive_enable = true;
                 // no bundle for HTTP
                 hc2.cert_pem = nullptr;
                 esp_https_ota_config_t ocfg2 = {};
                 ocfg2.http_config = &hc2;
-                ocfg2.partial_http_download = true;
-                ocfg2.max_http_request_size = 4096;
+                ocfg2.partial_http_download = false;
+                ocfg2.max_http_request_size = 0;
                 ocfg2.buffer_caps = MALLOC_CAP_SPIRAM;
                 err = esp_https_ota(&ocfg2);
                 if (err == ESP_OK) {
