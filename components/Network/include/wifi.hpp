@@ -249,8 +249,9 @@ class WiFi {
 
         ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
         wifi_init_sta();
+        // Disable power save to avoid driver path timing issues during bring-up
+        esp_wifi_set_ps(WIFI_PS_NONE);
         // Try saved credentials first (if any); otherwise leave Wi‑Fi idle until user configures
         wifi_connect_saved_any();
-        esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
     }
 };

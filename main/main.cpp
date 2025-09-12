@@ -123,8 +123,9 @@ void check_notification() {
 void app_main(void) {
     printf("Hello world!!!!\n");
 
-    // Defer OTA validation: mark app valid after system stabilizes
+    // Defer OTA validation (only if rollback is enabled): mark app valid after system stabilizes
     auto start_deferred_ota_validation = []() {
+#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
         auto task = +[](void*) {
             // Give system a moment to initialize (Wi‑Fi, heap, etc.)
             vTaskDelay(pdMS_TO_TICKS(8000));
@@ -132,19 +133,29 @@ void app_main(void) {
             if (!running) { vTaskDelete(nullptr); return; }
             esp_ota_img_states_t state;
             if (esp_ota_get_state_partition(running, &state) == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY) {
-                // Optional: wait briefly for Wi‑Fi connect bit (best-effort)
-                if (s_wifi_event_group) {
-                    (void)xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(4000));
+                // To avoid flash writes while Wi‑Fi is actively running heavy traffic,
+                // momentarily stop Wi‑Fi (best-effort) before marking valid.
+                wifi_mode_t mode = WIFI_MODE_NULL;
+                bool wifi_inited = (esp_wifi_get_mode(&mode) == ESP_OK);
+                if (wifi_inited) {
+                    (void)esp_wifi_stop();
+                    vTaskDelay(pdMS_TO_TICKS(100));
                 }
                 ESP_LOGI(TAG, "OTA image pending verify; marking as valid");
                 esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
                 if (err != ESP_OK) {
                     ESP_LOGE(TAG, "Failed to mark app valid: %s", esp_err_to_name(err));
                 }
+                if (wifi_inited) {
+                    (void)esp_wifi_start();
+                }
             }
             vTaskDelete(nullptr);
         };
         xTaskCreate(task, "ota_mark_valid", 4096, nullptr, 5, nullptr);
+#else
+        // Rollback disabled: no pending verify flow, nothing to do.
+#endif
     };
 
     start_deferred_ota_validation();

@@ -3040,7 +3040,8 @@ class MenuDisplay {
     void start_menu_task() {
         printf("Start Menu Task...");
         // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
-        xTaskCreatePinnedToCore(&menu_task, "menu_task", 8096, NULL, 6, NULL,
+        // Increase stack to avoid rare overflows during heavy UI & networking
+        xTaskCreatePinnedToCore(&menu_task, "menu_task", 12288, NULL, 6, NULL,
                                 0);
     }
 
@@ -3088,13 +3089,23 @@ class MenuDisplay {
         // 電波強度の初期値
         float radioLevel = 0;
 
-        // 通知の取得
+        // 通知の取得はOTA検証が完了するまで少し待つ（フラッシュ書込みと競合を避ける）
+        {
+            const esp_partition_t* running = esp_ota_get_running_partition();
+            esp_ota_img_states_t stp;
+            int wait_ms = 0;
+            while (running && esp_ota_get_state_partition(running, &stp) == ESP_OK && stp == ESP_OTA_IMG_PENDING_VERIFY && wait_ms < 12000) {
+                vTaskDelay(pdMS_TO_TICKS(200));
+                wait_ms += 200;
+            }
+        }
         http_client.start_notifications();
         JsonDocument notif_res = http_client.get_notifications();
 
         // バッテリー電圧の取得
         PowerMonitor::power_state_t power_state = power.get_power_state();
-        printf("Power Voltage:%d\n", power_state.power_voltage);
+        // reduce console traffic to avoid stressing VFS/stdio during UI init
+        // ESP_LOGD(TAG, "Power Voltage:%d", power_state.power_voltage);
 
         if (power_state.power_voltage > 140) {
             power_state.power_voltage = 140;
@@ -3121,18 +3132,21 @@ class MenuDisplay {
             int p_time = (esp_timer_get_time() - st) / 1000000;
             if (p_time > 3) {
                 // 電波強度を更新
-                wifi_ap_record_t ap;
-                esp_wifi_sta_get_ap_info(&ap);
-                printf("%d\n", ap.rssi);
-
-                radioLevel = 4 - (ap.rssi / -20);
+                wifi_ap_record_t ap = {};
+                if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+                    int rssi = ap.rssi;
+                    // ESP_LOGD(TAG, "RSSI:%d", rssi);
+                    radioLevel = 4 - (rssi / -20);
+                } else {
+                    radioLevel = 0;
+                }
                 if (radioLevel < 1) {
                     radioLevel = 1;
                 }
 
                 // バッテリー電圧を更新
                 power_state = power.get_power_state();
-                printf("Power Voltage:%d\n", power_state.power_voltage);
+                // ESP_LOGD(TAG, "Power Voltage:%d", power_state.power_voltage);
 
                 if (power_state.power_voltage > 140) {
                     power_state.power_voltage = 140;
@@ -3209,9 +3223,7 @@ class MenuDisplay {
                 enter_button.get_button_state();
 
             if (type_button_state.pushed) {
-                printf("Button pushed!\n");
-                printf("Pushing time:%lld\n", type_button_state.pushing_sec);
-                printf("Push type:%c\n", type_button_state.push_type);
+                // ESP_LOGD(TAG, "Button pushed! time=%lld type=%c", type_button_state.pushing_sec, type_button_state.push_type);
 
                 if (cursor_index == 0) {
                     contactBook.running_flag = true;
