@@ -123,20 +123,31 @@ void check_notification() {
 void app_main(void) {
     printf("Hello world!!!!\n");
 
-    // If this image was just booted after OTA, mark it valid to cancel rollback
-    {
-        const esp_partition_t* running = esp_ota_get_running_partition();
-        if (running) {
+    // Defer OTA validation: mark app valid after system stabilizes
+    auto start_deferred_ota_validation = []() {
+        auto task = +[](void*) {
+            // Give system a moment to initialize (Wi‑Fi, heap, etc.)
+            vTaskDelay(pdMS_TO_TICKS(8000));
+            const esp_partition_t* running = esp_ota_get_running_partition();
+            if (!running) { vTaskDelete(nullptr); return; }
             esp_ota_img_states_t state;
             if (esp_ota_get_state_partition(running, &state) == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY) {
+                // Optional: wait briefly for Wi‑Fi connect bit (best-effort)
+                if (s_wifi_event_group) {
+                    (void)xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(4000));
+                }
                 ESP_LOGI(TAG, "OTA image pending verify; marking as valid");
                 esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
                 if (err != ESP_OK) {
                     ESP_LOGE(TAG, "Failed to mark app valid: %s", esp_err_to_name(err));
                 }
             }
-        }
-    }
+            vTaskDelete(nullptr);
+        };
+        xTaskCreate(task, "ota_mark_valid", 4096, nullptr, 5, nullptr);
+    };
+
+    start_deferred_ota_validation();
 
     Max98357A spk;
     Oled oled;
