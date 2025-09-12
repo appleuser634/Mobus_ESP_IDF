@@ -83,6 +83,7 @@ static LGFX_Sprite sprite(
 #include <mqtt_runtime.h>
 #include <ble_uart.hpp>
 #include "esp_app_desc.h"
+#include "esp_ota_ops.h"
 
 // UTF-8 の1文字の先頭バイト数を調べる（UTF-8のみ対応）
 int utf8_char_length(unsigned char ch) {
@@ -2215,11 +2216,12 @@ class SettingMenu {
         } setting_t;
 
         // Add Bluetooth pairing item to settings
-        setting_t settings[10] = {{"Profile"},        {"Wi-Fi"},
+        setting_t settings[11] = {{"Profile"},        {"Wi-Fi"},
                                   {"Bluetooth"},      {"Sound"},
                                   {"Real Time Chat"}, {"Auto Update"},
                                   {"OTA Manifest"},   {"Update Now"},
-                                  {"Develop"},        {"Factory Reset"}};
+                                  {"Firmware Info"},  {"Develop"},
+                                  {"Factory Reset"}};
 
         int select_index = 0;
         int font_height = 13;
@@ -2285,6 +2287,8 @@ class SettingMenu {
                     sprite.print(label.c_str());
                 } else if (settings[i].setting_name == "Update Now") {
                     sprite.print("Update Now");
+                } else if (settings[i].setting_name == "Firmware Info") {
+                    sprite.print("Firmware Info");
                 } else {
                     sprite.print(settings[i].setting_name.c_str());
                 }
@@ -2575,6 +2579,62 @@ class SettingMenu {
                 }
                 type_button.clear_button_state();
                 type_button.reset_timer();
+                joystick.reset_timer();
+            } else if (type_button_state.pushed &&
+                       settings[select_index].setting_name == "Firmware Info") {
+                // Consume the button press before entering the info loop to avoid instant exit
+                type_button.clear_button_state();
+                type_button.reset_timer();
+                back_button.clear_button_state();
+                back_button.reset_timer();
+                vTaskDelay(pdMS_TO_TICKS(120));
+                // Show version and partitions until user exits
+                while (1) {
+                    // Fetch info
+                    const esp_app_desc_t* app = esp_app_get_description();
+                    const esp_partition_t* running = esp_ota_get_running_partition();
+                    const esp_partition_t* boot = esp_ota_get_boot_partition();
+                    const char* ver = app ? app->version : "unknown";
+                    const char* run_label = running ? running->label : "-";
+                    const char* boot_label = boot ? boot->label : "-";
+
+                    sprite.fillRect(0, 0, 128, 64, 0);
+                    sprite.setFont(&fonts::Font2);
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                    sprite.drawCenterString("Firmware Info", 64, 0);
+
+                    char line[64];
+                    snprintf(line, sizeof(line), "Ver: %s", ver);
+                    sprite.drawString(line, 2, 16);
+                    if (running) {
+                        snprintf(line, sizeof(line), "Run: %s @%06lx", run_label, (unsigned long)running->address);
+                    } else {
+                        snprintf(line, sizeof(line), "Run: -");
+                    }
+                    sprite.drawString(line, 2, 28);
+                    if (boot) {
+                        snprintf(line, sizeof(line), "Boot:%s @%06lx", boot_label, (unsigned long)boot->address);
+                    } else {
+                        snprintf(line, sizeof(line), "Boot: -");
+                    }
+                    sprite.drawString(line, 2, 40);
+
+                    // Show short hint
+                    sprite.drawString("Back=Exit", 2, 54);
+                    sprite.pushSprite(&lcd, 0, 0);
+
+                    // Exit when back or type pressed
+                    Button::button_state_t tbs = type_button.get_button_state();
+                    Button::button_state_t bbs = back_button.get_button_state();
+                    if (tbs.pushed || bbs.pushed) {
+                        type_button.clear_button_state();
+                        type_button.reset_timer();
+                        back_button.clear_button_state();
+                        back_button.reset_timer();
+                        break;
+                    }
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                }
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
                        settings[select_index].setting_name == "Develop") {
