@@ -1085,7 +1085,8 @@ class ContactBook {
         // 通知の取得
         JsonDocument notif_res = http_client.get_notifications();
 
-        MessageBox box; (void)box;
+        MessageBox box;
+        (void)box;
         while (1) {
             // Joystickの状態を取得
             Joystick::joystick_state_t joystick_state =
@@ -1160,41 +1161,77 @@ class ContactBook {
                     std::string friend_code =
                         wifi_input_info_proxy("Friend Code/ID", "");
                     if (friend_code != "") {
-                        chatapi::ChatApiClient api;
-                        std::string username = get_nvs((char *)"user_name");
-                        std::string password = get_nvs((char *)"password");
-                        if (password == "") password = "password123";
-                        if (api.token().empty()) {
-                            api.login(username, password);
-                        }
-
                         sprite.fillRect(0, 0, 128, 64, 0);
                         sprite.setFont(&fonts::Font2);
                         sprite.setTextColor(0xFFFFFFu, 0x000000u);
                         sprite.drawCenterString("Sending request...", 64, 22);
                         sprite.pushSprite(&lcd, 0, 0);
 
-                        std::string resp;
-                        int status = 0;
-                        auto err = api.send_friend_request(friend_code, &resp,
-                                                           &status);
+                        bool ok = false;
+                        const char *emsg = nullptr;
+                        if (ble_uart_is_ready()) {
+                            long long rid = esp_timer_get_time();
+                            std::string req =
+                                std::string("{ \"id\":\"") +
+                                std::to_string(rid) +
+                                "\", \"type\": \"send_friend_request\", "
+                                "\"code\": \"" +
+                                friend_code + "\" }\n";
+                            ble_uart_send(
+                                reinterpret_cast<const uint8_t *>(req.c_str()),
+                                req.size());
+                            // wait for result in NVS
+                            const int timeout_ms = 3000;
+                            int waited = 0;
+                            while (waited < timeout_ms) {
+                                std::string rid_s =
+                                    get_nvs((char *)"ble_result_id");
+                                if (rid_s == std::to_string(rid)) {
+                                    std::string j =
+                                        get_nvs((char *)"ble_last_result");
+                                    StaticJsonDocument<512> doc;
+                                    if (deserializeJson(doc, j) ==
+                                        DeserializationError::Ok) {
+                                        ok = doc["ok"].as<bool>();
+                                        if (doc["error"])
+                                            emsg =
+                                                doc["error"].as<const char *>();
+                                    }
+                                    break;
+                                }
+                                vTaskDelay(50 / portTICK_PERIOD_MS);
+                                waited += 50;
+                            }
+                        } else {
+                            chatapi::ChatApiClient api;
+                            std::string username = get_nvs((char *)"user_name");
+                            std::string password = get_nvs((char *)"password");
+                            if (password == "") password = "password123";
+                            if (api.token().empty())
+                                api.login(username, password);
+                            std::string resp;
+                            int status = 0;
+                            auto err = api.send_friend_request(friend_code,
+                                                               &resp, &status);
+                            if (err == ESP_OK && status >= 200 && status < 300)
+                                ok = true;
+                            else if (err == ESP_OK && status >= 400) {
+                                StaticJsonDocument<256> edoc;
+                                if (deserializeJson(edoc, resp) ==
+                                        DeserializationError::Ok &&
+                                    edoc["error"]) {
+                                    emsg = edoc["error"].as<const char *>();
+                                }
+                            }
+                        }
                         sprite.fillRect(0, 0, 128, 64, 0);
                         sprite.setFont(&fonts::Font2);
-                        if (err == ESP_OK && status >= 200 && status < 300) {
+                        if (ok)
                             sprite.drawCenterString("Request sent!", 64, 22);
-                        } else if (err == ESP_OK && status >= 400) {
-                            // Try to parse error from response
-                            StaticJsonDocument<256> edoc;
-                            const char *emsg = "Invalid ID";
-                            if (deserializeJson(edoc, resp) ==
-                                    DeserializationError::Ok &&
-                                edoc["error"]) {
-                                emsg = edoc["error"].as<const char *>();
-                            }
+                        else {
                             sprite.drawCenterString("Error:", 64, 16);
-                            sprite.drawCenterString(emsg, 64, 34);
-                        } else {
-                            sprite.drawCenterString("Failed to send", 64, 22);
+                            sprite.drawCenterString(emsg ? emsg : "Failed", 64,
+                                                    34);
                         }
                         sprite.pushSprite(&lcd, 0, 0);
                         vTaskDelay(1200 / portTICK_PERIOD_MS);
@@ -1203,7 +1240,6 @@ class ContactBook {
                     // Pending Requests UI
                     type_button.clear_button_state();
                     joystick.reset_timer();
-
                     chatapi::ChatApiClient api;
                     std::string username = get_nvs((char *)"user_name");
                     std::string password = get_nvs((char *)"password");
@@ -1212,10 +1248,48 @@ class ContactBook {
                         api.login(username, password);
                     }
 
-                    // Fetch pending
+                    // Fetch pending (BLE first)
                     std::vector<std::pair<std::string, std::string>>
                         pending;  // {request_id, username}
-                    {
+                    if (ble_uart_is_ready()) {
+                        long long rid = esp_timer_get_time();
+                        std::string req = std::string("{ \"id\":\"") +
+                                          std::to_string(rid) +
+                                          "\", \"type\": \"get_pending\" }\n";
+                        ble_uart_send(
+                            reinterpret_cast<const uint8_t *>(req.c_str()),
+                            req.size());
+                        const int timeout_ms = 2500;
+                        int waited = 0;
+                        while (waited < timeout_ms) {
+                            std::string js = get_nvs((char *)"ble_pending");
+                            if (!js.empty()) {
+                                StaticJsonDocument<4096> pdoc;
+                                if (deserializeJson(pdoc, js) ==
+                                    DeserializationError::Ok) {
+                                    for (JsonObject r :
+                                         pdoc["requests"].as<JsonArray>()) {
+                                        std::string rid =
+                                            r["request_id"].as<const char *>()
+                                                ? r["request_id"]
+                                                      .as<const char *>()
+                                                : "";
+                                        std::string uname =
+                                            r["username"].as<const char *>()
+                                                ? r["username"]
+                                                      .as<const char *>()
+                                                : "";
+                                        if (!rid.empty())
+                                            pending.push_back({rid, uname});
+                                    }
+                                    break;
+                                }
+                            }
+                            vTaskDelay(100 / portTICK_PERIOD_MS);
+                            waited += 100;
+                        }
+                    }
+                    if (pending.empty()) {
                         std::string presp;
                         if (api.get_pending_requests(presp) == ESP_OK) {
                             StaticJsonDocument<2048> pdoc;
@@ -1327,14 +1401,58 @@ class ContactBook {
                                     if (selar == 1) {
                                         // Send respond
                                         std::string rid = pending[psel].first;
-                                        std::string rresp;
-                                        int rstatus = 0;
-                                        api.respond_friend_request(
-                                            rid, accept, &rresp, &rstatus);
+                                        bool ok = false;
+                                        if (ble_uart_is_ready()) {
+                                            long long crid =
+                                                esp_timer_get_time();
+                                            std::string req =
+                                                std::string("{ \"id\":\"") +
+                                                std::to_string(crid) +
+                                                "\", \"type\": "
+                                                "\"respond_friend_request\", "
+                                                "\"request_id\": \"" +
+                                                rid + "\", \"accept\": " +
+                                                (accept ? "true" : "false") +
+                                                " }\n";
+                                            ble_uart_send(reinterpret_cast<
+                                                              const uint8_t *>(
+                                                              req.c_str()),
+                                                          req.size());
+                                            const int timeout_ms = 2000;
+                                            int waited = 0;
+                                            while (waited < timeout_ms) {
+                                                std::string rid_s = get_nvs(
+                                                    (char *)"ble_result_id");
+                                                if (rid_s ==
+                                                    std::to_string(crid)) {
+                                                    std::string j = get_nvs((
+                                                        char *)"ble_last_"
+                                                               "result");
+                                                    StaticJsonDocument<512> dd;
+                                                    if (deserializeJson(dd,
+                                                                        j) ==
+                                                        DeserializationError::
+                                                            Ok)
+                                                        ok =
+                                                            dd["ok"].as<bool>();
+                                                    break;
+                                                }
+                                                vTaskDelay(50 /
+                                                           portTICK_PERIOD_MS);
+                                                waited += 50;
+                                            }
+                                        } else {
+                                            std::string rresp;
+                                            int rstatus = 0;
+                                            api.respond_friend_request(
+                                                rid, accept, &rresp, &rstatus);
+                                            ok = (rstatus >= 200 &&
+                                                  rstatus < 300);
+                                        }
                                         // Show outcome
                                         sprite.fillRect(0, 0, 128, 64, 0);
                                         sprite.setTextColor(0xFFFF, 0x0000);
-                                        if (rstatus >= 200 && rstatus < 300)
+                                        if (ok)
                                             sprite.drawCenterString("Done", 64,
                                                                     22);
                                         else
@@ -1344,35 +1462,99 @@ class ContactBook {
                                         vTaskDelay(800 / portTICK_PERIOD_MS);
                                         // Refresh pending list
                                         pending.clear();
-                                        std::string presp2;
-                                        if (api.get_pending_requests(presp2) ==
-                                            ESP_OK) {
-                                            StaticJsonDocument<2048> pdoc2;
-                                            if (deserializeJson(pdoc2,
-                                                                presp2) ==
-                                                DeserializationError::Ok) {
-                                                for (JsonObject r :
-                                                     pdoc2["requests"]
-                                                         .as<JsonArray>()) {
-                                                    std::string rid2 =
-                                                        r["request_id"]
-                                                                .as<const char
-                                                                        *>()
-                                                            ? r["request_id"]
-                                                                  .as<const char
-                                                                          *>()
-                                                            : "";
-                                                    std::string uname2 =
-                                                        r["username"]
-                                                                .as<const char
-                                                                        *>()
-                                                            ? r["username"]
-                                                                  .as<const char
-                                                                          *>()
-                                                            : "";
-                                                    if (!rid2.empty())
-                                                        pending.push_back(
-                                                            {rid2, uname2});
+                                        // Re-fetch pending (BLE first)
+                                        if (ble_uart_is_ready()) {
+                                            long long rid2 =
+                                                esp_timer_get_time();
+                                            std::string req2 =
+                                                std::string("{ \"id\":\"") +
+                                                std::to_string(rid2) +
+                                                "\", \"type\": \"get_pending\" "
+                                                "}\n";
+                                            ble_uart_send(reinterpret_cast<
+                                                              const uint8_t *>(
+                                                              req2.c_str()),
+                                                          req2.size());
+                                            const int timeout_ms = 1500;
+                                            int waited = 0;
+                                            while (waited < timeout_ms) {
+                                                std::string js = get_nvs(
+                                                    (char *)"ble_pending");
+                                                if (!js.empty()) {
+                                                    StaticJsonDocument<2048>
+                                                        pdoc2;
+                                                    if (deserializeJson(pdoc2,
+                                                                        js) ==
+                                                        DeserializationError::
+                                                            Ok) {
+                                                        for (
+                                                            JsonObject r :
+                                                            pdoc2["requests"]
+                                                                .as<JsonArray>()) {
+                                                            std::string rid2s =
+                                                                r["request_id"]
+                                                                        .as<const char
+                                                                                *>()
+                                                                    ? r["reques"
+                                                                        "t_id"]
+                                                                          .as<const char
+                                                                                  *>()
+                                                                    : "";
+                                                            std::string uname2 =
+                                                                r["username"]
+                                                                        .as<const char
+                                                                                *>()
+                                                                    ? r["userna"
+                                                                        "me"]
+                                                                          .as<const char
+                                                                                  *>()
+                                                                    : "";
+                                                            if (!rid2s.empty())
+                                                                pending.push_back(
+                                                                    {rid2s,
+                                                                     uname2});
+                                                        }
+                                                    }
+                                                    break;
+                                                }
+                                                vTaskDelay(100 /
+                                                           portTICK_PERIOD_MS);
+                                                waited += 100;
+                                            }
+                                        }
+                                        if (pending.empty()) {
+                                            std::string presp2;
+                                            if (api.get_pending_requests(
+                                                    presp2) == ESP_OK) {
+                                                StaticJsonDocument<2048> pdoc2;
+                                                if (deserializeJson(pdoc2,
+                                                                    presp2) ==
+                                                    DeserializationError::Ok) {
+                                                    for (JsonObject r :
+                                                         pdoc2["requests"]
+                                                             .as<JsonArray>()) {
+                                                        std::string rid2s =
+                                                            r["request_id"]
+                                                                    .as<const char
+                                                                            *>()
+                                                                ? r["request_"
+                                                                    "id"]
+                                                                      .as<const char
+                                                                              *>()
+                                                                : "";
+                                                        std::string uname2 =
+                                                            r["username"]
+                                                                    .as<const char
+                                                                            *>()
+                                                                ? r["username"]
+                                                                      .as<const char
+                                                                              *>()
+                                                                : "";
+                                                        if (!rid2s.empty())
+                                                            pending.push_back(
+                                                                {rid2s,
+                                                                 uname2});
+                                                    }
                                                 }
                                             }
                                         }
@@ -1429,7 +1611,8 @@ class WiFiSetting {
         if (uint_ssid == nullptr) return std::string("");
         char char_ssid[33] = {0};
         // ensure null-terminated copy up to 32 bytes
-        snprintf(char_ssid, sizeof(char_ssid), "%s", reinterpret_cast<const char *>(uint_ssid));
+        snprintf(char_ssid, sizeof(char_ssid), "%s",
+                 reinterpret_cast<const char *>(uint_ssid));
         return std::string(char_ssid);
     }
 
@@ -1744,32 +1927,32 @@ class WiFiSetting {
                 joystick.reset_timer();
             }
 
-        for (int i = 0; i <= ssid_n; i++) {
-            sprite.setCursor(10, (font_height + margin) * i);
+            for (int i = 0; i <= ssid_n; i++) {
+                sprite.setCursor(10, (font_height + margin) * i);
 
-            if (i < ssid_n) {
-                ESP_LOGI(TAG, "SSID \t\t%s", ap_info[i].ssid);
-                ESP_LOGI(TAG, "RSSI \t\t%d", ap_info[i].rssi);
-                ESP_LOGI(TAG, "Channel \t\t%d", ap_info[i].primary);
-            }
+                if (i < ssid_n) {
+                    ESP_LOGI(TAG, "SSID \t\t%s", ap_info[i].ssid);
+                    ESP_LOGI(TAG, "RSSI \t\t%d", ap_info[i].rssi);
+                    ESP_LOGI(TAG, "Channel \t\t%d", ap_info[i].primary);
+                }
 
-            if (i == select_index) {
-                sprite.setTextColor(0x000000u, 0xFFFFFFu);
-                sprite.fillRect(0, (font_height + margin) * select_index,
-                                128, font_height + 3, 0xFFFF);
-            } else {
-                sprite.setTextColor(0xFFFFFFu, 0x000000u);
-            }
+                if (i == select_index) {
+                    sprite.setTextColor(0x000000u, 0xFFFFFFu);
+                    sprite.fillRect(0, (font_height + margin) * select_index,
+                                    128, font_height + 3, 0xFFFF);
+                } else {
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                }
 
-            if (ssid_n == i) {
-                // 手動入力のためのOtherを表示
-                std::string disp_ssid = "Other";
-                sprite.print(disp_ssid.c_str());
-            } else {
-                // スキャンの結果取得できたSSIDを表示
-                sprite.print(get_omitted_ssid(ap_info[i].ssid).c_str());
+                if (ssid_n == i) {
+                    // 手動入力のためのOtherを表示
+                    std::string disp_ssid = "Other";
+                    sprite.print(disp_ssid.c_str());
+                } else {
+                    // スキャンの結果取得できたSSIDを表示
+                    sprite.print(get_omitted_ssid(ap_info[i].ssid).c_str());
+                }
             }
-        }
 
             sprite.pushSprite(&lcd, 0, 0);
 
@@ -2216,12 +2399,11 @@ class SettingMenu {
         } setting_t;
 
         // Add Bluetooth pairing item to settings
-        setting_t settings[11] = {{"Profile"},        {"Wi-Fi"},
-                                  {"Bluetooth"},      {"Sound"},
-                                  {"Real Time Chat"}, {"Auto Update"},
-                                  {"OTA Manifest"},   {"Update Now"},
-                                  {"Firmware Info"},  {"Develop"},
-                                  {"Factory Reset"}};
+        setting_t settings[11] = {
+            {"Profile"},      {"Wi-Fi"},          {"Bluetooth"},
+            {"Sound"},        {"Real Time Chat"}, {"Auto Update"},
+            {"OTA Manifest"}, {"Update Now"},     {"Firmware Info"},
+            {"Develop"},      {"Factory Reset"}};
 
         int select_index = 0;
         int font_height = 13;
@@ -2287,6 +2469,15 @@ class SettingMenu {
                     sprite.print(label.c_str());
                 } else if (settings[i].setting_name == "Update Now") {
                     sprite.print("Update Now");
+                } else if (settings[i].setting_name == "Bluetooth") {
+                    std::string label = "Bluetooth";
+                    bool connected = ble_uart_is_ready();
+                    std::string pairing = get_nvs((char *)"ble_pair");
+                    if (connected)
+                        label += " [Connected]";
+                    else if (pairing == "true")
+                        label += " [PAIRING]";
+                    sprite.print(label.c_str());
                 } else if (settings[i].setting_name == "Firmware Info") {
                     sprite.print("Firmware Info");
                 } else {
@@ -2582,7 +2773,8 @@ class SettingMenu {
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
                        settings[select_index].setting_name == "Firmware Info") {
-                // Consume the button press before entering the info loop to avoid instant exit
+                // Consume the button press before entering the info loop to
+                // avoid instant exit
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 back_button.clear_button_state();
@@ -2591,12 +2783,13 @@ class SettingMenu {
                 // Show version and partitions until user exits
                 while (1) {
                     // Fetch info
-                    const esp_app_desc_t* app = esp_app_get_description();
-                    const esp_partition_t* running = esp_ota_get_running_partition();
-                    const esp_partition_t* boot = esp_ota_get_boot_partition();
-                    const char* ver = app ? app->version : "unknown";
-                    const char* run_label = running ? running->label : "-";
-                    const char* boot_label = boot ? boot->label : "-";
+                    const esp_app_desc_t *app = esp_app_get_description();
+                    const esp_partition_t *running =
+                        esp_ota_get_running_partition();
+                    const esp_partition_t *boot = esp_ota_get_boot_partition();
+                    const char *ver = app ? app->version : "unknown";
+                    const char *run_label = running ? running->label : "-";
+                    const char *boot_label = boot ? boot->label : "-";
 
                     sprite.fillRect(0, 0, 128, 64, 0);
                     sprite.setFont(&fonts::Font2);
@@ -2607,13 +2800,15 @@ class SettingMenu {
                     snprintf(line, sizeof(line), "Ver: %s", ver);
                     sprite.drawString(line, 2, 16);
                     if (running) {
-                        snprintf(line, sizeof(line), "Run: %s @%06lx", run_label, (unsigned long)running->address);
+                        snprintf(line, sizeof(line), "Run: %s @%06lx",
+                                 run_label, (unsigned long)running->address);
                     } else {
                         snprintf(line, sizeof(line), "Run: -");
                     }
                     sprite.drawString(line, 2, 28);
                     if (boot) {
-                        snprintf(line, sizeof(line), "Boot:%s @%06lx", boot_label, (unsigned long)boot->address);
+                        snprintf(line, sizeof(line), "Boot:%s @%06lx",
+                                 boot_label, (unsigned long)boot->address);
                     } else {
                         snprintf(line, sizeof(line), "Boot: -");
                     }
@@ -2971,6 +3166,7 @@ class Game {
 
             // break_flagが立ってたら終了
             if (break_flag) {
+                buzzer.deinit();
                 break;
             }
 
@@ -3151,10 +3347,12 @@ class MenuDisplay {
 
         // 通知の取得はOTA検証が完了するまで少し待つ（フラッシュ書込みと競合を避ける）
         {
-            const esp_partition_t* running = esp_ota_get_running_partition();
+            const esp_partition_t *running = esp_ota_get_running_partition();
             esp_ota_img_states_t stp;
             int wait_ms = 0;
-            while (running && esp_ota_get_state_partition(running, &stp) == ESP_OK && stp == ESP_OTA_IMG_PENDING_VERIFY && wait_ms < 12000) {
+            while (running &&
+                   esp_ota_get_state_partition(running, &stp) == ESP_OK &&
+                   stp == ESP_OTA_IMG_PENDING_VERIFY && wait_ms < 12000) {
                 vTaskDelay(pdMS_TO_TICKS(200));
                 wait_ms += 200;
             }
@@ -3283,7 +3481,8 @@ class MenuDisplay {
                 enter_button.get_button_state();
 
             if (type_button_state.pushed) {
-                // ESP_LOGD(TAG, "Button pushed! time=%lld type=%c", type_button_state.pushing_sec, type_button_state.push_type);
+                // ESP_LOGD(TAG, "Button pushed! time=%lld type=%c",
+                // type_button_state.pushing_sec, type_button_state.push_type);
 
                 if (cursor_index == 0) {
                     contactBook.running_flag = true;
@@ -3489,8 +3688,9 @@ class ProfileSetting {
         return user_name;
     }
 
-    static void morse_greeting(const char* greet_txt, const char* last_greet_txt = "",
-                               int cx = 64, int cy = 32) {
+    static void morse_greeting(const char *greet_txt,
+                               const char *last_greet_txt = "", int cx = 64,
+                               int cy = 32) {
         Max98357A buzzer;
 
         sprite.setColorDepth(8);

@@ -444,6 +444,30 @@ static void handle_frame_from_phone(const std::string& frame) {
         save_nvs((char*)"ble_messages", frame);
         ESP_LOGI(GATTS_TAG, "Saved messages to NVS (ble_messages)");
     }
+    // Cache pending requests list
+    if (frame.find("\"type\":\"pending_requests\"") != std::string::npos ||
+        frame.find("\"requests\"") != std::string::npos) {
+        save_nvs((char*)"ble_pending", frame);
+        ESP_LOGI(GATTS_TAG, "Saved pending requests to NVS (ble_pending)");
+    }
+    // Friend request results (send/accept/decline) -> store last result + id
+    if (frame.find("\"type\":\"friend_request_result\"") != std::string::npos ||
+        frame.find("\"type\":\"respond_friend_request_result\"") != std::string::npos) {
+        // Extract simple id field if present:  "id":"...."
+        std::string id;
+        size_t p = frame.find("\"id\"");
+        if (p != std::string::npos) {
+            p = frame.find(':', p);
+            while (p < frame.size() && (frame[p] == ':' || frame[p] == ' ')) p++;
+            if (p < frame.size() && frame[p] == '\) {
+                p++;
+                while (p < frame.size() && frame[p] != \') id.push_back(frame[p++]);
+            }
+        }
+        if (!id.empty()) save_nvs((char*)"ble_result_id", id);
+        save_nvs((char*)"ble_last_result", frame);
+        ESP_LOGI(GATTS_TAG, "Saved BLE last result (id=%s)", id.c_str());
+    }
 }
 
 static void gap_cb(esp_gap_ble_cb_event_t event,

@@ -40,7 +40,7 @@ void check_heap() {
     heap_caps_print_heap_info(MALLOC_CAP_DEFAULT);
 }
 
-static const char *TAG = "Mobus v3.14";
+static const char* TAG = "Mobus v3.14";
 
 #include <map>
 #include <string.h>
@@ -79,7 +79,7 @@ void app_main();
 
 void check_notification() {
     Oled oled;
-    (void)oled; // suppress unused warning
+    (void)oled;  // suppress unused warning
     Max98357A buzzer;
     Led led;
 
@@ -123,18 +123,24 @@ void check_notification() {
 void app_main(void) {
     printf("Hello world!!!!\n");
 
-    // Defer OTA validation (only if rollback is enabled): mark app valid after system stabilizes
+    // Defer OTA validation (only if rollback is enabled): mark app valid after
+    // system stabilizes
     auto start_deferred_ota_validation = []() {
 #if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
         auto task = +[](void*) {
             // Give system a moment to initialize (Wi‑Fi, heap, etc.)
             vTaskDelay(pdMS_TO_TICKS(8000));
             const esp_partition_t* running = esp_ota_get_running_partition();
-            if (!running) { vTaskDelete(nullptr); return; }
+            if (!running) {
+                vTaskDelete(nullptr);
+                return;
+            }
             esp_ota_img_states_t state;
-            if (esp_ota_get_state_partition(running, &state) == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY) {
-                // To avoid flash writes while Wi‑Fi is actively running heavy traffic,
-                // momentarily stop Wi‑Fi (best-effort) before marking valid.
+            if (esp_ota_get_state_partition(running, &state) == ESP_OK &&
+                state == ESP_OTA_IMG_PENDING_VERIFY) {
+                // To avoid flash writes while Wi‑Fi is actively running heavy
+                // traffic, momentarily stop Wi‑Fi (best-effort) before marking
+                // valid.
                 wifi_mode_t mode = WIFI_MODE_NULL;
                 bool wifi_inited = (esp_wifi_get_mode(&mode) == ESP_OK);
                 if (wifi_inited) {
@@ -144,7 +150,8 @@ void app_main(void) {
                 ESP_LOGI(TAG, "OTA image pending verify; marking as valid");
                 esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
                 if (err != ESP_OK) {
-                    ESP_LOGE(TAG, "Failed to mark app valid: %s", esp_err_to_name(err));
+                    ESP_LOGE(TAG, "Failed to mark app valid: %s",
+                             esp_err_to_name(err));
                 }
                 if (wifi_inited) {
                     (void)esp_wifi_start();
@@ -154,7 +161,7 @@ void app_main(void) {
         };
         xTaskCreate(task, "ota_mark_valid", 4096, nullptr, 5, nullptr);
 #else
-        // Rollback disabled: no pending verify flow, nothing to do.
+    // Rollback disabled: no pending verify flow, nothing to do.
 #endif
     };
 
@@ -186,15 +193,6 @@ void app_main(void) {
 
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
     if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
-        //// キャラクターの挨拶を描画
-        // for (int i = 0; i <= 2; i++) {
-        //   oled.ShowImage(robo1);
-        //   vTaskDelay(800 / portTICK_PERIOD_MS);
-
-        //  oled.ShowImage(robo2);
-        //  vTaskDelay(800 / portTICK_PERIOD_MS);
-        //}
-
         // 起動音を鳴らす
         spk.init();                         // LRC=39, BCLK=40, DIN=41, 44.1kHz
         spk.play_tone(1000.0f, 500, 0.4f);  // 1kHzを0.5秒、音量40%
