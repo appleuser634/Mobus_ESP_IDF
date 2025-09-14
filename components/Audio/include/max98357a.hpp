@@ -10,6 +10,7 @@
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include "esp_heap_caps.h"
 
 #include "esp_err.h"
 #include "esp_log.h"
@@ -112,7 +113,8 @@ class Max98357A {
 
         // Choose a moderate chunk size (in samples per channel)
         const size_t chunk_samples = 512;
-        std::vector<int16_t> buf(chunk_samples * channels);
+        int16_t* buf = (int16_t*)heap_caps_malloc(chunk_samples * channels * sizeof(int16_t), MALLOC_CAP_DMA);
+        if (!buf) return ESP_ERR_NO_MEM;
 
         const int total_samples = static_cast<int>((duration_ms / 1000.0f) * sample_rate);
         int samples_done = 0;
@@ -131,7 +133,7 @@ class Max98357A {
             }
             size_t bytes_to_write = n * channels * sizeof(int16_t);
             size_t bytes_written = 0;
-            esp_err_t err = i2s_channel_write(tx_chan, buf.data(), bytes_to_write, &bytes_written, portMAX_DELAY);
+            esp_err_t err = i2s_channel_write(tx_chan, buf, bytes_to_write, &bytes_written, portMAX_DELAY);
             if (err != ESP_OK) return err;
             samples_done += n;
         }
@@ -151,34 +153,46 @@ class Max98357A {
             }
             size_t bytes_to_write = n * channels * sizeof(int16_t);
             size_t bytes_written = 0;
-            ESP_RETURN_ON_ERROR(i2s_channel_write(tx_chan, buf.data(), bytes_to_write, &bytes_written, portMAX_DELAY), TAG, "fade write failed");
+            ESP_RETURN_ON_ERROR(i2s_channel_write(tx_chan, buf, bytes_to_write, &bytes_written, portMAX_DELAY), TAG, "fade write failed");
         }
         // write a short silence
         {
             const int n = std::min<int>(chunk_samples, static_cast<int>(sample_rate / 200)); // ~5ms silence
-            std::fill(buf.begin(), buf.begin() + n * channels, 0);
+            for (int i = 0; i < n * channels; ++i) buf[i] = 0;
             size_t bytes_to_write = n * channels * sizeof(int16_t);
             size_t bytes_written = 0;
-            ESP_RETURN_ON_ERROR(i2s_channel_write(tx_chan, buf.data(), bytes_to_write, &bytes_written, portMAX_DELAY), TAG, "silence write failed");
+            ESP_RETURN_ON_ERROR(i2s_channel_write(tx_chan, buf, bytes_to_write, &bytes_written, portMAX_DELAY), TAG, "silence write failed");
         }
         if (stop_after) {
             // stop clock to ensure amplifier shuts down
             disable();
         }
+        heap_caps_free(buf);
         return ESP_OK;
     }
 
     // Write raw mono 16-bit PCM samples; they will be duplicated to stereo
     esp_err_t play_pcm_mono16(const int16_t* samples, size_t sample_count, float volume = 1.0f) {
-        ESP_RETURN_ON_ERROR(init(), TAG, "init failed");
+        ESP_RETURN_ON_ERROR(enable(), TAG, "enable failed");
         const float v = clampf(volume, 0.0f, 1.0f);
         const int channels = 2;
 
-        std::vector<int16_t> buf(std::min<size_t>(1024, sample_count) * channels);
+        size_t buf_samples_per_ch = std::min<size_t>(1024, sample_count);
+        int16_t* buf = (int16_t*)heap_caps_malloc(buf_samples_per_ch * channels * sizeof(int16_t), MALLOC_CAP_DMA);
+        if (!buf) return ESP_ERR_NO_MEM;
+
+        // Prime I2S with a tiny silence to stabilize clock/amp
+        {
+            const int n = std::min<int>(static_cast<int>(sample_rate / 500), (int)buf_samples_per_ch); // ~2ms
+            for (int i = 0; i < n * channels; ++i) buf[i] = 0;
+            size_t bytes_to_write = n * channels * sizeof(int16_t);
+            size_t bytes_written = 0;
+            (void)i2s_channel_write(tx_chan, buf, bytes_to_write, &bytes_written, pdMS_TO_TICKS(20));
+        }
         size_t idx = 0;
 
         while (idx < sample_count) {
-            const size_t n = std::min<size_t>(buf.size() / channels, sample_count - idx);
+            const size_t n = std::min<size_t>(buf_samples_per_ch, sample_count - idx);
             for (size_t i = 0; i < n; ++i) {
                 int32_t s = static_cast<int32_t>(samples[idx + i] * v);
                 if (s > 32767) s = 32767;
@@ -189,10 +203,125 @@ class Max98357A {
             }
             size_t bytes_to_write = n * channels * sizeof(int16_t);
             size_t bytes_written = 0;
-            esp_err_t err = i2s_channel_write(tx_chan, buf.data(), bytes_to_write, &bytes_written, portMAX_DELAY);
+            esp_err_t err = i2s_channel_write(tx_chan, buf, bytes_to_write, &bytes_written, portMAX_DELAY);
             if (err != ESP_OK) return err;
             idx += n;
         }
+        // Short tail silence
+        {
+            const int n = std::min<int>(static_cast<int>(sample_rate / 500), (int)buf_samples_per_ch);
+            for (int i = 0; i < n * channels; ++i) buf[i] = 0;
+            size_t bytes_to_write = n * channels * sizeof(int16_t);
+            size_t bytes_written = 0;
+            (void)i2s_channel_write(tx_chan, buf, bytes_to_write, &bytes_written, pdMS_TO_TICKS(20));
+        }
+        heap_caps_free(buf);
+        return ESP_OK;
+    }
+
+    // Abortable variant: checks abortp between chunks and exits early if set
+    esp_err_t play_pcm_mono16_abortable(const int16_t* samples, size_t sample_count, float volume, volatile bool* abortp) {
+        ESP_RETURN_ON_ERROR(enable(), TAG, "enable failed");
+        const float v = clampf(volume, 0.0f, 1.0f);
+        const int channels = 2;
+
+        size_t buf_samples_per_ch = std::min<size_t>(1024, sample_count);
+        int16_t* buf = (int16_t*)heap_caps_malloc(buf_samples_per_ch * channels * sizeof(int16_t), MALLOC_CAP_DMA);
+        if (!buf) return ESP_ERR_NO_MEM;
+        size_t idx = 0;
+
+        // Prime I2S with a tiny silence
+        {
+            const int n = std::min<int>(static_cast<int>(sample_rate / 1000), (int)buf_samples_per_ch); // ~1ms
+            for (int i = 0; i < n * channels; ++i) buf[i] = 0;
+            size_t bytes_to_write = n * channels * sizeof(int16_t);
+            size_t bytes_written = 0;
+            (void)i2s_channel_write(tx_chan, buf, bytes_to_write, &bytes_written, pdMS_TO_TICKS(10));
+        }
+
+        while (idx < sample_count) {
+            if (abortp && *abortp) break;
+            const size_t n = std::min<size_t>(buf_samples_per_ch, sample_count - idx);
+            for (size_t i = 0; i < n; ++i) {
+                int32_t s = static_cast<int32_t>(samples[idx + i] * v);
+                if (s > 32767) s = 32767;
+                if (s < -32768) s = -32768;
+                const int16_t smp = static_cast<int16_t>(s);
+                buf[i * channels + 0] = smp;
+                buf[i * channels + 1] = smp;
+            }
+            size_t bytes_to_write = n * channels * sizeof(int16_t);
+            size_t bytes_written = 0;
+            esp_err_t err = i2s_channel_write(tx_chan, buf, bytes_to_write, &bytes_written, pdMS_TO_TICKS(100));
+            if (err != ESP_OK) return err;
+            idx += n;
+        }
+
+        // Tail silence to settle
+        {
+            const int n = std::min<int>(static_cast<int>(sample_rate / 1000), (int)buf_samples_per_ch);
+            for (int i = 0; i < n * channels; ++i) buf[i] = 0;
+            size_t bytes_to_write = n * channels * sizeof(int16_t);
+            size_t bytes_written = 0;
+            (void)i2s_channel_write(tx_chan, buf, bytes_to_write, &bytes_written, pdMS_TO_TICKS(10));
+        }
+        heap_caps_free(buf);
+        return ESP_OK;
+    }
+
+    // Stream mono samples via callback into DMA-safe buffer (duplicates to stereo)
+    typedef size_t (*fill_mono_cb_t)(int16_t* dst, size_t max, void* user);
+    esp_err_t play_pcm_mono16_stream(size_t total_samples, float volume, volatile bool* abortp,
+                                     fill_mono_cb_t cb, void* user) {
+        ESP_RETURN_ON_ERROR(enable(), TAG, "enable failed");
+        const float v = clampf(volume, 0.0f, 1.0f);
+        const int channels = 2;
+        const size_t mono_chunk = 512;
+        int16_t* mono = (int16_t*)heap_caps_malloc(mono_chunk * sizeof(int16_t), MALLOC_CAP_INTERNAL);
+        if (!mono) return ESP_ERR_NO_MEM;
+        int16_t* dma = (int16_t*)heap_caps_malloc(mono_chunk * channels * sizeof(int16_t), MALLOC_CAP_DMA);
+        if (!dma) { heap_caps_free(mono); return ESP_ERR_NO_MEM; }
+
+        size_t done = 0;
+        // Prime with short silence
+        {
+            const int n = std::min<int>(static_cast<int>(sample_rate / 1000), (int)mono_chunk);
+            for (int i=0;i<n*channels;++i) dma[i]=0;
+            size_t bytes_to_write = n * channels * sizeof(int16_t);
+            size_t bytes_written = 0;
+            (void)i2s_channel_write(tx_chan, dma, bytes_to_write, &bytes_written, pdMS_TO_TICKS(10));
+        }
+
+        while (done < total_samples) {
+            if (abortp && *abortp) break;
+            size_t need = std::min(mono_chunk, total_samples - done);
+            size_t got = cb ? cb(mono, need, user) : 0;
+            if (got == 0) break;
+            // volume + duplicate to stereo DMA buffer
+            for (size_t i=0;i<got;++i) {
+                int32_t s = (int32_t)(mono[i] * v);
+                if (s > 32767) s = 32767; if (s < -32768) s = -32768;
+                int16_t smp = (int16_t)s;
+                dma[i*channels+0] = smp;
+                dma[i*channels+1] = smp;
+            }
+            size_t bytes_to_write = got * channels * sizeof(int16_t);
+            size_t bytes_written = 0;
+            esp_err_t err = i2s_channel_write(tx_chan, dma, bytes_to_write, &bytes_written, pdMS_TO_TICKS(200));
+            if (err != ESP_OK) { heap_caps_free(mono); heap_caps_free(dma); return err; }
+            done += got;
+        }
+        // Tail silence
+        {
+            const int n = std::min<int>(static_cast<int>(sample_rate / 1000), (int)mono_chunk);
+            for (int i=0;i<n*channels;++i) dma[i]=0;
+            size_t bytes_to_write = n * channels * sizeof(int16_t);
+            size_t bytes_written = 0;
+            (void)i2s_channel_write(tx_chan, dma, bytes_to_write, &bytes_written, pdMS_TO_TICKS(10));
+        }
+
+        heap_caps_free(mono);
+        heap_caps_free(dma);
         return ESP_OK;
     }
 
@@ -260,7 +389,15 @@ class Max98357A {
         const int channels = 2;
         const float two_pi = 6.283185307179586f;
         const size_t chunk_samples = 256;
-        std::vector<int16_t> buf(chunk_samples * channels);
+        int16_t* buf = (int16_t*)heap_caps_malloc(chunk_samples * channels * sizeof(int16_t), MALLOC_CAP_DMA);
+        if (!buf) {
+            tone_running = false;
+            disable();
+            TaskHandle_t self = tone_task_handle;
+            tone_task_handle = nullptr;
+            vTaskDelete(self);
+            return;
+        }
 
         while (tone_running) {
             float local_freq = tone_freq;
@@ -276,7 +413,7 @@ class Max98357A {
             }
             size_t bytes_to_write = chunk_samples * channels * sizeof(int16_t);
             size_t bytes_written = 0;
-            if (i2s_channel_write(tx_chan, buf.data(), bytes_to_write, &bytes_written, portMAX_DELAY) != ESP_OK) {
+            if (i2s_channel_write(tx_chan, buf, bytes_to_write, &bytes_written, portMAX_DELAY) != ESP_OK) {
                 break;
             }
         }
@@ -297,17 +434,18 @@ class Max98357A {
             }
             size_t bytes_to_write = n * channels * sizeof(int16_t);
             size_t bytes_written = 0;
-            i2s_channel_write(tx_chan, buf.data(), bytes_to_write, &bytes_written, pdMS_TO_TICKS(50));
+            i2s_channel_write(tx_chan, buf, bytes_to_write, &bytes_written, pdMS_TO_TICKS(50));
         }
         {
             const int n = 64;
-            std::fill(buf.begin(), buf.begin() + n * channels, 0);
+            for (int i = 0; i < n * channels; ++i) buf[i] = 0;
             size_t bytes_to_write = n * channels * sizeof(int16_t);
             size_t bytes_written = 0;
-            i2s_channel_write(tx_chan, buf.data(), bytes_to_write, &bytes_written, pdMS_TO_TICKS(20));
+            i2s_channel_write(tx_chan, buf, bytes_to_write, &bytes_written, pdMS_TO_TICKS(20));
         }
         // stop clock
         disable();
+        heap_caps_free(buf);
         // mark task done
         TaskHandle_t self = tone_task_handle;
         tone_task_handle = nullptr;

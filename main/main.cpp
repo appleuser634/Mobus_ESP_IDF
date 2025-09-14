@@ -33,6 +33,7 @@
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
+#include <boot_sounds.hpp>
 
 void check_heap() {
     ESP_LOGI("HEAP", "Largest Free Block: %d",
@@ -168,6 +169,29 @@ void app_main(void) {
     start_deferred_ota_validation();
 
     Max98357A spk;
+    // Helper to choose boot sound: cute (default) or majestic. NVS key: boot_sound = "cute"|"majestic"|"random"
+    auto play_boot_sound = [&](Max98357A& s){
+        std::string sel = get_nvs((char*)"boot_sound");
+        if (sel == "majestic") {
+            boot_sounds::play_majestic(s, 0.55f);
+        } else if (sel == "gb") {
+            boot_sounds::play_gb(s, 0.9f);
+        } else if (sel == "random") {
+            uint64_t t = (uint64_t)esp_timer_get_time();
+            uint32_t r = (uint32_t)((t ^ (t>>7) ^ (t>>15)) & 0x3);
+            if (r == 0) boot_sounds::play_cute(s, 0.5f);
+            else if (r == 1) boot_sounds::play_majestic(s, 0.55f);
+            else boot_sounds::play_gb(s, 0.9f);
+        } else if (sel == "song1") {
+            boot_sounds::play_song(s, 1, 0.9f);
+        } else if (sel == "song2") {
+            boot_sounds::play_song(s, 2, 0.9f);
+        } else if (sel == "song3") {
+            boot_sounds::play_song(s, 3, 0.9f);
+        } else {
+            boot_sounds::play_cute(s, 0.5f);
+        }
+    };
     Oled oled;
     MenuDisplay menu;
     ProfileSetting profile_setting;
@@ -193,10 +217,8 @@ void app_main(void) {
 
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
     if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
-        // 起動音を鳴らす
-        spk.init();                         // LRC=39, BCLK=40, DIN=41, 44.1kHz
-        spk.play_tone(1000.0f, 500, 0.4f);  // 1kHzを0.5秒、音量40%
-        spk.deinit();                       // 他タスクのI2S利用に備えて解放
+        // 起動音（選択式）
+        play_boot_sound(spk);
         // 起動時のロゴを表示
         oled.BootDisplay();
         // LEDを光らす
@@ -225,11 +247,9 @@ void app_main(void) {
         }
         esp_deep_sleep_start();
     } else {
-        // 起動音を鳴らす (MAX98357A)
+        // 起動音（選択式）
         Max98357A spk2;
-        spk2.init();
-        spk2.play_tone(1000.0f, 500, 0.4f);
-        spk2.deinit();
+        play_boot_sound(spk2);
         // 起動時のロゴを表示
         oled.BootDisplay();
         // LEDを光らす
