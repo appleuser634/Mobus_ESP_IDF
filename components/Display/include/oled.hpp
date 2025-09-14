@@ -2601,14 +2601,7 @@ class Composer {
                 break;
             }
 
-            // Tempo adjust while holding Enter
-            if (eb.pushing && js.pushed_right_edge) {
-                tempo = std::min(220, tempo + 5);
-                draw();
-            } else if (eb.pushing && js.pushed_left_edge) {
-                tempo = std::max(40, tempo - 5);
-                draw();
-            }
+            // (Enter+Left/Right for tempo is disabled; use Type+Left/Right)
 
             // Move step
             if (js.pushed_left_edge && !eb.pushing) {
@@ -2620,17 +2613,11 @@ class Composer {
             }
 
             // While holding Type: tempo change (Left/Right)
-            if (tb.pushing && js.pushed_right_edge) { tempo = std::min(220, tempo + 5); draw(); }
+            if (tb.pushing && js.pushed_right_edge) { tempo = std::min(440, tempo + 5); draw(); }
             if (tb.pushing && js.pushed_left_edge)  { tempo = std::max(40,  tempo - 5); draw(); }
-            // While holding Type: channel-specific toggle (Up/Down)
-            if (tb.pushing && js.pushed_up_edge) {
-                if (cur_chan == 1) { duty_idx2 = (duty_idx2 + 1) % 4; }
-                else if (cur_chan == 2) { noise_short = !noise_short; }
-                draw();
-            }
 
-            // Pitch adjust on up/down
-            if (js.pushed_up_edge) {
+            // Pitch adjust on up/down (only when holding Type)
+            if (tb.pushing && js.pushed_up_edge) {
                 if (cur_chan == 0) {
                     if (p1[cur_step] >= 0) p1[cur_step] = clamp_midi(p1[cur_step] + 1);
                     else cur_note_p1 = clamp_midi(cur_note_p1 + 1);
@@ -2658,7 +2645,7 @@ class Composer {
                 s_pitch_popup_text[sizeof(s_pitch_popup_text)-1] = '\0';
                 s_pitch_popup_until = esp_timer_get_time() + 900000; // 900ms
                 draw();
-            } else if (js.pushed_down_edge) {
+            } else if (tb.pushing && js.pushed_down_edge) {
                 if (cur_chan == 0) {
                     if (p1[cur_step] >= 0) p1[cur_step] = clamp_midi(p1[cur_step] - 1);
                     else cur_note_p1 = clamp_midi(cur_note_p1 - 1);
@@ -2684,6 +2671,10 @@ class Composer {
                 s_pitch_popup_until = esp_timer_get_time() + 900000;
                 draw();
             }
+
+            // Channel change on Up/Down (without Type)
+            if (!tb.pushing && js.pushed_up_edge)  { cur_chan = (cur_chan + 2) % 3; draw(); }
+            if (!tb.pushing && js.pushed_down_edge){ cur_chan = (cur_chan + 1) % 3; draw(); }
 
             // Toggle note on/off
             if (tb.pushed && !tb.pushed_same_time) {
