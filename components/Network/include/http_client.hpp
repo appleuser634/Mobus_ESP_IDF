@@ -159,10 +159,11 @@ esp_err_t _http_client_event_handler(esp_http_client_event_t *evt) {
 }
 
 JsonDocument res;
-int res_flag = 0;
+volatile int res_flag = 0;
 void http_get_message_task(void *pvParameters) {
-    std::string chat_from =
-        *(std::string *)pvParameters;  // friend identifier (uuid or short_id)
+    // Take ownership of heap arg and free after copy
+    std::string chat_from = *(std::string *)pvParameters;  // friend identifier
+    delete (std::string*)pvParameters;
 
     // Prepare API client and ensure logged in
     chatapi::ChatApiClient api(HTTP_ENDPOINT, 8080);
@@ -361,10 +362,25 @@ class HttpClient {
     }
 
     JsonDocument get_message(std::string chat_from) {
+        // Launch task with heap-allocated argument to avoid dangling pointer
+        auto* arg = new std::string(chat_from);
+        res_flag = 0;
         xTaskCreatePinnedToCore(&http_get_message_task, "http_get_message_task",
-                                8192, &chat_from, 5, NULL, 0);
-        while (!res_flag) {
-            vTaskDelay(1);
+                                8192, arg, 5, NULL, 0);
+        // Wait with timeout to avoid indefinite freeze
+        const int timeout_ms = 7000;
+        int waited = 0;
+        while (!res_flag && waited < timeout_ms) {
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+            waited += 10;
+        }
+        if (!res_flag) {
+            // Timeout: return empty messages to let UI proceed
+            StaticJsonDocument<128> emptyDoc;
+            emptyDoc.createNestedArray("messages");
+            std::string outBuf;
+            serializeJson(emptyDoc, outBuf);
+            deserializeJson(res, outBuf);
         }
         res_flag = 0;
         return res;
