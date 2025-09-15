@@ -34,34 +34,74 @@
 
 #include "include/ble_uart.hpp"
 
+// Forward declaration
+static void handle_frame_from_phone(const std::string& frame);
+
 #define GATTS_TAG "BLE_UART"
 
 // Shared state across implementations
 static bool g_stack_inited = false;
+static bool g_net_suspended_for_ble = false;
 static int g_last_err = 0;
 
 // Network helpers used to free/recover memory around BLE usage
 static void shutdown_network_stack() {
-    // Stop Wi‑Fi and deinit netif/event loop to free RAM for BT
+    // Minimal pause: stop Wi‑Fi driver only to free RAM.
+    // Keep esp_netif and driver initialized to resume quickly.
     (void)esp_wifi_stop();
-    (void)esp_wifi_deinit();
-    (void)esp_event_loop_delete_default();
-    (void)esp_netif_deinit();
 }
 
 static void restart_network_stack() {
-    // Re-init default netif and Wi‑Fi STA; rely on saved config
-    if (esp_netif_init() != ESP_OK) return;
-    (void)esp_event_loop_create_default();
-    esp_netif_create_default_wifi_sta();
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    if (esp_wifi_init(&cfg) != ESP_OK) return;
-    (void)esp_wifi_set_mode(WIFI_MODE_STA);
-    wifi_config_t conf = {};
-    if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
-        (void)esp_wifi_set_config(WIFI_IF_STA, &conf);
-    }
+    // Resume Wi‑Fi driver if it was only stopped
     (void)esp_wifi_start();
+}
+
+// Define shared frame handler outside of BLE implementation branches so
+// both NimBLE and Bluedroid paths can link against it.
+static void handle_frame_from_phone(const std::string& frame) {
+    ESP_LOGI(GATTS_TAG, "RXFrame: %s", frame.c_str());
+    if (frame.find("\"type\":\"new_message\"") != std::string::npos) {
+        save_nvs((char*)"notif_flag", std::string("true"));
+    }
+    // Cache friends/contacts list sent from phone app
+    if (frame.find("\"type\":\"friends\"") != std::string::npos ||
+        frame.find("\"type\":\"contacts\"") != std::string::npos) {
+        save_nvs((char*)"ble_contacts", frame);
+        ESP_LOGI(GATTS_TAG, "Saved friends list to NVS (ble_contacts)");
+    }
+    // Cache messages list for current friend
+    if (frame.find("\"type\":\"messages\"") != std::string::npos) {
+        save_nvs((char*)"ble_messages", frame);
+        ESP_LOGI(GATTS_TAG, "Saved messages to NVS (ble_messages)");
+    }
+    // Cache pending requests list
+    if (frame.find("\"type\":\"pending_requests\"") != std::string::npos ||
+        frame.find("\"requests\"") != std::string::npos) {
+        save_nvs((char*)"ble_pending", frame);
+        ESP_LOGI(GATTS_TAG, "Saved pending requests to NVS (ble_pending)");
+    }
+    // Friend request results (send/accept/decline) -> store last result + id
+    if (frame.find("\"type\":\"friend_request_result\"") != std::string::npos ||
+        frame.find("\"type\":\"respond_friend_request_result\"") != std::string::npos) {
+        // Extract simple id field if present:  "id":"...."
+        std::string id;
+        size_t p = frame.find("\"id\"");
+        if (p != std::string::npos) {
+            size_t colon = frame.find(':', p);
+            if (colon != std::string::npos) {
+                size_t q1 = frame.find('"', colon);
+                if (q1 != std::string::npos) {
+                    size_t q2 = frame.find('"', q1 + 1);
+                    if (q2 != std::string::npos && q2 > q1 + 1) {
+                        id = frame.substr(q1 + 1, q2 - q1 - 1);
+                    }
+                }
+            }
+        }
+        if (!id.empty()) save_nvs((char*)"ble_result_id", id);
+        save_nvs((char*)"ble_last_result", frame);
+        ESP_LOGI(GATTS_TAG, "Saved BLE last result (id=%s)", id.c_str());
+    }
 }
 
 #if defined(CONFIG_BT_ENABLED) && defined(CONFIG_BT_NIMBLE_ENABLED)
@@ -80,7 +120,10 @@ static void restart_network_stack() {
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 #if defined(__has_include)
-#if __has_include("store/ble_store_config.h")
+#if __has_include("host/store/ble_store_config.h")
+#include "host/store/ble_store_config.h"
+#define HAVE_BLE_STORE_CONFIG 1
+#elif __has_include("store/ble_store_config.h")
 #include "store/ble_store_config.h"
 #define HAVE_BLE_STORE_CONFIG 1
 #else
@@ -122,12 +165,8 @@ static int gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             std::string frame = rx_buffer.substr(0, idx);
             rx_buffer.erase(0, idx + 1);
             if (!frame.empty()) {
-                // Same handler as Bluedroid path
-                ESP_LOGI(GATTS_TAG, "RXFrame: %s", frame.c_str());
-                if (frame.find("\"type\":\"new_message\"") !=
-                    std::string::npos) {
-                    save_nvs((char*)"notif_flag", std::string("true"));
-                }
+                // Unified handler for all incoming frames
+                handle_frame_from_phone(frame);
             }
         }
         (void)data;
@@ -233,21 +272,34 @@ extern "C" void ble_uart_enable(void) {
         host_sync_cb();
         return;
     }
-    // Stop network to free memory
-    shutdown_network_stack();
+    // Keep Wi‑Fi/network running so HTTP APIs continue to work while BLE is active.
+    // On ESP32-S3 with NimBLE there is enough memory; disabling network causes
+    // app features (friends list fetch, MQTT, etc.) to fail.
 
     // Release Classic BT memory (host+controller)
     (void)esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
     (void)esp_bt_mem_release(ESP_BT_MODE_CLASSIC_BT);
 
-    // Let NimBLE port manage BT controller + HCI initialization
-    // (per framework nimble_port_init implementation)
-    esp_err_t err;
-    err = nimble_port_init();
+    // Initialize NimBLE host; it will set up controller/HCI internally.
+    esp_err_t err = nimble_port_init();
+    if (err != ESP_OK) {
+        // Retry once with network suspended to free RAM
+        if (!g_net_suspended_for_ble) {
+            shutdown_network_stack();
+            g_net_suspended_for_ble = true;
+            err = nimble_port_init();
+        }
+        if (err != ESP_OK) {
+            g_last_err = err;
+            ESP_LOGE(GATTS_TAG, "nimble_port_init failed: %s", esp_err_to_name(err));
+            if (g_net_suspended_for_ble) { restart_network_stack(); g_net_suspended_for_ble = false; }
+            return;
+        }
+    }
     if (err != ESP_OK) {
         g_last_err = err;
         ESP_LOGE(GATTS_TAG, "nimble_port_init failed: %s", esp_err_to_name(err));
-        restart_network_stack();
+        // Network was not stopped; no restart needed
         return;
     }
     ESP_LOGI(GATTS_TAG, "nimble_port_init OK");
@@ -261,6 +313,11 @@ extern "C" void ble_uart_enable(void) {
     nimble_port_freertos_init(nimble_host_task);
     ESP_LOGI(GATTS_TAG, "nimble_port_freertos_init OK");
     g_stack_inited = true;
+    // If we temporarily stopped Wi‑Fi to free memory for BLE init, resume it
+    if (g_net_suspended_for_ble) {
+        restart_network_stack();
+        g_net_suspended_for_ble = false;
+    }
 }
 
 extern "C" void ble_uart_disable(void) {
@@ -270,7 +327,7 @@ extern "C" void ble_uart_disable(void) {
         nimble_port_deinit();
         g_stack_inited = false;
     }
-    restart_network_stack();
+    if (g_net_suspended_for_ble) { restart_network_stack(); g_net_suspended_for_ble = false; }
 }
 
 extern "C" int ble_uart_is_ready(void) {
@@ -428,47 +485,7 @@ static void stop_advertising() {
     adv_started = false;
 }
 
-static void handle_frame_from_phone(const std::string& frame) {
-    ESP_LOGI(GATTS_TAG, "RXFrame: %s", frame.c_str());
-    if (frame.find("\"type\":\"new_message\"") != std::string::npos) {
-        save_nvs((char*)"notif_flag", std::string("true"));
-    }
-    // Cache friends/contacts list sent from phone app
-    if (frame.find("\"type\":\"friends\"") != std::string::npos ||
-        frame.find("\"type\":\"contacts\"") != std::string::npos) {
-        save_nvs((char*)"ble_contacts", frame);
-        ESP_LOGI(GATTS_TAG, "Saved friends list to NVS (ble_contacts)");
-    }
-    // Cache messages list for current friend
-    if (frame.find("\"type\":\"messages\"") != std::string::npos) {
-        save_nvs((char*)"ble_messages", frame);
-        ESP_LOGI(GATTS_TAG, "Saved messages to NVS (ble_messages)");
-    }
-    // Cache pending requests list
-    if (frame.find("\"type\":\"pending_requests\"") != std::string::npos ||
-        frame.find("\"requests\"") != std::string::npos) {
-        save_nvs((char*)"ble_pending", frame);
-        ESP_LOGI(GATTS_TAG, "Saved pending requests to NVS (ble_pending)");
-    }
-    // Friend request results (send/accept/decline) -> store last result + id
-    if (frame.find("\"type\":\"friend_request_result\"") != std::string::npos ||
-        frame.find("\"type\":\"respond_friend_request_result\"") != std::string::npos) {
-        // Extract simple id field if present:  "id":"...."
-        std::string id;
-        size_t p = frame.find("\"id\"");
-        if (p != std::string::npos) {
-            p = frame.find(':', p);
-            while (p < frame.size() && (frame[p] == ':' || frame[p] == ' ')) p++;
-            if (p < frame.size() && frame[p] == '\) {
-                p++;
-                while (p < frame.size() && frame[p] != \') id.push_back(frame[p++]);
-            }
-        }
-        if (!id.empty()) save_nvs((char*)"ble_result_id", id);
-        save_nvs((char*)"ble_last_result", frame);
-        ESP_LOGI(GATTS_TAG, "Saved BLE last result (id=%s)", id.c_str());
-    }
-}
+// moved: handle_frame_from_phone is defined above to be shared
 
 static void gap_cb(esp_gap_ble_cb_event_t event,
                    esp_ble_gap_cb_param_t* param) {
@@ -565,8 +582,7 @@ extern "C" void ble_uart_enable(void) {
         return;
     }
 
-    // Stop Wi‑Fi/network to free memory if running (ignore errors)
-    shutdown_network_stack();
+    // Keep network active to allow concurrent HTTP usage with BLE
     (void)esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
 
     esp_err_t err;
@@ -638,7 +654,7 @@ fail_disable_ctrl:
     (void)esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
 fail:
     // Best-effort restart Wi‑Fi so rest of app keeps working
-    restart_network_stack();
+    // Network was not stopped; keep as-is
 }
 
 extern "C" void ble_uart_disable(void) {

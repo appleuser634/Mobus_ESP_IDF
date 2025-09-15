@@ -983,7 +983,8 @@ class ContactBook {
                           req.size());
 
             // Wait briefly for response; fallback to cached NVS
-            const int timeout_ms = 2500;
+            // Allow more time for phone app to prepare friends list
+            const int timeout_ms = 6000;
             int waited = 0;
             while (waited < timeout_ms) {
                 std::string js = get_nvs((char *)"ble_contacts");
@@ -1038,6 +1039,8 @@ class ContactBook {
         }
 
         if (!got_from_ble) {
+            // Keep BLE connection alive and fall back to HTTP in parallel.
+            // With NimBLE using PSRAM, Wi‑Fi coexists without disabling BLE.
             // HTTP fallback (Wi‑Fi). Ensure Wi‑Fi is connected.
             while (true) {
                 bool connected = false;
@@ -1045,6 +1048,13 @@ class ContactBook {
                     EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
                     connected = bits & WIFI_CONNECTED_BIT;
                 }
+                // Actively check driver state as event bits may be stale
+                wifi_ap_record_t ap = {};
+                if (!connected && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+                    connected = true;
+                }
+                // Try to resume Wi‑Fi driver if stopped
+                if (!connected) { (void)esp_wifi_start(); }
                 if (connected) break;
 
                 sprite.fillRect(0, 0, 128, 64, 0);
