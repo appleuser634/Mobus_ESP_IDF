@@ -147,6 +147,9 @@ static const ble_uuid128_t UUID_TX =
 
 static uint16_t tx_val_handle = 0;
 static std::string rx_buffer;
+static uint16_t g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+static bool g_notify_enabled_flag = false;
+static std::string g_pending_frame;
 
 static int gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                           struct ble_gatt_access_ctxt* ctxt, void* arg) {
@@ -201,6 +204,61 @@ static void gatt_build_and_register() {
     g_gatt_registered = true;
 }
 
+static int gap_event(struct ble_gap_event* event, void* arg) {
+    switch (event->type) {
+        case BLE_GAP_EVENT_CONNECT:
+            if (event->connect.status == 0) {
+                g_conn_handle = event->connect.conn_handle;
+                ESP_LOGI(GATTS_TAG, "GAP connected; handle=%u", g_conn_handle);
+            } else {
+                ESP_LOGW(GATTS_TAG, "GAP connect fail; status=%d", event->connect.status);
+                g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+                g_notify_enabled_flag = false;
+                // Resume advertising on failure
+                uint8_t own_addr_type = 0;
+                (void)ble_hs_id_infer_auto(0, &own_addr_type);
+                struct ble_gap_adv_params advp = {};
+                advp.conn_mode = BLE_GAP_CONN_MODE_UND;
+                advp.disc_mode = BLE_GAP_DISC_MODE_GEN;
+                advp.itvl_min = 0x00A0;
+                advp.itvl_max = 0x00F0;
+                advp.channel_map = 0x07;
+                (void)ble_gap_adv_start(own_addr_type, nullptr, BLE_HS_FOREVER, &advp, gap_event, nullptr);
+            }
+            return 0;
+        case BLE_GAP_EVENT_DISCONNECT:
+            ESP_LOGI(GATTS_TAG, "GAP disconnected; reason=%d", event->disconnect.reason);
+            g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+            g_notify_enabled_flag = false;
+            g_pending_frame.clear();
+            // Restart advertising
+            {
+                uint8_t own_addr_type = 0;
+                (void)ble_hs_id_infer_auto(0, &own_addr_type);
+                struct ble_gap_adv_params advp = {};
+                advp.conn_mode = BLE_GAP_CONN_MODE_UND;
+                advp.disc_mode = BLE_GAP_DISC_MODE_GEN;
+                advp.itvl_min = 0x00A0;
+                advp.itvl_max = 0x00F0;
+                advp.channel_map = 0x07;
+                (void)ble_gap_adv_start(own_addr_type, nullptr, BLE_HS_FOREVER, &advp, gap_event, nullptr);
+            }
+            return 0;
+        case BLE_GAP_EVENT_SUBSCRIBE:
+            g_notify_enabled_flag = event->subscribe.cur_notify;
+            ESP_LOGI(GATTS_TAG, "GAP subscribe: notify=%d handle=%u", (int)g_notify_enabled_flag, event->subscribe.conn_handle);
+            if (g_notify_enabled_flag && !g_pending_frame.empty()) {
+                // Flush pending frame now that notifications are enabled
+                const std::string frame = g_pending_frame;
+                g_pending_frame.clear();
+                ble_uart_send(reinterpret_cast<const uint8_t*>(frame.data()), frame.size());
+            }
+            return 0;
+        default:
+            return 0;
+    }
+}
+
 static void host_sync_cb(void) {
     // Determine own address type
     uint8_t own_addr_type = 0;
@@ -248,7 +306,7 @@ static void host_sync_cb(void) {
     advp.itvl_max = 0x00F0;  // 150 ms
     advp.channel_map = 0x07; // Channels 37, 38, 39
     rc = ble_gap_adv_start(own_addr_type, nullptr, BLE_HS_FOREVER, &advp,
-                           nullptr, nullptr);
+                           gap_event, nullptr);
     if (rc != 0) {
         ESP_LOGE(GATTS_TAG, "adv_start failed: rc=%d", rc);
     } else {
@@ -338,10 +396,15 @@ extern "C" int ble_uart_is_ready(void) {
 
 extern "C" int ble_uart_send(const uint8_t* data, size_t len) {
     if (!g_stack_inited || tx_val_handle == 0) return -1;
+    if (!g_notify_enabled_flag || g_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        // Queue single pending frame until notifications are enabled
+        g_pending_frame.assign(reinterpret_cast<const char*>(data), len);
+        ESP_LOGI(GATTS_TAG, "Queue frame until notify enabled (%u bytes)", (unsigned)len);
+        return 0;
+    }
     struct os_mbuf* om = ble_hs_mbuf_from_flat(data, len);
     if (!om) return -2;
-    int rc =
-        ble_gatts_notify_custom(BLE_HS_CONN_HANDLE_NONE, tx_val_handle, om);
+    int rc = ble_gatts_notify_custom(g_conn_handle, tx_val_handle, om);
     return rc == 0 ? 0 : -3;
 }
 
