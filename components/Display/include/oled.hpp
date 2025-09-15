@@ -184,6 +184,8 @@ class TalkDisplay {
         Button type_button(GPIO_NUM_46);
         Button back_button(GPIO_NUM_3);
         Button enter_button(GPIO_NUM_5);
+        // Enter long-press threshold: only for entering Save/Load (do not change global default)
+        enter_button.long_push_thresh = 300000; // ~300ms
 
         std::string chat_to = *(std::string *)pvParameters;
 
@@ -2391,7 +2393,7 @@ class Composer {
     static volatile int s_popup_val;  // midi or noise index
 
     void start_composer_task() {
-        xTaskCreatePinnedToCore(&composer_task, "composer_task", 12288, NULL, 6,
+        xTaskCreatePinnedToCore(&composer_task, "composer_task", 16384, NULL, 6,
                                 NULL, 1);
     }
 
@@ -2423,7 +2425,7 @@ class Composer {
         int cur_step = 0;
         int cur_note_p1 = 60; // C4
         int cur_note_p2 = 67; // G4
-        int cur_noise = 3;    // mid pitch
+        int cur_noise = 1;    // default drum: SN (0=HH,1=SN,2=BD)
         int duty_idx1 = 2;    // 50%
         int duty_idx2 = 2;    // 50%
         bool noise_short = false; // 7-bit flavor
@@ -2562,19 +2564,54 @@ class Composer {
                 int barx = bx + 8, bary = by + 18, barw = bw - 16, barh = 8;
                 sprite.drawRect(barx, bary, barw, barh, 0xFFFF);
                 if (s_popup_kind == 0) {
-                    // midi 36..84 mapping
-                    int minM=36, maxM=84;
-                    for (int m=minM; m<=maxM; m+=12) {
-                        int px = barx + (int)((float)(m - minM) / (float)(maxM - minM) * (barw-1));
-                        sprite.drawFastVLine(px, bary-2, barh+4, 0x7BEF);
+                    // Single-octave piano keyboard (C..B)
+                    // White keys: C D E F G A B (7 keys equally spaced)
+                    int ww = barw / 7; if (ww < 4) ww = 4; // minimal width
+                    int rem = barw - ww*7; // leftover pixels to distribute
+                    int x = barx;
+                    int white_x[7]; int white_w[7];
+                    for (int i=0;i<7;i++) {
+                        int w = ww + (i < rem ? 1 : 0);
+                        white_x[i] = x; white_w[i] = w;
+                        // draw white key outline
+                        sprite.drawRect(x, bary, w-1, barh, 0xFFFF);
+                        x += w;
                     }
-                    int val = s_popup_val; if (val<minM) val=minM; if (val>maxM) val=maxM;
-                    int mx = barx + (int)((float)(val - minM) / (float)(maxM - minM) * (barw-1));
-                    sprite.drawFastVLine(mx, bary-1, barh+2, 0xFFFF);
+                    // Black keys: C#,D#,F#,G#,A# over corresponding gaps
+                    auto draw_black = [&](int left_white_idx){
+                        int lw = left_white_idx; int rw = left_white_idx + 1;
+                        if (lw < 0 || rw > 6) return;
+                        int cx = (white_x[lw] + white_w[lw]/2 + white_x[rw] + white_w[rw]/2)/2;
+                        int bw = std::min(white_w[lw], white_w[rw]) * 2 / 3; if (bw < 2) bw = 2;
+                        int bx2 = cx - bw/2; int bh = (barh*3)/5;
+                        sprite.fillRect(bx2, bary, bw, bh, 0xFFFF);
+                    };
+                    // place black keys at gaps (C# between C-D -> 0, D# -> 1, skip E-F, F#->3, G#->4, A#->5)
+                    draw_black(0); draw_black(1); /*E-F gap none*/ draw_black(3); draw_black(4); draw_black(5);
+                    // Current note caret (map to single octave by semitone index)
+                    int t = s_popup_val % 12; if (t < 0) t += 12;
+                    // Determine caret center
+                    int caret_x = barx;
+                    auto white_center = [&](int wi){ return white_x[wi] + white_w[wi]/2; };
+                    switch (t) {
+                        case 0: caret_x = white_center(0); break; // C
+                        case 2: caret_x = white_center(1); break; // D
+                        case 4: caret_x = white_center(2); break; // E
+                        case 5: caret_x = white_center(3); break; // F
+                        case 7: caret_x = white_center(4); break; // G
+                        case 9: caret_x = white_center(5); break; // A
+                        case 11:caret_x = white_center(6); break; // B
+                        case 1: caret_x = (white_center(0)+white_center(1))/2; break; // C#
+                        case 3: caret_x = (white_center(1)+white_center(2))/2; break; // D#
+                        case 6: caret_x = (white_center(3)+white_center(4))/2; break; // F#
+                        case 8: caret_x = (white_center(4)+white_center(5))/2; break; // G#
+                        case 10:caret_x = (white_center(5)+white_center(6))/2; break; // A#
+                    }
+                    sprite.drawFastVLine(caret_x, bary-3, 3, 0xFFFF);
                 } else {
-                    // noise 0..7 segments
-                    int segw = barw / 8;
-                    for (int i=0;i<8;i++) {
+                    // drums: 3 segments (HH/SN/BD)
+                    int segw = barw / 3;
+                    for (int i=0;i<3;i++) {
                         int rx = barx + i*segw;
                         sprite.drawRect(rx, bary, segw-1, barh, 0x7BEF);
                         if (i == s_popup_val) sprite.fillRect(rx+1, bary+1, segw-3, barh-2, 0xFFFF);
@@ -2625,8 +2662,8 @@ class Composer {
                     if (p2[cur_step] >= 0) p2[cur_step] = clamp_midi(p2[cur_step] + 1);
                     else cur_note_p2 = clamp_midi(cur_note_p2 + 1);
                 } else {
-                    if (nz[cur_step] >= 0) nz[cur_step] = std::min(7, nz[cur_step] + 1);
-                    else cur_noise = std::min(7, cur_noise + 1);
+                    if (nz[cur_step] >= 0) nz[cur_step] = std::min(2, nz[cur_step] + 1);
+                    else cur_noise = std::min(2, cur_noise + 1);
                 }
                 // pitch popup
                 auto note_name = [](int midi)->std::string {
@@ -2639,7 +2676,7 @@ class Composer {
                     return std::string(buf);
                 };
                 std::string label;
-                if (cur_chan == 2) { char b[8]; snprintf(b, sizeof(b), "N:%d", nz[cur_step]); label = b; s_popup_kind=1; s_popup_val=nz[cur_step]; }
+                if (cur_chan == 2) { const char* nm = (nz[cur_step]==0?"HH":(nz[cur_step]==1?"SN":"BD")); char b[8]; snprintf(b, sizeof(b), "%s", nm); label = b; s_popup_kind=1; s_popup_val=nz[cur_step]; }
                 else { label = note_name(cur_chan==0 ? p1[cur_step] : p2[cur_step]); s_popup_kind=0; s_popup_val=(cur_chan==0 ? p1[cur_step] : p2[cur_step]); }
                 strncpy(s_pitch_popup_text, label.c_str(), sizeof(s_pitch_popup_text)-1);
                 s_pitch_popup_text[sizeof(s_pitch_popup_text)-1] = '\0';
@@ -2664,7 +2701,7 @@ class Composer {
                     return std::string(buf);
                 };
                 std::string label;
-                if (cur_chan == 2) { char b[8]; snprintf(b, sizeof(b), "N:%d", nz[cur_step]); label = b; s_popup_kind=1; s_popup_val=nz[cur_step]; }
+                if (cur_chan == 2) { const char* nm = (nz[cur_step]==0?"HH":(nz[cur_step]==1?"SN":"BD")); char b[8]; snprintf(b, sizeof(b), "%s", nm); label = b; s_popup_kind=1; s_popup_val=nz[cur_step]; }
                 else { label = note_name(cur_chan==0 ? p1[cur_step] : p2[cur_step]); s_popup_kind=0; s_popup_val=(cur_chan==0 ? p1[cur_step] : p2[cur_step]); }
                 strncpy(s_pitch_popup_text, label.c_str(), sizeof(s_pitch_popup_text)-1);
                 s_pitch_popup_text[sizeof(s_pitch_popup_text)-1] = '\0';
@@ -2677,36 +2714,42 @@ class Composer {
             if (!tb.pushing && js.pushed_down_edge){ cur_chan = (cur_chan + 1) % 3; draw(); }
 
             // Toggle note on/off
-            if (tb.pushed && !tb.pushed_same_time) {
-                if (tb.push_type == 'l') {
-                    // Long: change channel
-                    cur_chan = (cur_chan + 1) % 3;
-                } else {
-                    if (cur_chan == 0) {
-                        if (p1[cur_step] >= 0) p1[cur_step] = -1; else p1[cur_step] = cur_note_p1;
-                    } else if (cur_chan == 1) {
-                        if (p2[cur_step] >= 0) p2[cur_step] = -1; else p2[cur_step] = cur_note_p2;
+                if (tb.pushed && !tb.pushed_same_time) {
+                    if (tb.push_type == 'l') {
+                        // Long: change channel
+                        cur_chan = (cur_chan + 1) % 3;
                     } else {
-                        if (nz[cur_step] >= 0) nz[cur_step] = -1; else nz[cur_step] = cur_noise;
+                        if (cur_chan == 0) {
+                            if (p1[cur_step] >= 0) p1[cur_step] = -1; else p1[cur_step] = cur_note_p1;
+                        } else if (cur_chan == 1) {
+                            if (p2[cur_step] >= 0) p2[cur_step] = -1; else p2[cur_step] = cur_note_p2;
+                        } else {
+                            if (nz[cur_step] >= 0) nz[cur_step] = -1; else nz[cur_step] = std::min(2, std::max(0, cur_noise));
+                        }
                     }
-                }
                 draw();
                 type_button.clear_button_state();
             }
 
-            // Save dialog (Enter long)
+            // Save/Load dialog (Enter long)
             if (eb.pushed && eb.push_type == 'l') {
-                // Simple 3-slot save UI
-                int slot = 1;
+                // Clear current press/release events to avoid immediate confirm
+                enter_button.clear_button_state();
+                type_button.clear_button_state();
+                back_button.clear_button_state();
+                joystick.reset_timer();
+                int slot = 1; bool save_mode = true; // true: Save, false: Load
                 while (1) {
                     // draw dialog
                     sprite.fillRect(0, 0, 128, 64, 0);
                     sprite.setFont(&fonts::Font2);
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                    sprite.drawCenterString("Save Song", 64, 6);
+                    sprite.drawCenterString(save_mode?"Save Song":"Load Song", 64, 4);
+                    // mode toggle hint
+                    sprite.drawCenterString("Type:Toggle  Enter:Confirm", 64, 18);
                     // slot buttons
                     for (int i=1;i<=3;i++) {
-                        int x = 10 + (i-1)*38; int y=26; int w=34; int h=18;
+                        int x = 10 + (i-1)*38; int y=32; int w=34; int h=18;
                         bool sel = (slot==i);
                         sprite.fillRoundRect(x, y, w, h, 3, sel?0xFFFF:0x0000);
                         sprite.drawRoundRect(x, y, w, h, 3, 0xFFFF);
@@ -2714,8 +2757,6 @@ class Composer {
                         char lab[8]; snprintf(lab, sizeof(lab), "S%d", i);
                         sprite.drawCenterString(lab, x + w/2, y+2);
                     }
-                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                    sprite.drawCenterString("Type:Save  Back:Cancel", 64, 48);
                     sprite.pushSprite(&lcd, 0, 0);
 
                     // input
@@ -2725,31 +2766,56 @@ class Composer {
                     if (js2.pushed_left_edge) { slot = (slot==1)?3:slot-1; }
                     if (js2.pushed_right_edge) { slot = (slot==3)?1:slot+1; }
                     if (bb2.pushed) break;
-                    if (tb2.pushed) {
-                        // serialize pattern
-                        auto serialize = [&](int sl){
+                    if (tb2.pushed) { save_mode = !save_mode; type_button.clear_button_state(); }
+                    if (enter_button.get_button_state().pushed) {
+                        if (save_mode) {
+                            // serialize pattern and save
                             std::string s;
                             s += "tempo=" + std::to_string(tempo) + ";";
                             s += "d2=" + std::to_string(duty_idx2) + ";";
                             s += std::string("ns=") + (noise_short?"1":"0") + ";";
-                            auto arr = [&](const char* key, const int* a){
-                                s += key; s += "=";
-                                for (int i=0;i<STEPS;i++){ s += std::to_string(a[i]); if (i!=STEPS-1) s += ","; }
-                                s += ";";
-                            };
+                            auto arr = [&](const char* key, const int* a){ s += key; s += "="; for (int i=0;i<STEPS;i++){ s += std::to_string(a[i]); if (i!=STEPS-1) s += ","; } s += ";"; };
                             arr("p1", p1); arr("p2", p2); arr("nz", nz);
-                            save_nvs((char*)(sl==1?"song1":(sl==2?"song2":"song3")), s);
-                        };
-                        serialize(slot);
-                        // confirmation
-                        sprite.fillRect(0, 0, 128, 64, 0);
-                        sprite.setFont(&fonts::Font2);
-                        sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                        char m[20]; snprintf(m, sizeof(m), "Saved S%d", slot);
-                        sprite.drawCenterString(m, 64, 22);
-                        sprite.pushSprite(&lcd, 0, 0);
-                        vTaskDelay(600 / portTICK_PERIOD_MS);
-                        break;
+                            save_nvs((char*)(slot==1?"song1":(slot==2?"song2":"song3")), s);
+                            sprite.fillRect(0, 0, 128, 64, 0);
+                            sprite.setFont(&fonts::Font2);
+                            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                            char m[20]; snprintf(m, sizeof(m), "Saved S%d", slot);
+                            sprite.drawCenterString(m, 64, 22);
+                            sprite.pushSprite(&lcd, 0, 0);
+                            vTaskDelay(600 / portTICK_PERIOD_MS);
+                            break;
+                        } else {
+                            // load from NVS
+                            chiptune::Pattern lpat; int ltempo=tempo; int ld2=duty_idx2; bool lns=noise_short;
+                            if (boot_sounds::load_song_from_nvs(slot, lpat, ltempo, ld2, lns)) {
+                                // apply
+                                for (int i=0;i<STEPS;i++) { p1[i] = (i<(int)lpat.pulse1.size()? lpat.pulse1[i]:-1); }
+                                for (int i=0;i<STEPS;i++) { p2[i] = (i<(int)lpat.pulse2.size()? lpat.pulse2[i]:-1); }
+                                for (int i=0;i<STEPS;i++) { nz[i] = (i<(int)lpat.noise.size()?  lpat.noise[i] : -1); }
+                                tempo = std::max(40, std::min(440, ltempo));
+                                duty_idx2 = std::max(0, std::min(3, ld2));
+                                noise_short = lns;
+                                // confirmation
+                                sprite.fillRect(0, 0, 128, 64, 0);
+                                sprite.setFont(&fonts::Font2);
+                                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                                char m[20]; snprintf(m, sizeof(m), "Loaded S%d", slot);
+                                sprite.drawCenterString(m, 64, 22);
+                                sprite.pushSprite(&lcd, 0, 0);
+                                vTaskDelay(600 / portTICK_PERIOD_MS);
+                                draw();
+                                break;
+                            } else {
+                                // not found
+                                sprite.fillRect(0, 0, 128, 64, 0);
+                                sprite.setFont(&fonts::Font2);
+                                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                                sprite.drawCenterString("No Data", 64, 22);
+                                sprite.pushSprite(&lcd, 0, 0);
+                                vTaskDelay(600 / portTICK_PERIOD_MS);
+                            }
+                        }
                     }
                     vTaskDelay(10 / portTICK_PERIOD_MS);
                 }
@@ -4196,31 +4262,30 @@ class ProfileSetting {
             } else if (joystick_state.pushed_down_edge) {
                 select_y_index += 1;
             } else if (type_button_state.pushed) {
-                type_text =
-                    type_text + char_set[select_y_index][select_x_index];
+                // Safe append only when indices are valid
+                int char_set_length = sizeof(char_set) / sizeof(char_set[0]);
+                if (select_y_index < 0) select_y_index = 0;
+                if (select_y_index >= char_set_length) select_y_index = char_set_length - 1;
+                int row_len = strlen(char_set[select_y_index]);
+                if (row_len > 0) {
+                    if (select_x_index < 0) select_x_index = 0;
+                    if (select_x_index >= row_len) select_x_index = row_len - 1;
+                    type_text.push_back(char_set[select_y_index][select_x_index]);
+                }
                 type_button.clear_button_state();
                 type_button.reset_timer();
             }
 
             // 文字種のスクロールの設定
             int char_set_length = sizeof(char_set) / sizeof(char_set[0]);
-            if (select_y_index >= char_set_length) {
-                select_y_index = 0;
-            } else if (select_y_index < 0) {
-                select_y_index = char_set_length - 1;
-            }
+            if (select_y_index >= char_set_length) select_y_index = 0;
+            if (select_y_index < 0) select_y_index = char_set_length - 1;
 
-            // 文字選択のスクロールの設定
-            if (char_set[select_y_index][select_x_index] == '\0') {
-                // 一番右へ行ったら左へ戻る
-                select_x_index = 0;
-            } else if (select_y_index < 0) {
-                // 一番左へ行ったら右へ戻る
-                select_x_index = 0;
-                for (int i = 0; char_set[select_y_index][i] != '\0'; i++) {
-                    select_x_index += 1;
-                }
-            }
+            // 文字選択のスクロールの設定（行末/行頭で循環）
+            int row_len = strlen(char_set[select_y_index]);
+            if (row_len <= 0) row_len = 1;
+            if (select_x_index >= row_len) select_x_index = 0;
+            if (select_x_index < 0) select_x_index = row_len - 1;
 
             int draw_x = 0;
             for (int i = 0; char_set[select_y_index][i] != '\0'; i++) {
@@ -4243,6 +4308,8 @@ class ProfileSetting {
             sprite.drawFastHLine(0, 45, 128, 0xFFFF);
 
             sprite.pushSprite(&lcd, 0, 0);
+            // Feed watchdog / yield to scheduler
+            vTaskDelay(10 / portTICK_PERIOD_MS);
         }
 
         return type_text;
@@ -4351,26 +4418,36 @@ class ProfileSetting {
             vTaskDelay(20 / portTICK_PERIOD_MS);
         }
 
-        std::string user_name = set_profile_info();
-        save_nvs("user_name", user_name);
+        // Ask username, then attempt register/login; only persist on success
+        while (true) {
+            std::string user_name = set_profile_info();
 
-        // Try user registration via chat backend
-        // If password not set, use default for development
-        std::string password = get_nvs("password");
-        if (password == "") {
-            password = "password123";
-            save_nvs((char *)"password", password);
-        }
+            // If password not set, use default for development
+            std::string password = get_nvs("password");
+            if (password == "") {
+                password = "password123";
+                save_nvs((char *)"password", password);
+            }
 
-        // Call register API. If it fails (e.g., network), try login as
-        // fallback. Use defaults/NVS overrides for server endpoint.
-        {
             chatapi::ChatApiClient api;
             esp_err_t err = api.register_user(user_name, password);
             if (err != ESP_OK) {
-                // Fallback: login if user already exists or registration failed
-                api.login(user_name, password);
+                err = api.login(user_name, password);
             }
+            if (err == ESP_OK) {
+                // ChatApiClient already persisted user_name/jwt/user_id
+                break;
+            }
+
+            // Failed: clear any stale user_name and prompt again
+            save_nvs("user_name", "");
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.setFont(&fonts::Font2);
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            sprite.drawCenterString("Register/Login Failed", 64, 18);
+            sprite.drawCenterString("Check creds & network", 64, 34);
+            sprite.pushSprite(&lcd, 0, 0);
+            vTaskDelay(1200 / portTICK_PERIOD_MS);
         }
     };
 };

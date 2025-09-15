@@ -44,13 +44,17 @@ class GBSynth {
 
         // Osc states
         float phase1 = 0.0f, phase2 = 0.0f;
+        float lfo2 = 0.0f; // PWM LFO for square channel
         uint16_t lfsr = 0x7FFFu; // 15-bit LFSR
         int current_noise = 1;
         int noise_countdown = 0;
 
         // Mix gains
-        const float g_pulse = 0.50f; // stronger level
-        const float g_noise = 0.40f;
+        const float g_sine  = 0.60f;
+        const float g_square= 0.55f;
+        const float g_noise = 0.35f;
+        const float lfo_rate_hz = 4.5f;   // PWM speed
+        const float lfo_depth   = 0.15f;  // +/- duty change
 
         // Simple fade at step edges to tame clicks
         const int env_len = std::min(128, step_samples / 6);
@@ -81,15 +85,20 @@ class GBSynth {
                     phase1 += inc1;
                     if (phase1 >= 1.0f) phase1 -= 1.0f;
                     if (ch1_sine) {
-                        mix += sinf(phase1 * 6.28318530718f) * g_pulse;
+                        mix += sinf(phase1 * 6.28318530718f) * g_sine;
                     } else {
-                        mix += square_from_phase(phase1, duty1) * g_pulse;
+                        mix += square_from_phase(phase1, duty1) * g_square;
                     }
                 }
                 if (n2 >= 0) {
                     phase2 += inc2;
                     if (phase2 >= 1.0f) phase2 -= 1.0f;
-                    mix += square_from_phase(phase2, duty2) * g_pulse;
+                    // PWM duty LFO on square channel
+                    float pwm = duty2 + lfo_depth * sinf(lfo2);
+                    if (pwm < 0.05f) pwm = 0.05f; if (pwm > 0.95f) pwm = 0.95f;
+                    mix += square_from_phase(phase2, pwm) * g_square;
+                    lfo2 += (6.28318530718f * lfo_rate_hz) / (float)sample_rate;
+                    if (lfo2 > 6.28318530718f) lfo2 -= 6.28318530718f;
                 }
                 if (nn >= 0) {
                     if (--noise_countdown <= 0) {
@@ -118,7 +127,9 @@ class GBSynth {
                     if (env > 1.0f) env = 1.0f;
                 }
 
+                // soft limiter to avoid burying quieter tones
                 float sflt = mix * env;
+                sflt = tanhf(sflt * 0.9f);
                 // Clamp and convert
                 if (sflt > 1.0f) sflt = 1.0f;
                 if (sflt < -1.0f) sflt = -1.0f;
@@ -149,6 +160,7 @@ class GBSynth {
         uint16_t lfsr = 0x7FFFu;
         int current_noise = 1;
         int noise_countdown = 0;
+        float lfo2 = 0.0f;
     };
 
     size_t render_block(const Pattern& pat, int bpm,
@@ -160,14 +172,18 @@ class GBSynth {
         const float step_sec = 60.0f / (float)bpm / 4.0f; // 16th note per step
         const int step_samples = std::max(1, (int)std::round(step_sec * sample_rate));
 
-        const float g_pulse = 0.50f;
-        const float g_noise = 0.40f;
+        const float g_sine  = 0.60f;
+        const float g_square= 0.55f;
+        const float g_noise = 0.35f;
+        const float lfo_rate_hz = 4.5f;
+        const float lfo_depth   = 0.15f;
 
         size_t written = 0;
         while (written < max_out && st.step < steps) {
             const int n1 = (st.step < (int)pat.pulse1.size() ? pat.pulse1[st.step] : -1);
             const int n2 = (st.step < (int)pat.pulse2.size() ? pat.pulse2[st.step] : -1);
-            const int nn = (st.step < (int)pat.noise.size() ? pat.noise[st.step] : -1);
+            int nn = (st.step < (int)pat.noise.size() ? pat.noise[st.step] : -1);
+            if (nn > 2) nn = 2; // clamp to drum instruments
 
             float inc1 = (n1 >= 0) ? note_inc(n1) : 0.0f;
             float inc2 = (n2 >= 0) ? note_inc(n2) : 0.0f;
@@ -189,29 +205,42 @@ class GBSynth {
                     st.phase1 += inc1;
                     if (st.phase1 >= 1.0f) st.phase1 -= 1.0f;
                     if (ch1_sine) {
-                        mix += sinf(st.phase1 * 6.28318530718f) * g_pulse;
+                        mix += sinf(st.phase1 * 6.28318530718f) * g_sine;
                     } else {
-                        mix += square_from_phase(st.phase1, duty1) * g_pulse;
+                        mix += square_from_phase(st.phase1, duty1) * g_square;
                     }
                 }
                 if (n2 >= 0) {
                     st.phase2 += inc2;
                     if (st.phase2 >= 1.0f) st.phase2 -= 1.0f;
-                    mix += square_from_phase(st.phase2, duty2) * g_pulse;
+                    float pwm = duty2 + lfo_depth * sinf(st.lfo2);
+                    if (pwm < 0.05f) pwm = 0.05f; if (pwm > 0.95f) pwm = 0.95f;
+                    mix += square_from_phase(st.phase2, pwm) * g_square;
+                    st.lfo2 += (6.28318530718f * lfo_rate_hz) / (float)sample_rate;
+                    if (st.lfo2 > 6.28318530718f) st.lfo2 -= 6.28318530718f;
                 }
                 if (nn >= 0) {
-                    if (--st.noise_countdown <= 0) {
-                        uint16_t fb = ((st.lfsr ^ (st.lfsr >> 1)) & 0x1);
-                        st.lfsr >>= 1;
-                        st.lfsr |= (fb << 14);
-                        if (noise_short_mode) {
-                            st.lfsr &= ~(1u << 6);
-                            st.lfsr |= (fb << 6);
+                    // Drum instruments for streaming mode: 0=HH,1=SN,2=BD
+                    if (nn == 2) {
+                        float t = (float)(st.sample_in_step + i) / (float)step_samples;
+                        float f0 = 100.0f; float f = f0 * expf(-t * 6.0f);
+                        float inc = f / (float)sample_rate;
+                        st.phase1 += inc; if (st.phase1 >= 1.0f) st.phase1 -= 1.0f;
+                        float envd = expf(-t * 10.0f);
+                        mix += sinf(st.phase1 * 6.28318530718f) * (g_sine * 0.9f) * envd;
+                    } else {
+                        int np = (nn == 0) ? std::max(1, (int)(sample_rate / 8000)) : std::max(1, (int)(sample_rate / 3000));
+                        if (--st.noise_countdown <= 0) {
+                            uint16_t fb = ((st.lfsr ^ (st.lfsr >> 1)) & 0x1);
+                            st.lfsr >>= 1; st.lfsr |= (fb << 14);
+                            st.current_noise = (st.lfsr & 1u) ? 1 : -1;
+                            st.noise_countdown = np;
                         }
-                        st.current_noise = (st.lfsr & 1u) ? 1 : -1;
-                        st.noise_countdown = noise_period;
+                        float t = (float)(st.sample_in_step + i) / (float)step_samples;
+                        float envn = (nn == 0) ? expf(-t * 22.0f) : expf(-t * 12.0f);
+                        float d_gain = (nn == 0) ? (g_noise * 0.9f) : (g_noise * 0.8f);
+                        mix += (float)st.current_noise * d_gain * envn;
                     }
-                    mix += (float)st.current_noise * g_noise;
                 }
                 // optional simple per-step fade edges to reduce clicks
                 int si = st.sample_in_step + i;
@@ -223,6 +252,8 @@ class GBSynth {
                     if (env < 0.0f) env = 0.0f; if (env > 1.0f) env = 1.0f;
                     mix *= env;
                 }
+                // soft limit
+                mix = tanhf(mix * 0.9f);
                 if (mix > 1.0f) mix = 1.0f; if (mix < -1.0f) mix = -1.0f;
                 out[written++] = (int16_t)std::lround(mix * 32767.0f);
             }

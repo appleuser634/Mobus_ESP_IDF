@@ -119,6 +119,8 @@ inline bool load_song_from_nvs(int slot, chiptune::Pattern& pat, int& tempo, int
         while(out.size()<16) out.push_back(-1); while(out.size()>16) out.pop_back();
     };
     parse_arr("p1", pat.pulse1); parse_arr("p2", pat.pulse2); parse_arr("nz", pat.noise);
+    // Clamp drums to 0..2 if older data existed
+    for (auto &v : pat.noise) { if (v < -1) v = -1; if (v > 2) v = 2; }
     return true;
 }
 

@@ -164,15 +164,15 @@ void http_get_message_task(void *pvParameters) {
     std::string chat_from =
         *(std::string *)pvParameters;  // friend identifier (uuid or short_id)
 
-    // Prepare API client
+    // Prepare API client and ensure logged in
     chatapi::ChatApiClient api(HTTP_ENDPOINT, 8080);
-
-    // Ensure logged in
-    std::string username = get_nvs("user_name");
-    std::string password = get_nvs("password");
-    if (password.empty()) password = "password123";  // default for dev env
+    std::string username = get_nvs("user_name"); if (username.empty()) username = get_nvs("username");
+    std::string password = get_nvs("password"); if (password.empty()) password = "password123";
     if (api.token().empty()) {
-        api.login(username, password);
+        if (api.login(username, password) != ESP_OK) {
+            (void)api.register_user(username, password);
+            (void)api.login(username, password);
+        }
     }
 
     std::string response;
@@ -246,11 +246,15 @@ void http_get_notifications_task(void *pvParameters) {
         }
     }
     // Initialize MQTT and subscribe to user topic (via runtime)
-    chatapi::ChatApiClient api(HTTP_ENDPOINT, 8080);
-    std::string username = get_nvs("user_name");
-    std::string password = get_nvs("password");
-    if (password.empty()) password = "password123";
-    if (api.token().empty()) api.login(username, password);
+    chatapi::ChatApiClient api; // use NVS-configured endpoint
+    std::string username = get_nvs("user_name"); if (username.empty()) username = get_nvs("username");
+    std::string password = get_nvs("password"); if (password.empty()) password = "password123";
+    if (api.token().empty()) {
+        if (api.login(username, password) != ESP_OK) {
+            (void)api.register_user(username, password);
+            (void)api.login(username, password);
+        }
+    }
 
     // Choose MQTT host/port
     std::string mqtt_host = get_nvs("mqtt_host");
@@ -294,11 +298,15 @@ std::string chat_to = "";
 std::string message = "";
 void http_post_message_task(void *pvParameters) {
     // Prepare API client and send message using new /api/messages/send
-    chatapi::ChatApiClient api(HTTP_ENDPOINT, 8080);
-    std::string username = get_nvs("user_name");
-    std::string password = get_nvs("password");
-    if (password.empty()) password = "password123";
-    if (api.token().empty()) api.login(username, password);
+    chatapi::ChatApiClient api;
+    std::string username = get_nvs("user_name"); if (username.empty()) username = get_nvs("username");
+    std::string password = get_nvs("password"); if (password.empty()) password = "password123";
+    if (api.token().empty()) {
+        if (api.login(username, password) != ESP_OK) {
+            (void)api.register_user(username, password);
+            (void)api.login(username, password);
+        }
+    }
 
     std::string dummy;
     esp_err_t err = api.send_message(chat_to, message, &dummy);
