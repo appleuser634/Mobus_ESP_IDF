@@ -31,21 +31,22 @@
 // Demo utilities removed to avoid unused warnings
 
 inline void save_nvs(const char *key, const std::string &record) {
-    // Initialize Non-VolatileVS
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
-        err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        // NVS partition was truncated and needs to be erased
-        // Retry nvs_flash_init
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
+    // Initialize NVS once; avoid erasing flash while other subsystems use it
+    static bool s_nvs_ok = false;
+    if (!s_nvs_ok) {
+        esp_err_t init = nvs_flash_init();
+        if (init == ESP_OK) {
+            s_nvs_ok = true;
+        } else {
+            ESP_LOGW("NVS", "nvs_flash_init failed: %s", esp_err_to_name(init));
+            return;
+        }
     }
-    ESP_ERROR_CHECK(err);
 
     // Open NVS handle
     // reduce logs
     nvs_handle_t my_handle;
-    err = nvs_open("storage", NVS_READWRITE, &my_handle);
+    esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
     if (err != ESP_OK) {
         ESP_LOGE("NVS", "Error (%s) opening NVS handle!", esp_err_to_name(err));
     }
@@ -55,6 +56,7 @@ inline void save_nvs(const char *key, const std::string &record) {
     if (err != ESP_OK) {
         ESP_LOGE("NVS", "Failed to write string: %s", esp_err_to_name(err));
         nvs_close(my_handle);
+        return;
     }
 
     // Commit written value
@@ -62,6 +64,7 @@ inline void save_nvs(const char *key, const std::string &record) {
     if (err != ESP_OK) {
         ESP_LOGE("NVS", "Failed to commit changes: %s", esp_err_to_name(err));
         nvs_close(my_handle);
+        return;
     }
     // Close
     nvs_close(my_handle);
@@ -71,21 +74,22 @@ inline void save_nvs(const char *key, const std::string &record) {
 }
 
 inline std::string get_nvs(const char *key) {
-    // Initialize NVS
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
-        err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        // NVS partition was truncated and needs to be erased
-        // Retry nvs_flash_init
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
+    // Initialize NVS once; avoid erasing flash while other subsystems use it
+    static bool s_nvs_ok = false;
+    if (!s_nvs_ok) {
+        esp_err_t init = nvs_flash_init();
+        if (init == ESP_OK) {
+            s_nvs_ok = true;
+        } else {
+            ESP_LOGW("NVS", "nvs_flash_init failed: %s", esp_err_to_name(init));
+            return std::string("");
+        }
     }
-    ESP_ERROR_CHECK(err);
 
     // Open NVS handle
     // reduce logs
     nvs_handle_t my_handle;
-    err = nvs_open("storage", NVS_READWRITE, &my_handle);
+    esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
     if (err != ESP_OK) {
         ESP_LOGE("NVS", "Error (%s) opening NVS handle!", esp_err_to_name(err));
         return "";

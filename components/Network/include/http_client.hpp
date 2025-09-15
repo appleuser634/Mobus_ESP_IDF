@@ -323,15 +323,24 @@ class HttpClient {
     bool notif_flag = false;
 
     HttpClient(void) {
-        esp_err_t ret = nvs_flash_init();
-        if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
-            ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-            ESP_ERROR_CHECK(nvs_flash_erase());
-            ret = nvs_flash_init();
+        static bool s_nvs_ok = false;
+        if (!s_nvs_ok) {
+            esp_err_t ret = nvs_flash_init();
+            if (ret == ESP_OK) {
+                s_nvs_ok = true;
+            } else {
+                ESP_LOGW(TAG, "nvs_flash_init failed: %s", esp_err_to_name(ret));
+            }
         }
-        ESP_ERROR_CHECK(ret);
-
-        ESP_ERROR_CHECK(esp_netif_init());
+        static bool s_netif_ok = false;
+        if (!s_netif_ok) {
+            esp_err_t e = esp_netif_init();
+            if (e == ESP_OK) {
+                s_netif_ok = true;
+            } else {
+                ESP_LOGW(TAG, "esp_netif_init failed: %s", esp_err_to_name(e));
+            }
+        }
         // ESP_ERROR_CHECK(esp_event_loop_create_default());
 
         /* This helper function configures Wi-Fi or Ethernet, as selected in

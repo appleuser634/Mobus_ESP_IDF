@@ -694,9 +694,9 @@ class MessageBox {
 
     void start_box_task(std::string chat_to) {
         printf("Start Box Task...");
-        // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
-        xTaskCreatePinnedToCore(&box_task, "box_task", 8012, &chat_to, 6, NULL,
-                                1);
+        // Pass heap-allocated copy to avoid dangling pointer
+        auto* arg = new std::string(chat_to);
+        xTaskCreatePinnedToCore(&box_task, "box_task", 8012, arg, 6, NULL, 1);
     }
 
     static void box_task(void *pvParameters) {
@@ -726,19 +726,25 @@ class MessageBox {
         HttpClient http_client;
 
         // メッセージの取得（BLE優先、HTTPフォールバック）
+        // Take ownership of heap arg and free after copy
         std::string chat_to = *(std::string *)pvParameters;
+        delete (std::string*)pvParameters;
         JsonDocument res;
         auto fetch_messages_via_ble = [&](const std::string &fid,
                                           int timeout_ms) -> bool {
             if (!ble_uart_is_ready()) return false;
             long long rid = esp_timer_get_time();
+            // Clear previous BLE messages so only fresh response is read
+            save_nvs((char*)"ble_messages", std::string(""));
             // Phone app should reply with a frame:
             // {"type":"messages","messages":[...]} stored to NVS as
             // "ble_messages"
+            // Include both friend_id and short_id to maximize compatibility
             std::string req = std::string("{ \"id\":\"") + std::to_string(rid) +
                               "\", \"type\": \"get_messages\", \"payload\": { "
-                              "\"friend_id\": \"" +
-                              fid + "\", \"limit\": 20 } }\n";
+                              "\"friend_id\": \"" + fid + "\", "
+                              "\"short_id\": \"" + fid + "\", "
+                              "\"limit\": 20 } }\n";
             ble_uart_send(reinterpret_cast<const uint8_t *>(req.c_str()),
                           req.size());
 
@@ -801,7 +807,8 @@ class MessageBox {
             return false;
         };
 
-        bool got_ble = fetch_messages_via_ble(chat_to, 2500);
+        // Allow more time for phone app to prepare response
+        bool got_ble = fetch_messages_via_ble(chat_to, 6000);
         if (!got_ble) {
             res = http_client.get_message(chat_to);
         }
@@ -848,7 +855,7 @@ class MessageBox {
                 type_button.reset_timer();
                 joystick.reset_timer();
                 // 再取得（BLE優先）
-                if (!fetch_messages_via_ble(chat_to, 1500)) {
+                if (!fetch_messages_via_ble(chat_to, 4000)) {
                     res = http_client.get_message(chat_to);
                 }
             }
