@@ -694,6 +694,16 @@ class MessageBox {
    public:
     static bool running_flag;
     static std::string chat_title;  // display username for header
+    static std::string active_short_id;
+    static std::string active_friend_id;
+
+    static void set_active_contact(const std::string& short_id,
+                                   const std::string& friend_id) {
+        active_short_id = short_id;
+        active_friend_id = friend_id;
+        ESP_LOGI(TAG, "[BLE] Active contact identifiers set (short=%s friend_id=%s)",
+                 active_short_id.c_str(), active_friend_id.c_str());
+    }
 
     void start_box_task(std::string chat_to) {
         printf("Start Box Task...");
@@ -732,49 +742,74 @@ class MessageBox {
         // Take ownership of heap arg and free after copy
         std::string chat_to = *(std::string *)pvParameters;
         delete (std::string*)pvParameters;
+        ESP_LOGI(TAG,
+                 "[BLE] Opening message box (identifier=%s short=%s friend_id=%s)",
+                 chat_to.c_str(), active_short_id.c_str(),
+                 active_friend_id.c_str());
         JsonDocument res;
         auto fetch_messages_via_ble = [&](const std::string &fid,
                                           int timeout_ms) -> bool {
-            if (!ble_uart_is_ready()) return false;
+            if (!ble_uart_is_ready()) {
+                ESP_LOGW(TAG, "[BLE] fetch_messages skipped; link inactive (friend=%s)",
+                         fid.c_str());
+                return false;
+            }
+
+            const std::string short_for_req = !active_short_id.empty() ? active_short_id : fid;
+            const std::string friend_for_req = !active_friend_id.empty() ? active_friend_id : fid;
+
             long long rid = esp_timer_get_time();
+            ESP_LOGI(TAG,
+                     "[BLE] Requesting chat history (id=%s short=%s friend_id=%s rid=%lld)",
+                     fid.c_str(), short_for_req.c_str(), friend_for_req.c_str(), rid);
+
             // Clear previous BLE messages so only fresh response is read
             save_nvs((char*)"ble_messages", std::string(""));
-            // Phone app should reply with a frame:
-            // {"type":"messages","messages":[...]} stored to NVS as
-            // "ble_messages"
-            // Include both friend_id and short_id to maximize compatibility
-            std::string req = std::string("{ \"id\":\"") + std::to_string(rid) +
-                              "\", \"type\": \"get_messages\", \"payload\": { "
-                              "\"friend_id\": \"" + fid + "\", "
-                              "\"short_id\": \"" + fid + "\", "
-                              "\"limit\": 20 } }\n";
-            ble_uart_send(reinterpret_cast<const uint8_t *>(req.c_str()),
-                          req.size());
+            // Phone app should reply with a frame stored in NVS under
+            // "ble_messages". Include redundant identifier fields to maximise
+            // compatibility across app versions.
+            std::string req =
+                std::string("{ \"id\":\"") + std::to_string(rid) +
+                "\", \"type\": \"sync\", \"friend\": \"" + short_for_req +
+                "\", \"friend_id\": \"" + friend_for_req +
+                "\", \"short_id\": \"" + short_for_req +
+                "\", \"limit\": 20 }\n";
+            ESP_LOGI(TAG, "[BLE] Sync request payload: %s", req.c_str());
+            int tx_res = ble_uart_send(
+                reinterpret_cast<const uint8_t *>(req.c_str()), req.size());
+            if (tx_res != 0) {
+                ESP_LOGW(TAG, "[BLE] Failed to send sync request (err=%d)",
+                         tx_res);
+            }
 
             int waited = 0;
             while (waited < timeout_ms) {
                 std::string js = get_nvs((char *)"ble_messages");
                 if (!js.empty()) {
+                    ESP_LOGI(TAG, "[BLE] Received cached response (%zu bytes)",
+                             js.size());
                     StaticJsonDocument<8192> in;
-                    if (deserializeJson(in, js) == DeserializationError::Ok) {
+                    DeserializationError err = deserializeJson(in, js);
+                    if (err == DeserializationError::Ok) {
+                        int count = 0;
                         // Accept legacy shape: {messages:[{message,from},...]}
                         // Or transform server-like shape into legacy
                         bool legacy = false;
                         if (in["messages"].is<JsonArray>()) {
-                            for (JsonObject m :
-                                 in["messages"].as<JsonArray>()) {
-                                if (m.containsKey("message") &&
-                                    m.containsKey("from")) {
+                            for (JsonObject m : in["messages"].as<JsonArray>()) {
+                                if (m.containsKey("message") && m.containsKey("from")) {
                                     legacy = true;
                                     break;
                                 }
                             }
                         }
                         if (legacy) {
-                            // Directly use
                             std::string outBuf;
                             serializeJson(in, outBuf);
                             deserializeJson(res, outBuf);
+                            count = res["messages"].is<JsonArray>()
+                                        ? res["messages"].as<JsonArray>().size()
+                                        : 0;
                         } else if (in["messages"].is<JsonArray>()) {
                             // Transform {content,sender_id,receiver_id} ->
                             // {message,from}
@@ -782,21 +817,18 @@ class MessageBox {
                             auto arr = out.createNestedArray("messages");
                             std::string my_id = get_nvs((char *)"user_id");
                             std::string my_name = get_nvs((char *)"user_name");
-                            for (JsonObject m :
-                                 in["messages"].as<JsonArray>()) {
+                            for (JsonObject m : in["messages"].as<JsonArray>()) {
                                 JsonObject o = arr.createNestedObject();
-                                const char *content =
-                                    m["content"].as<const char *>();
+                                const char *content = m["content"].as<const char *>();
                                 o["message"] = content ? content : "";
-                                const char *sender =
-                                    m["sender_id"].as<const char *>();
-                                if (sender && !my_id.empty() &&
-                                    my_id == sender) {
+                                const char *sender = m["sender_id"].as<const char *>();
+                                if (sender && !my_id.empty() && my_id == sender) {
                                     o["from"] = my_name.c_str();
                                 } else {
                                     o["from"] = fid.c_str();
                                 }
                             }
+                            count = arr.size();
                             std::string outBuf;
                             serializeJson(out, outBuf);
                             deserializeJson(res, outBuf);
@@ -818,22 +850,34 @@ class MessageBox {
                                     o["from"] = fid.c_str();
                                 }
                             }
+                            count = arr.size();
                             std::string outBuf;
                             serializeJson(out, outBuf);
                             deserializeJson(res, outBuf);
+                        } else {
+                            ESP_LOGW(TAG, "[BLE] Unexpected JSON shape for messages");
                         }
+                        ESP_LOGI(TAG, "[BLE] Parsed %d message(s) via BLE", count);
                         return true;
                     }
+                    ESP_LOGW(TAG, "[BLE] JSON parse error: %s", err.c_str());
+                }
+                if ((waited % 1000) == 0) {
+                    ESP_LOGI(TAG, "[BLE] Waiting for sync response... %d ms", waited);
                 }
                 vTaskDelay(50 / portTICK_PERIOD_MS);
                 waited += 50;
             }
+            ESP_LOGW(TAG, "[BLE] Timeout awaiting history (friend=%s)",
+                     fid.c_str());
             return false;
         };
 
         // Allow more time for phone app to prepare response
         bool got_ble = fetch_messages_via_ble(chat_to, 6000);
         if (!got_ble) {
+            ESP_LOGW(TAG, "[BLE] Falling back to HTTP history fetch for %s",
+                     chat_to.c_str());
             res = http_client.get_message(chat_to);
         }
 
@@ -880,6 +924,7 @@ class MessageBox {
                 joystick.reset_timer();
                 // 再取得（BLE優先）
                 if (!fetch_messages_via_ble(chat_to, 4000)) {
+                    ESP_LOGW(TAG, "[BLE] Refresh via BLE failed; using HTTP fallback");
                     res = http_client.get_message(chat_to);
                 }
             }
@@ -963,11 +1008,15 @@ class MessageBox {
         }
 
         running_flag = false;
+        active_short_id.clear();
+        active_friend_id.clear();
         vTaskDelete(NULL);
     };
 };
 bool MessageBox::running_flag = false;
 std::string MessageBox::chat_title = "";
+std::string MessageBox::active_short_id = "";
+std::string MessageBox::active_friend_id = "";
 
 // Forward declaration for helper proxy
 std::string wifi_input_info_proxy(std::string input_type,
@@ -999,7 +1048,9 @@ class ContactBook {
 
         typedef struct {
             std::string display_name;  // username
-            std::string identifier;    // short_id or uuid
+            std::string identifier;    // preferred identifier (short_id if available)
+            std::string short_id;
+            std::string friend_id;
         } contact_t;
 
         // Fetch friends list via BLE (if connected) or HTTP( Wi‑Fi )
@@ -1031,14 +1082,14 @@ class ContactBook {
                                     f["username"].as<const char *>()
                                         ? f["username"].as<const char *>()
                                         : "");
-                                const char *sid =
-                                    f["short_id"].as<const char *>();
-                                const char *fid =
-                                    f["friend_id"].as<const char *>();
-                                if (sid && strlen(sid) > 0)
-                                    c.identifier = sid;
-                                else if (fid)
-                                    c.identifier = fid;
+                                const char *sid = f["short_id"].as<const char *>();
+                                const char *fid = f["friend_id"].as<const char *>();
+                                c.short_id = (sid && strlen(sid) > 0) ? sid : std::string("");
+                                c.friend_id = fid ? fid : std::string("");
+                                if (!c.short_id.empty())
+                                    c.identifier = c.short_id;
+                                else if (!c.friend_id.empty())
+                                    c.identifier = c.friend_id;
                                 else
                                     c.identifier = c.display_name;
                                 if (c.display_name != username &&
@@ -1121,10 +1172,12 @@ class ContactBook {
                                             : "");
                         const char *sid = f["short_id"].as<const char *>();
                         const char *fid = f["friend_id"].as<const char *>();
-                        if (sid && strlen(sid) > 0)
-                            c.identifier = sid;
-                        else if (fid)
-                            c.identifier = fid;
+                        c.short_id = (sid && strlen(sid) > 0) ? sid : std::string("");
+                        c.friend_id = fid ? fid : std::string("");
+                        if (!c.short_id.empty())
+                            c.identifier = c.short_id;
+                        else if (!c.friend_id.empty())
+                            c.identifier = c.friend_id;
                         else
                             c.identifier = c.display_name;
                         if (c.display_name != username &&
@@ -1632,6 +1685,9 @@ class ContactBook {
                     // API
                     MessageBox::chat_title =
                         contacts[select_index].display_name;
+                    MessageBox::set_active_contact(
+                        contacts[select_index].short_id,
+                        contacts[select_index].friend_id);
                     box.start_box_task(contacts[select_index].identifier);
                     while (box.running_flag) {
                         vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -4045,7 +4101,15 @@ class MenuDisplay {
         float power_per = power_state.power_voltage / 1.4;
         int power_per_pix = (int)(0.12 * power_per);
 
-        auto enter_light_sleep = [&]() -> bool {
+        auto enter_light_sleep = [&](const char* reason, bool force) -> bool {
+            if (!force && ble_uart_is_ready()) {
+                ESP_LOGI(TAG, "Skip light sleep (%s): BLE link active", reason);
+                return false;
+            }
+
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.pushSprite(&lcd, 0, 0);
+
             const gpio_num_t wake_pins[] = {
                 type_button.gpio_num,
                 enter_button.gpio_num,
@@ -4278,13 +4342,11 @@ class MenuDisplay {
             if (button_free_time >= 30 and joystick_free_time >= 30) {
                 printf("button_free_time:%d\n", button_free_time);
                 printf("joystick_free_time:%d\n", joystick_free_time);
-                sprite.fillRect(0, 0, 128, 64, 0);
-                sprite.pushSprite(&lcd, 0, 0);
-                if (enter_light_sleep()) {
+                if (enter_light_sleep("idle timeout", false)) {
                     continue;
                 }
             } else if (enter_button_state.pushed) {
-                if (enter_light_sleep()) {
+                if (enter_light_sleep("enter button", true)) {
                     continue;
                 }
             }
