@@ -12,7 +12,10 @@
 #include <boot_sounds.hpp>
 #include <images.hpp>
 #include <led.hpp>
+#include "esp_err.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
+#include "esp_sleep.h"
 #include <ctype.h>
 
 #pragma once
@@ -4042,6 +4045,49 @@ class MenuDisplay {
         float power_per = power_state.power_voltage / 1.4;
         int power_per_pix = (int)(0.12 * power_per);
 
+        auto enter_light_sleep = [&]() -> bool {
+            const gpio_num_t wake_pins[] = {
+                type_button.gpio_num,
+                enter_button.gpio_num,
+                GPIO_NUM_3,
+            };
+
+            for (gpio_num_t pin : wake_pins) {
+                if (pin < 0) {
+                    continue;
+                }
+                esp_err_t err = gpio_wakeup_enable(pin, GPIO_INTR_HIGH_LEVEL);
+                if (err != ESP_OK) {
+                    ESP_LOGW(TAG, "Failed to enable wakeup on GPIO%d: %s", pin,
+                             esp_err_to_name(err));
+                }
+            }
+
+            esp_err_t gpio_wake_err = esp_sleep_enable_gpio_wakeup();
+            if (gpio_wake_err != ESP_OK) {
+                ESP_LOGW(TAG, "Failed to enable GPIO wakeup: %s",
+                         esp_err_to_name(gpio_wake_err));
+            }
+
+            esp_light_sleep_start();
+
+            esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+            for (gpio_num_t pin : wake_pins) {
+                gpio_wakeup_disable(pin);
+            }
+
+            type_button.clear_button_state();
+            type_button.reset_timer();
+            enter_button.clear_button_state();
+            enter_button.reset_timer();
+            joystick.reset_timer();
+            st = esp_timer_get_time();
+            lcd.init();
+            lcd.setRotation(2);
+            sprite.pushSprite(&lcd, 0, 0);
+            return true;
+        };
+
         while (1) {
             // 画面上部のステータス表示
             sprite.drawFastHLine(0, 12, 128, 0xFFFF);
@@ -4234,11 +4280,13 @@ class MenuDisplay {
                 printf("joystick_free_time:%d\n", joystick_free_time);
                 sprite.fillRect(0, 0, 128, 64, 0);
                 sprite.pushSprite(&lcd, 0, 0);
-                esp_deep_sleep_start();
+                if (enter_light_sleep()) {
+                    continue;
+                }
             } else if (enter_button_state.pushed) {
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                esp_deep_sleep_start();
+                if (enter_light_sleep()) {
+                    continue;
+                }
             }
 
             vTaskDelay(50 / portTICK_PERIOD_MS);
