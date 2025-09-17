@@ -74,6 +74,11 @@ static void handle_frame_from_phone(const std::string& frame) {
         save_nvs((char*)"ble_messages", frame);
         ESP_LOGI(GATTS_TAG, "Saved messages to NVS (ble_messages)");
     }
+    // Fallback: if top-level contains a "messages" field, persist it even if type differs
+    else if (frame.find("\"messages\"") != std::string::npos) {
+        save_nvs((char*)"ble_messages", frame);
+        ESP_LOGI(GATTS_TAG, "Saved messages (fallback) to NVS (ble_messages)");
+    }
     // Cache pending requests list
     if (frame.find("\"type\":\"pending_requests\"") != std::string::npos ||
         frame.find("\"requests\"") != std::string::npos) {
@@ -157,23 +162,49 @@ static int gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     (void)attr_handle;
     (void)arg;
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
-        const uint8_t* data = ctxt->om->om_data;
-        uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
-        while (ctxt->om) {
-            rx_buffer.append((const char*)ctxt->om->om_data, ctxt->om->om_len);
-            ctxt->om = SLIST_NEXT(ctxt->om, om_next);
+        // Append all fragments from mbuf chain
+        struct os_mbuf* om = ctxt->om;
+        while (om) {
+            rx_buffer.append((const char*)om->om_data, om->om_len);
+            om = SLIST_NEXT(om, om_next);
         }
+        // First, handle newline-delimited frames
         size_t idx;
         while ((idx = rx_buffer.find('\n')) != std::string::npos) {
             std::string frame = rx_buffer.substr(0, idx);
             rx_buffer.erase(0, idx + 1);
-            if (!frame.empty()) {
-                // Unified handler for all incoming frames
-                handle_frame_from_phone(frame);
-            }
+            if (!frame.empty()) handle_frame_from_phone(frame);
         }
-        (void)data;
-        (void)len;
+        // Also try to extract complete JSON objects without newline
+        // by matching balanced braces outside quotes.
+        auto extract_json = [&]() -> bool {
+            size_t start = rx_buffer.find('{');
+            if (start == std::string::npos) { rx_buffer.clear(); return false; }
+            bool in_string = false; bool escape = false; int depth = 0;
+            for (size_t i = start; i < rx_buffer.size(); ++i) {
+                char c = rx_buffer[i];
+                if (in_string) {
+                    if (escape) { escape = false; }
+                    else if (c == '\\') { escape = true; }
+                    else if (c == '"') { in_string = false; }
+                } else {
+                    if (c == '"') in_string = true;
+                    else if (c == '{') depth++;
+                    else if (c == '}') { depth--; if (depth == 0) {
+                        std::string frame = rx_buffer.substr(start, i - start + 1);
+                        rx_buffer.erase(0, i + 1);
+                        handle_frame_from_phone(frame);
+                        return true;
+                    }}
+                }
+            }
+            // Not complete yet; keep buffer starting from '{'
+            if (start > 0) rx_buffer.erase(0, start);
+            return false;
+        };
+        // Extract as many complete JSON objects as possible
+        int guard = 0;
+        while (extract_json() && guard++ < 4) {}
     }
     return 0;
 }
@@ -618,12 +649,39 @@ static void gatts_cb(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
                 const uint8_t* d = param->write.value;
                 uint16_t l = param->write.len;
                 rx_buffer.append((const char*)d, (const char*)d + l);
+                // Newline-delimited frames first
                 size_t idx;
                 while ((idx = rx_buffer.find('\n')) != std::string::npos) {
                     std::string frame = rx_buffer.substr(0, idx);
                     rx_buffer.erase(0, idx + 1);
                     if (!frame.empty()) handle_frame_from_phone(frame);
                 }
+                // Try balanced-JSON extraction without newline
+                auto extract_json = [&]() -> bool {
+                    size_t start = rx_buffer.find('{');
+                    if (start == std::string::npos) { rx_buffer.clear(); return false; }
+                    bool in_string = false; bool escape = false; int depth = 0;
+                    for (size_t i = start; i < rx_buffer.size(); ++i) {
+                        char c = rx_buffer[i];
+                        if (in_string) {
+                            if (escape) { escape = false; }
+                            else if (c == '\\') { escape = true; }
+                            else if (c == '"') { in_string = false; }
+                        } else {
+                            if (c == '"') in_string = true;
+                            else if (c == '{') depth++;
+                            else if (c == '}') { depth--; if (depth == 0) {
+                                std::string frame = rx_buffer.substr(start, i - start + 1);
+                                rx_buffer.erase(0, i + 1);
+                                handle_frame_from_phone(frame);
+                                return true;
+                            }}
+                        }
+                    }
+                    if (start > 0) rx_buffer.erase(0, start);
+                    return false;
+                };
+                int guard = 0; while (extract_json() && guard++ < 4) {}
             }
             break;
         case ESP_GATTS_MTU_EVT:

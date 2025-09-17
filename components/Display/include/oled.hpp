@@ -797,6 +797,27 @@ class MessageBox {
                             std::string outBuf;
                             serializeJson(out, outBuf);
                             deserializeJson(res, outBuf);
+                        } else if (in["payload"]["messages"].is<JsonArray>()) {
+                            // Handle { type:..., payload: { messages:[...] } }
+                            StaticJsonDocument<8192> out;
+                            auto arr = out.createNestedArray("messages");
+                            std::string my_id = get_nvs((char *)"user_id");
+                            std::string my_name = get_nvs((char *)"user_name");
+                            for (JsonObject m : in["payload"]["messages"].as<JsonArray>()) {
+                                JsonObject o = arr.createNestedObject();
+                                const char *content = m["content"].as<const char *>();
+                                const char *msg = m["message"].as<const char *>();
+                                o["message"] = content ? content : (msg ? msg : "");
+                                const char *sender = m["sender_id"].as<const char *>();
+                                if (sender && !my_id.empty() && my_id == sender) {
+                                    o["from"] = my_name.c_str();
+                                } else {
+                                    o["from"] = fid.c_str();
+                                }
+                            }
+                            std::string outBuf;
+                            serializeJson(out, outBuf);
+                            deserializeJson(res, outBuf);
                         }
                         return true;
                     }
