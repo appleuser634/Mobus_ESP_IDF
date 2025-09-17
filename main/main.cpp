@@ -11,6 +11,9 @@
 #include "esp_sleep.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
+#include "esp_timer.h"
+#include "esp_random.h"
+#include "esp_spiffs.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -24,6 +27,9 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include <stdio.h>
+#include <cstdio>
+#include <vector>
+#include <memory>
 
 #include <string.h>
 #include <time.h>
@@ -49,15 +55,421 @@ static const char* TAG = "Mobus v3.14";
 #include <LovyanGFX.hpp>
 #include <joystick.h>
 #include <power_monitor.h>
+#include <button.h>
 
 #include <nvs_rw.hpp>
 #include <wifi.hpp>
 #include <http_client.hpp>
+#include "wasm_game_runtime.hpp"
+
+extern "C" {
+#include "m3_env.h"
+#include "m3_exception.h"
+}
 #include <neopixel.hpp>
 Neopixel neopixel;
 #include <oled.hpp>
 #include <ntp.hpp>
 #include <max98357a.h>
+
+namespace wasm_runtime {
+namespace {
+
+constexpr const char* LOG_TAG = "WASM_GAME";
+
+bool ensure_spiffs_mounted() {
+    static bool initialized = false;
+    static bool mounted = false;
+    if (initialized) {
+        return mounted;
+    }
+    initialized = true;
+
+    esp_vfs_spiffs_conf_t conf = {
+        .base_path = "/spiffs",
+        .partition_label = "spiffs",
+        .max_files = 8,
+        .format_if_mount_failed = false,
+    };
+
+    esp_err_t err = esp_vfs_spiffs_register(&conf);
+    if (err == ESP_ERR_NOT_FOUND) {
+        ESP_LOGW(LOG_TAG,
+                 "SPIFFS partition label 'spiffs' not found; trying auto-detect");
+        conf.partition_label = nullptr;
+        err = esp_vfs_spiffs_register(&conf);
+    }
+
+    if (err != ESP_OK) {
+        ESP_LOGE(LOG_TAG, "Failed to mount SPIFFS: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    size_t total = 0;
+    size_t used = 0;
+    const char* info_label = conf.partition_label ? conf.partition_label : "";
+    err = esp_spiffs_info(info_label[0] ? info_label : nullptr, &total, &used);
+    if (err == ESP_OK) {
+        ESP_LOGI(LOG_TAG, "SPIFFS mounted (total=%u, used=%u)",
+                 static_cast<unsigned>(total), static_cast<unsigned>(used));
+    } else {
+        ESP_LOGW(LOG_TAG, "Failed to query SPIFFS info: %s", esp_err_to_name(err));
+    }
+
+    mounted = true;
+    return mounted;
+}
+
+struct HostContext {
+    Joystick joystick;
+    Button type_button;
+    Button back_button;
+    Button enter_button;
+
+    HostContext()
+        : joystick(),
+          type_button(GPIO_NUM_46),
+          back_button(GPIO_NUM_3),
+          enter_button(GPIO_NUM_5) {
+        type_button.reset_timer();
+        back_button.reset_timer();
+        enter_button.reset_timer();
+    }
+};
+
+inline HostContext* get_context(IM3Runtime runtime) {
+    return reinterpret_cast<HostContext*>(runtime->userdata);
+}
+
+m3ApiRawFunction(host_clear_screen) {
+    sprite.fillRect(0, 0, 128, 64, 0);
+    m3ApiSuccess();
+}
+
+m3ApiRawFunction(host_present) {
+    sprite.pushSprite(&lcd, 0, 0);
+    m3ApiSuccess();
+}
+
+m3ApiRawFunction(host_fill_rect) {
+    m3ApiGetArg(int32_t, x);
+    m3ApiGetArg(int32_t, y);
+    m3ApiGetArg(int32_t, w);
+    m3ApiGetArg(int32_t, h);
+    m3ApiGetArg(int32_t, color);
+
+    sprite.fillRect(x, y, w, h, static_cast<uint16_t>(color));
+    m3ApiSuccess();
+}
+
+m3ApiRawFunction(host_draw_text) {
+    m3ApiGetArg(int32_t, x);
+    m3ApiGetArg(int32_t, y);
+    m3ApiGetArgMem(const uint8_t*, text_ptr);
+    m3ApiGetArg(int32_t, len);
+    m3ApiGetArg(int32_t, invert);
+
+    std::string text(reinterpret_cast<const char*>(text_ptr),
+                     static_cast<size_t>(len));
+
+    sprite.setFont(&fonts::Font2);
+    if (invert) {
+        sprite.setTextColor(0x0000, 0xFFFF);
+    } else {
+        sprite.setTextColor(0xFFFF, 0x0000);
+    }
+    sprite.setCursor(x, y);
+    sprite.print(text.c_str());
+    m3ApiSuccess();
+}
+
+m3ApiRawFunction(host_draw_sprite) {
+    m3ApiGetArg(int32_t, sprite_id);
+    m3ApiGetArg(int32_t, frame);
+    m3ApiGetArg(int32_t, x);
+    m3ApiGetArg(int32_t, y);
+
+    const unsigned char* bitmap = nullptr;
+    int width = 0;
+    int height = 0;
+
+    if (sprite_id == 0) {  // kuina
+        bitmap = (frame & 1) ? kuina_2 : kuina_1;
+        width = 16;
+        height = 16;
+    }
+
+    if (bitmap) {
+        sprite.drawBitmap(x, y, bitmap, width, height, TFT_WHITE, TFT_BLACK);
+    }
+
+    m3ApiSuccess();
+}
+
+m3ApiRawFunction(host_get_input) {
+    auto* ctx = get_context(runtime);
+
+    uint32_t mask = 0;
+
+    auto type_state = ctx->type_button.get_button_state();
+    if (type_state.pushed) mask |= INPUT_ACTION;
+    if (type_state.pushed) ctx->type_button.clear_button_state();
+
+    auto enter_state = ctx->enter_button.get_button_state();
+    if (enter_state.pushed) mask |= INPUT_ENTER;
+    if (enter_state.pushed) ctx->enter_button.clear_button_state();
+
+    auto back_state = ctx->back_button.get_button_state();
+    if (back_state.pushed) mask |= INPUT_BACK;
+    if (back_state.pushed) ctx->back_button.clear_button_state();
+
+    auto joy_state = ctx->joystick.get_joystick_state();
+    if (joy_state.pushed_left_edge) mask |= INPUT_JOY_LEFT;
+    if (joy_state.pushed_right_edge) mask |= INPUT_JOY_RIGHT;
+    if (joy_state.pushed_up_edge) mask |= INPUT_JOY_UP;
+    if (joy_state.pushed_down_edge) mask |= INPUT_JOY_DOWN;
+
+    m3ApiReturnType(uint32_t)
+    m3ApiReturn(mask);
+}
+
+m3ApiRawFunction(host_random) {
+    m3ApiGetArg(int32_t, max_val);
+    if (max_val <= 0) {
+        m3ApiReturnType(int32_t)
+        m3ApiReturn(0);
+    }
+    uint32_t value = esp_random();
+    int32_t result = static_cast<int32_t>(value % static_cast<uint32_t>(max_val));
+    m3ApiReturnType(int32_t)
+    m3ApiReturn(result);
+}
+
+m3ApiRawFunction(host_sleep) {
+    m3ApiGetArg(int32_t, ms);
+    if (ms > 0) {
+        vTaskDelay(pdMS_TO_TICKS(ms));
+    } else {
+        taskYIELD();
+    }
+    m3ApiSuccess();
+}
+
+m3ApiRawFunction(host_time_ms) {
+    uint32_t ms = static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
+    m3ApiReturnType(uint32_t)
+    m3ApiReturn(ms);
+}
+
+M3Result link_host_functions(IM3Module module) {
+    M3Result result = m3Err_none;
+    auto link = [&](const char* name, const char* sig, M3RawCall func) {
+        if (result != m3Err_none) return;
+        result = m3_LinkRawFunction(module, "env", name, sig, func);
+        if (result == m3Err_functionLookupFailed) {
+            ESP_LOGW(LOG_TAG, "Skipping unused host import %s", name);
+            result = m3Err_none;
+            return;
+        }
+        if (result != m3Err_none) {
+            ESP_LOGE(LOG_TAG, "Failed to link %s: %s", name, result);
+        }
+    };
+
+    link("host_clear_screen", "v()", host_clear_screen);
+    link("host_present", "v()", host_present);
+    link("host_fill_rect", "v(iiiii)", host_fill_rect);
+    link("host_draw_text", "v(iiii i)", host_draw_text);
+    link("host_draw_sprite", "v(iiii)", host_draw_sprite);
+    link("host_get_input", "i()", host_get_input);
+    link("host_random", "i(i)", host_random);
+    link("host_sleep", "v(i)", host_sleep);
+    link("host_time_ms", "i()", host_time_ms);
+
+    return result;
+}
+
+}  // namespace
+
+bool run_game(const char* path) {
+    if (!ensure_spiffs_mounted()) {
+        return false;
+    }
+
+    ESP_LOGI(LOG_TAG, "Launching Wasm game: %s", path);
+
+    FILE* file = fopen(path, "rb");
+    if (!file) {
+        ESP_LOGE(LOG_TAG, "Failed to open Wasm file: %s", path);
+        return false;
+    }
+
+    std::unique_ptr<FILE, decltype(&fclose)> close_file(file, &fclose);
+
+    if (fseek(file, 0, SEEK_END) != 0) {
+        ESP_LOGE(LOG_TAG, "Failed to seek Wasm file: %s", path);
+        return false;
+    }
+
+    long file_size = ftell(file);
+    if (file_size <= 0) {
+        ESP_LOGE(LOG_TAG, "Invalid Wasm size (%ld): %s", file_size, path);
+        return false;
+    }
+
+    if (fseek(file, 0, SEEK_SET) != 0) {
+        ESP_LOGE(LOG_TAG, "Failed to rewind Wasm file: %s", path);
+        return false;
+    }
+
+    size_t wasm_size = static_cast<size_t>(file_size);
+    uint8_t* wasm_bytes = static_cast<uint8_t*>(heap_caps_malloc(
+        wasm_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    bool used_heap_caps = true;
+    if (!wasm_bytes) {
+        used_heap_caps = false;
+        wasm_bytes = static_cast<uint8_t*>(malloc(wasm_size));
+    }
+    if (!wasm_bytes) {
+        ESP_LOGE(LOG_TAG, "Failed to allocate %zu bytes for Wasm module", wasm_size);
+        return false;
+    }
+
+    auto free_wasm = [&]() {
+        if (wasm_bytes) {
+            if (used_heap_caps) {
+                heap_caps_free(wasm_bytes);
+            } else {
+                free(wasm_bytes);
+            }
+            wasm_bytes = nullptr;
+        }
+    };
+
+    size_t read = fread(wasm_bytes, 1, wasm_size, file);
+    if (read != wasm_size) {
+        ESP_LOGE(LOG_TAG, "Short read when loading Wasm (%zu/%zu) from %s", read, wasm_size, path);
+        free_wasm();
+        return false;
+    }
+
+    HostContext context;
+
+    IM3Environment env = m3_NewEnvironment();
+    if (!env) {
+        ESP_LOGE(LOG_TAG, "m3_NewEnvironment failed");
+        free_wasm();
+        return false;
+    }
+
+    constexpr uint32_t kStackSizeBytes = 32 * 1024;
+    IM3Runtime runtime = m3_NewRuntime(env, kStackSizeBytes, &context);
+    if (!runtime) {
+        ESP_LOGE(LOG_TAG, "m3_NewRuntime failed");
+        m3_FreeEnvironment(env);
+        free_wasm();
+        return false;
+    }
+
+    IM3Module module = nullptr;
+    M3Result result = m3_ParseModule(env, &module, wasm_bytes,
+                                     static_cast<uint32_t>(wasm_size));
+    if (result != m3Err_none) {
+        ESP_LOGE(LOG_TAG, "m3_ParseModule failed: %s", result);
+        m3_FreeRuntime(runtime);
+        m3_FreeEnvironment(env);
+        free_wasm();
+        return false;
+    }
+
+    result = m3_LoadModule(runtime, module);
+    if (result != m3Err_none) {
+        ESP_LOGE(LOG_TAG, "m3_LoadModule failed: %s", result);
+        m3_FreeModule(module);
+        m3_FreeRuntime(runtime);
+        m3_FreeEnvironment(env);
+        free_wasm();
+        return false;
+    }
+
+    result = link_host_functions(module);
+    if (result != m3Err_none) {
+        ESP_LOGE(LOG_TAG, "Failed to link host functions: %s", result);
+        m3_FreeRuntime(runtime);
+        m3_FreeEnvironment(env);
+        free_wasm();
+        return false;
+    }
+
+    IM3Function game_init = nullptr;
+    result = m3_FindFunction(&game_init, runtime, "game_init");
+    if (result != m3Err_none) {
+        ESP_LOGE(LOG_TAG, "game_init not found: %s", result);
+        m3_FreeRuntime(runtime);
+        m3_FreeEnvironment(env);
+        free_wasm();
+        return false;
+    }
+
+    IM3Function game_update = nullptr;
+    result = m3_FindFunction(&game_update, runtime, "game_update");
+    if (result != m3Err_none) {
+        ESP_LOGE(LOG_TAG, "game_update not found: %s", result);
+        m3_FreeRuntime(runtime);
+        m3_FreeEnvironment(env);
+        free_wasm();
+        return false;
+    }
+
+    result = m3_CallV(game_init);
+    if (result != m3Err_none) {
+        ESP_LOGE(LOG_TAG, "game_init trap: %s", result);
+        m3_FreeRuntime(runtime);
+        m3_FreeEnvironment(env);
+        free_wasm();
+        return false;
+    }
+
+    bool exited_normally = false;
+    uint64_t last_tick_us = esp_timer_get_time();
+
+    while (true) {
+        uint64_t now_us = esp_timer_get_time();
+        uint32_t dt_ms = static_cast<uint32_t>((now_us - last_tick_us) / 1000ULL);
+        if (dt_ms == 0) {
+            dt_ms = 1;
+        }
+        last_tick_us = now_us;
+
+        result = m3_CallV(game_update, dt_ms);
+        if (result != m3Err_none) {
+            ESP_LOGE(LOG_TAG, "game_update trap: %s", result);
+            break;
+        }
+
+        uint32_t exit_code = 0;
+        result = m3_GetResultsV(game_update, &exit_code);
+        if (result != m3Err_none) {
+            ESP_LOGE(LOG_TAG, "Failed to read game_update result: %s", result);
+            break;
+        }
+
+        if (exit_code != 0) {
+            exited_normally = true;
+            break;
+        }
+
+        taskYIELD();
+    }
+
+    m3_FreeRuntime(runtime);
+    m3_FreeEnvironment(env);
+    free_wasm();
+
+    return exited_normally;
+}
+
+}  // namespace wasm_runtime
 
 #define uS_TO_S_FACTOR 1000000ULL  // 秒→マイクロ秒
 
