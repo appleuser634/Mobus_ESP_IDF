@@ -782,11 +782,17 @@ class MessageBox {
             // Phone app should reply with a frame stored in NVS under
             // "ble_messages". Include redundant identifier fields to maximise
             // compatibility across app versions.
-            std::string req = std::string("{ \"id\":\"") + std::to_string(rid) +
-                              "\", \"type\": \"sync\", \"friend\": \"" +
-                              short_for_req + "\", \"friend_id\": \"" +
-                              friend_for_req + "\", \"short_id\": \"" +
-                              short_for_req + "\", \"limit\": 20 }\n";
+            StaticJsonDocument<256> doc;
+            doc["id"] = std::to_string(rid);
+            doc["type"] = "get_messages";
+            JsonObject payload = doc.createNestedObject("payload");
+            payload["friend_id"] = friend_for_req;
+            payload["short_id"] = short_for_req;
+            payload["friend"] = short_for_req;
+            payload["limit"] = 20;
+            std::string req;
+            serializeJson(doc, req);
+            req.push_back('\n');
             ESP_LOGI(TAG, "[BLE] Sync request payload: %s", req.c_str());
             int tx_res = ble_uart_send(
                 reinterpret_cast<const uint8_t *>(req.c_str()), req.size());
