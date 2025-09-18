@@ -3237,6 +3237,7 @@ volatile int Composer::s_popup_val = 60;
 class SettingMenu {
    public:
     static bool running_flag;
+    static bool sound_dirty;
 
     void start_message_menue_task() {
         printf("Start MessageMenue Task...");
@@ -3414,7 +3415,6 @@ class SettingMenu {
 
                 bool enabled = sound_settings::enabled();
                 float volume = sound_settings::volume();
-                bool dirty = false;
 
                 while (1) {
                     sprite.fillRect(0, 0, 128, 64, 0);
@@ -3446,7 +3446,7 @@ class SettingMenu {
                     if (tbs.pushed) {
                         enabled = !enabled;
                         sound_settings::set_enabled(enabled, false);
-                        dirty = true;
+                        SettingMenu::sound_dirty = true;
                         type_button.clear_button_state();
                         type_button.reset_timer();
                     }
@@ -3462,7 +3462,7 @@ class SettingMenu {
                     }
                     if (volume_changed) {
                         sound_settings::set_volume(volume, false);
-                        dirty = true;
+                        SettingMenu::sound_dirty = true;
                         volume = sound_settings::volume();
                     }
 
@@ -3478,9 +3478,7 @@ class SettingMenu {
                 joystick.reset_timer();
                 type_button.clear_button_state();
                 type_button.reset_timer();
-                if (dirty) {
-                    sound_settings::persist();
-                    dirty = false;
+                if (SettingMenu::sound_dirty) {
                     vTaskDelay(10 / portTICK_PERIOD_MS);
                 }
             } else if (type_button_state.pushed &&
@@ -4036,6 +4034,7 @@ class SettingMenu {
     };
 };
 bool SettingMenu::running_flag = false;
+bool SettingMenu::sound_dirty = false;
 
 class Game {
    public:
