@@ -193,10 +193,44 @@ m3ApiRawFunction(host_draw_sprite) {
     int width = 0;
     int height = 0;
 
-    if (sprite_id == 0) {  // kuina
-        bitmap = (frame & 1) ? kuina_2 : kuina_1;
-        width = 16;
-        height = 16;
+    switch (sprite_id) {
+        case 0:  // kuina (16x16)
+            bitmap = (frame & 1) ? kuina_2 : kuina_1;
+            width = 16;
+            height = 16;
+            break;
+        case 1:  // mongoose (8x8)
+            bitmap = (frame & 1) ? mongoose_2 : mongoose_1;
+            width = 8;
+            height = 8;
+            break;
+        case 2:  // grass (8x8)
+            bitmap = grass_1;
+            width = 8;
+            height = 8;
+            break;
+        case 3:  // pineapple (16x16)
+            bitmap = pineapple_1;
+            width = 16;
+            height = 16;
+            break;
+        case 4:  // mongoose facing left (16x8)
+            bitmap = (frame & 1) ? mongoose_left_2 : mongoose_left_1;
+            width = 16;
+            height = 8;
+            break;
+        case 5:  // earthworm (8x8)
+            bitmap = (frame & 1) ? earthworm_2 : earthworm_1;
+            width = 8;
+            height = 8;
+            break;
+        case 6:  // hart (8x8)
+            bitmap = hart;
+            width = 8;
+            height = 8;
+            break;
+        default:
+            break;
     }
 
     if (bitmap) {
