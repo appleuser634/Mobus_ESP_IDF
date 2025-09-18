@@ -31,6 +31,9 @@ extern EventGroupHandle_t s_wifi_event_group;
 #define WIFI_FAIL_BIT BIT1
 
 static int s_retry_num = 0;
+static bool s_handlers_registered = false;
+static esp_event_handler_instance_t s_instance_any_id = nullptr;
+static esp_event_handler_instance_t s_instance_got_ip = nullptr;
 
 class WiFi {
    public:
@@ -44,43 +47,58 @@ class WiFi {
     static void event_handler(void *arg, esp_event_base_t event_base,
                               int32_t event_id, void *event_data) {
         ESP_LOGI(TAG, "===== START WIFI EVENT HADLER =====");
-        if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-            esp_wifi_connect();
-        } else if (event_base == WIFI_EVENT &&
-                   event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        if (event_base == WIFI_EVENT &&
+            event_id == WIFI_EVENT_STA_DISCONNECTED) {
             if (s_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
                 esp_wifi_connect();
                 s_retry_num++;
                 ESP_LOGI(TAG, "retry to connect to the AP");
             } else {
-                xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+                if (s_wifi_event_group) {
+                    xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+                }
             }
             ESP_LOGI(TAG, "connect to the AP fail");
         } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
             ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
             ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
             s_retry_num = 0;
-            xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+            if (s_wifi_event_group) {
+                xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+            }
         }
     }
 
     void wifi_set_sta(std::string WIFI_SSID = "", std::string WIFI_PASS = "") {
-        s_wifi_event_group = xEventGroupCreate();
+        if (!s_wifi_event_group) {
+            s_wifi_event_group = xEventGroupCreate();
+        } else {
+            xEventGroupClearBits(s_wifi_event_group,
+                                 WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
+        }
         s_retry_num = 0;
 
-        esp_event_handler_instance_t instance_any_id;
-        esp_event_handler_instance_t instance_got_ip;
-        ESP_ERROR_CHECK(esp_event_handler_instance_register(
-            WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL,
-            &instance_any_id));
-        ESP_ERROR_CHECK(esp_event_handler_instance_register(
-            IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL,
-            &instance_got_ip));
+        if (!s_handlers_registered) {
+            ESP_ERROR_CHECK(esp_event_handler_instance_register(
+                WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL,
+                &s_instance_any_id));
+            ESP_ERROR_CHECK(esp_event_handler_instance_register(
+                IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL,
+                &s_instance_got_ip));
+            s_handlers_registered = true;
+        }
 
         wifi_config_t wifi_config = {};
 
         // Avoid driver writing config to NVS (suspected crash path)
         ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+
+        bool wifi_was_started = false;
+        wifi_mode_t current_mode = WIFI_MODE_NULL;
+        if (esp_wifi_get_mode(&current_mode) == ESP_OK &&
+            current_mode != WIFI_MODE_NULL) {
+            wifi_was_started = true;
+        }
 
         if (WIFI_SSID == "" && WIFI_PASS == "") {
             ESP_ERROR_CHECK(esp_wifi_get_config(WIFI_IF_STA, &wifi_config));
@@ -101,16 +119,35 @@ class WiFi {
             wifi_config.sta.password[pass_len] = '\0';
         }
 
+        // If we are already running, disconnect and stop before applying new config
+        if (wifi_was_started) {
+            esp_err_t err = esp_wifi_disconnect();
+            if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED &&
+                err != ESP_ERR_WIFI_CONN) {
+                ESP_LOGW(TAG, "esp_wifi_disconnect returned %s",
+                         esp_err_to_name(err));
+            }
+            err = esp_wifi_stop();
+            if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
+                ESP_LOGW(TAG, "esp_wifi_stop returned %s", esp_err_to_name(err));
+            }
+        }
+
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-        ESP_ERROR_CHECK(esp_wifi_start());
+        esp_err_t start_err = esp_wifi_start();
+        if (start_err == ESP_ERR_WIFI_CONN ||
+            start_err == ESP_ERR_WIFI_NOT_STOPPED) {
+            start_err = ESP_OK;
+        }
+        ESP_ERROR_CHECK(start_err);
 
         ESP_LOGI(TAG, "wifi_init_sta finished.");
 
         ESP_LOGI(TAG, "Connect to SSID:%s, password:%s", WIFI_SSID.c_str(),
                  WIFI_PASS.c_str());
 
-        esp_wifi_connect();
+        ESP_ERROR_CHECK(esp_wifi_connect());
 
         /* Waiting until either the connection is established
          * (WIFI_CONNECTED_BIT) or connection failed for the maximum number of

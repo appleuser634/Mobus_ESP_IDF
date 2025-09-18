@@ -1189,13 +1189,11 @@ class ContactBook {
                 vTaskDelay(100 / portTICK_PERIOD_MS);
             }
 
-            chatapi::ChatApiClient api;  // uses NVS server_host/port
-            std::string username = get_nvs((char *)"user_name");
-            std::string password = get_nvs((char *)"password");
-            if (password == "") password = "password123";
-            if (api.token().empty()) {
-                api.login(username, password);
-            }
+            auto& api = chatapi::shared_client(true);  // uses NVS server_host/port
+            api.set_scheme("https");
+            const auto creds = chatapi::load_credentials_from_nvs();
+            (void)chatapi::ensure_authenticated(api, creds, false);
+            std::string username = creds.username;
             std::string resp;
             if (api.get_friends(resp) == ESP_OK) {
                 StaticJsonDocument<4096> doc;
@@ -1353,12 +1351,10 @@ class ContactBook {
                                 waited += 50;
                             }
                         } else {
-                            chatapi::ChatApiClient api;
-                            std::string username = get_nvs((char *)"user_name");
-                            std::string password = get_nvs((char *)"password");
-                            if (password == "") password = "password123";
-                            if (api.token().empty())
-                                api.login(username, password);
+                            auto& api = chatapi::shared_client(true);
+                            api.set_scheme("https");
+                            const auto creds = chatapi::load_credentials_from_nvs();
+                            (void)chatapi::ensure_authenticated(api, creds, false);
                             std::string resp;
                             int status = 0;
                             auto err = api.send_friend_request(friend_code,
@@ -1390,13 +1386,10 @@ class ContactBook {
                     // Pending Requests UI
                     type_button.clear_button_state();
                     joystick.reset_timer();
-                    chatapi::ChatApiClient api;
-                    std::string username = get_nvs((char *)"user_name");
-                    std::string password = get_nvs((char *)"password");
-                    if (password == "") password = "password123";
-                    if (api.token().empty()) {
-                        api.login(username, password);
-                    }
+                    auto& api = chatapi::shared_client(true);
+                    api.set_scheme("https");
+                    const auto creds = chatapi::load_credentials_from_nvs();
+                    (void)chatapi::ensure_authenticated(api, creds, false);
 
                     // Fetch pending (BLE first)
                     std::vector<std::pair<std::string, std::string>>
@@ -2440,11 +2433,11 @@ void Profile() {
 
     // If friend_code is not saved, try to fetch via API and store
     if (friend_code == "") {
-        chatapi::ChatApiClient api;
-        std::string password = get_nvs((char *)"password");
-        if (password == "") password = "password123";
-        if (api.token().empty() && user_name != "") {
-            api.login(user_name, password);
+        auto& api = chatapi::shared_client(true);
+        api.set_scheme("https");
+        const auto creds = chatapi::load_credentials_from_nvs();
+        if (!user_name.empty()) {
+            (void)chatapi::ensure_authenticated(api, creds, false);
         }
         std::string code;
         int st = 0;
@@ -4979,7 +4972,8 @@ class ProfileSetting {
                 save_nvs((char *)"password", password);
             }
 
-            chatapi::ChatApiClient api;
+            auto& api = chatapi::shared_client(true);
+            api.set_scheme("https");
             esp_err_t err = api.register_user(user_name, password);
             if (err != ESP_OK) {
                 err = api.login(user_name, password);

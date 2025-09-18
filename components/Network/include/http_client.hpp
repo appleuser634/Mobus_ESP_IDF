@@ -34,7 +34,12 @@
 
 #define MAX_HTTP_RECV_BUFFER 512
 #define MAX_HTTP_OUTPUT_BUFFER 2048
-#define HTTP_ENDPOINT "192.168.2.184"
+
+inline chatapi::ChatApiClient& dev_chat_api() {
+    auto& client = chatapi::shared_client(true);
+    client.set_scheme("https");
+    return client;
+}
 
 /* Root cert for howsmyssl.com, taken from howsmyssl_com_root_cert.pem
 
@@ -166,15 +171,13 @@ void http_get_message_task(void *pvParameters) {
     delete (std::string*)pvParameters;
 
     // Prepare API client and ensure logged in
-    chatapi::ChatApiClient api(HTTP_ENDPOINT, 8080);
-    std::string username = get_nvs("user_name"); if (username.empty()) username = get_nvs("username");
-    std::string password = get_nvs("password"); if (password.empty()) password = "password123";
-    if (api.token().empty()) {
-        if (api.login(username, password) != ESP_OK) {
-            (void)api.register_user(username, password);
-            (void)api.login(username, password);
-        }
+    auto& api = dev_chat_api();
+    api.set_scheme("https");
+    const auto creds = chatapi::load_credentials_from_nvs();
+    if (chatapi::ensure_authenticated(api, creds) != ESP_OK) {
+        ESP_LOGW(TAG, "Chat API auth failed; continuing with cached token state");
     }
+    const std::string username = creds.username;
 
     std::string response;
     esp_err_t err = api.get_messages(chat_from, 20, response);
@@ -247,34 +250,34 @@ void http_get_notifications_task(void *pvParameters) {
         }
     }
     // Initialize MQTT and subscribe to user topic (via runtime)
-    chatapi::ChatApiClient api; // use NVS-configured endpoint
-    std::string username = get_nvs("user_name"); if (username.empty()) username = get_nvs("username");
-    std::string password = get_nvs("password"); if (password.empty()) password = "password123";
-    if (api.token().empty()) {
-        if (api.login(username, password) != ESP_OK) {
-            (void)api.register_user(username, password);
-            (void)api.login(username, password);
-        }
+    auto& api = chatapi::shared_client(true); // use NVS-configured endpoint
+    api.set_scheme("https");
+    const auto creds = chatapi::load_credentials_from_nvs();
+    if (chatapi::ensure_authenticated(api, creds) != ESP_OK) {
+        ESP_LOGW(TAG, "Chat API auth failed; continuing with cached token state");
     }
+
+    auto api_user_id = api.user_id();
+    auto api_host = api.host();
 
     // Choose MQTT host/port
     std::string mqtt_host = get_nvs("mqtt_host");
-    if (mqtt_host.empty()) mqtt_host = api.host();
+    if (mqtt_host.empty()) mqtt_host = api_host;
     std::string mqtt_port_str = get_nvs((char*)"mqtt_port");
     int mqtt_port = 1883;
     if (!mqtt_port_str.empty()) { int p = atoi(mqtt_port_str.c_str()); if (p>0) mqtt_port = p; }
-    mqtt_rt_configure(mqtt_host.c_str(), mqtt_port, api.user_id().c_str());
+    mqtt_rt_configure(mqtt_host.c_str(), mqtt_port, api_user_id.c_str());
     if (mqtt_rt_start() != 0) {
         ESP_LOGE(TAG, "MQTT connect failed");
         vTaskDelete(NULL);
         return;
     }
-    if (api.user_id().empty()) {
+    if (api_user_id.empty()) {
         ESP_LOGE(TAG, "No user_id for MQTT subscribe");
         vTaskDelete(NULL);
         return;
     }
-    mqtt_rt_update_user(api.user_id().c_str());
+    mqtt_rt_update_user(api_user_id.c_str());
 
     // Pump incoming messages into legacy notif_res format
     while (1) {
@@ -299,14 +302,11 @@ std::string chat_to = "";
 std::string message = "";
 void http_post_message_task(void *pvParameters) {
     // Prepare API client and send message using new /api/messages/send
-    chatapi::ChatApiClient api;
-    std::string username = get_nvs("user_name"); if (username.empty()) username = get_nvs("username");
-    std::string password = get_nvs("password"); if (password.empty()) password = "password123";
-    if (api.token().empty()) {
-        if (api.login(username, password) != ESP_OK) {
-            (void)api.register_user(username, password);
-            (void)api.login(username, password);
-        }
+    auto& api = chatapi::shared_client(true);
+    api.set_scheme("https");
+    const auto creds = chatapi::load_credentials_from_nvs();
+    if (chatapi::ensure_authenticated(api, creds) != ESP_OK) {
+        ESP_LOGW(TAG, "Chat API auth failed; continuing with cached token state");
     }
 
     std::string dummy;
