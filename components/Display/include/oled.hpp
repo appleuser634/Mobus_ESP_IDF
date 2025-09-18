@@ -16,6 +16,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
+#include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <ctype.h>
@@ -3966,7 +3967,7 @@ class Game {
 
     void start_game_task() {
         printf("Start Game Task...");
-        // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
+        running_flag = true;
         xTaskCreatePinnedToCore(&game_task, "game_task", kTaskStackWords, NULL,
                                 6, NULL, 1);
     }
@@ -3982,19 +3983,403 @@ class Game {
         sprite.setTextWrap(false);
         sprite.createSprite(lcd.width(), lcd.height());
 
-        mopping_main();
+        Joystick joystick;
+        Button type_button(GPIO_NUM_46);
+        Button back_button(GPIO_NUM_3);
+        Button enter_button(GPIO_NUM_5);
+
+        reset_inputs(joystick, type_button, back_button, enter_button);
+
+        bool exit_task = false;
+        while (!exit_task) {
+            MenuChoice choice = show_game_menu(joystick, type_button,
+                                               back_button, enter_button);
+            bool exit_requested = false;
+
+            switch (choice) {
+                case MenuChoice::kExit:
+                    exit_requested = true;
+                    break;
+                case MenuChoice::kMopping:
+                    exit_requested = run_mopping_game();
+                    break;
+                case MenuChoice::kMorse:
+                    exit_requested = run_morse_trainer(
+                        joystick, type_button, back_button, enter_button);
+                    break;
+            }
+
+            reset_inputs(joystick, type_button, back_button, enter_button);
+            if (exit_requested) {
+                exit_task = true;
+            }
+        }
 
         UBaseType_t watermark_words = uxTaskGetStackHighWaterMark(nullptr);
-        ESP_LOGI("WASM_GAME",
-                 "game_task stack high watermark: %u words (%u bytes)%s",
-                 static_cast<unsigned int>(watermark_words),
-                 static_cast<unsigned int>(watermark_words *
-                                           sizeof(StackType_t)),
-                 watermark_words == 0 ? " [LOW]" : "");
+        ESP_LOGI(
+            "WASM_GAME",
+            "game_task stack high watermark: %u words (%u bytes)%s",
+            static_cast<unsigned int>(watermark_words),
+            static_cast<unsigned int>(watermark_words * sizeof(StackType_t)),
+            watermark_words == 0 ? " [LOW]" : "");
 
         running_flag = false;
         vTaskDelete(NULL);
     };
+
+   private:
+    enum class MenuChoice { kMopping = 0, kMorse = 1, kExit = 2 };
+
+    static MenuChoice show_game_menu(Joystick &joystick, Button &type_button,
+                                     Button &back_button,
+                                     Button &enter_button) {
+        reset_inputs(joystick, type_button, back_button, enter_button);
+
+        const char *items[] = {"Mopping (Wasm)", "Morse Trainer"};
+        int index = 0;
+
+        while (true) {
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.setFont(&fonts::Font2);
+            sprite.setTextColor(0xFFFF, 0x0000);
+            sprite.drawCenterString("Choose Game", 64, 6);
+
+            for (int i = 0; i < 2; ++i) {
+                int y = 24 + i * 18;
+                if (i == index) {
+                    sprite.fillRoundRect(8, y - 4, 112, 18, 3, 0xFFFF);
+                    sprite.setTextColor(0x0000, 0xFFFF);
+                } else {
+                    sprite.setTextColor(0xFFFF, 0x0000);
+                }
+                sprite.drawCenterString(items[i], 64, y);
+            }
+
+            sprite.setTextColor(0xFFFF, 0x0000);
+            sprite.drawCenterString("Type=Select  Back=Exit", 64, 54);
+            sprite.pushSprite(&lcd, 0, 0);
+
+            Joystick::joystick_state_t joy = joystick.get_joystick_state();
+            Button::button_state_t type_state = type_button.get_button_state();
+            Button::button_state_t back_state = back_button.get_button_state();
+
+            if (joy.pushed_down_edge) {
+                index = (index + 1) % 2;
+            } else if (joy.pushed_up_edge) {
+                index = (index + 2 - 1) % 2;
+            }
+
+            if (type_state.pushed) {
+                type_button.clear_button_state();
+                return index == 0 ? MenuChoice::kMopping : MenuChoice::kMorse;
+            }
+
+            if (back_state.pushed || joy.left) {
+                back_button.clear_button_state();
+                return MenuChoice::kExit;
+            }
+
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+    }
+
+    static bool run_mopping_game() {
+        sprite.fillRect(0, 0, 128, 64, 0);
+        sprite.setFont(&fonts::Font2);
+        sprite.setTextColor(0xFFFF, 0x0000);
+        sprite.drawCenterString("Launching...", 64, 28);
+        sprite.pushSprite(&lcd, 0, 0);
+
+        mopping_main();
+
+        return false;
+    }
+
+    static bool run_morse_trainer(Joystick &joystick, Button &type_button,
+                                  Button &back_button, Button &enter_button) {
+        reset_inputs(joystick, type_button, back_button, enter_button);
+
+        Max98357A buzzer;
+        buzzer.init();
+
+        Led led;
+
+        lcd.setRotation(2);
+
+        sprite.setColorDepth(8);
+        sprite.setFont(&fonts::Font4);
+        sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
+        sprite.createSprite(lcd.width(), lcd.height());
+
+        char letters[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+        srand(esp_timer_get_time());
+        char random_char = letters[rand() % 26];
+
+        while (1) {
+            std::string morse_text = "";
+            std::string message_text = "";
+            std::string alphabet_text = "";
+
+            std::string long_push_text = "_";
+            std::string short_push_text = ".";
+
+            // 問題数
+            int n = 10;
+            // クリア数
+            int c = 0;
+
+            // ゲーム開始時間
+            long long int st = esp_timer_get_time();
+
+            // ゲーム終了フラグ
+            bool break_flag = false;
+
+            // Play時間を取得
+            float p_time = 0;
+
+            // 問題を解き終わるまでループ
+            while (c < n) {
+                sprite.fillRect(0, 0, 128, 64, 0);
+
+                // Joystickの状態を取得
+                Joystick::joystick_state_t joystick_state =
+                    joystick.get_joystick_state();
+
+                // モールス信号打ち込みキーの判定ロジック
+                Button::button_state_t type_button_state =
+                    type_button.get_button_state();
+                Button::button_state_t back_button_state =
+                    back_button.get_button_state();
+                Button::button_state_t enter_button_state =
+                    enter_button.get_button_state();
+
+                if (type_button_state.push_edge and
+                    !back_button_state.pushing) {
+                    buzzer.start_tone(2300.0f, 0.6f);
+                }
+
+                if (type_button_state.pushed and !back_button_state.pushing) {
+                    printf("Button pushed!\n");
+                    printf("Pushing time:%lld\n",
+                           type_button_state.pushing_sec);
+                    printf("Push type:%c\n", type_button_state.push_type);
+                    if (type_button_state.push_type == 's') {
+                        morse_text += short_push_text;
+                    } else if (type_button_state.push_type == 'l') {
+                        morse_text += long_push_text;
+                    }
+
+                    type_button.clear_button_state();
+                    buzzer.stop_tone();
+                }
+
+                // printf("Release time:%lld\n",button_state.release_sec);
+                if (type_button_state.release_sec > 200000) {
+                    // printf("Release
+                    // time:%lld\n",button_state.release_sec);
+
+                    if (morse_code.count(morse_text)) {
+                        alphabet_text = morse_code.at(morse_text);
+                    }
+                    morse_text = "";
+                }
+                if (back_button_state.pushed and
+                    !back_button_state.pushed_same_time and
+                    !type_button_state.pushing) {
+                    break_flag = true;
+                    break;
+                } else if (joystick_state.left) {
+                    break_flag = true;
+                    break;
+                } else if (joystick_state.up and enter_button_state.pushed) {
+                    esp_restart();
+                } else if (back_button_state.pushed) {
+                    back_button.clear_button_state();
+                } else if (joystick_state.up) {
+                    sprite.setFont(&fonts::Font2);
+                    sprite.setCursor(52, 30);
+
+                    std::string key(1, random_char);
+                    std::string morse = morse_code_reverse.at(key);
+
+                    sprite.print(morse.c_str());
+                }
+
+                printf("random_char is %c\n", random_char);  // 生の値を出力
+                printf("random_char morse is %s\n",
+                       std::to_string(random_char)
+                           .c_str());  // 文字列化したキーを出力
+
+                // 出題の文字と一緒であればcを++
+                if (*message_text.c_str() == random_char) {
+                    c += 1;
+                    random_char = letters[rand() % 26];
+                } else if (message_text != "") {
+                    led.led_on();
+                    neopixel.set_color(10, 0, 0);
+                    vTaskDelay(50 / portTICK_PERIOD_MS);
+                    led.led_off();
+                    neopixel.set_color(0, 0, 0);
+                }
+
+                message_text = "";
+
+                std::string display_text =
+                    message_text + morse_text + alphabet_text;
+
+                std::string strN = std::to_string(n);
+                std::string strC = std::to_string(c);
+
+                std::string nPerC = strC + "/" + strN;
+
+                // Play時間を取得
+                p_time = round((esp_timer_get_time() - st) / 10000) / 100;
+
+                char b_p_time[50];
+
+                std::sprintf(b_p_time, "%.2f", p_time);
+                std::string s_p_time(b_p_time);
+
+                // Play時間を表示
+                sprite.setFont(&fonts::Font2);
+                sprite.setCursor(0, 0);
+                sprite.print(s_p_time.c_str());
+
+                // 回答進捗を表示
+                sprite.setCursor(88, 0);
+                sprite.print(nPerC.c_str());
+
+                // sprite.setFont(&fonts::Font4);
+                sprite.setFont(&fonts::FreeMono12pt7b);
+                sprite.drawCenterString(display_text.c_str(), 64, 36,
+                                        &fonts::FreeMono12pt7b);
+
+                sprite.setCursor(55, 5);
+                sprite.print(random_char);
+
+                sprite.drawFastHLine(0, 16, 48, 0xFFFF);
+                sprite.drawFastHLine(78, 16, 128, 0xFFFF);
+                sprite.drawRect(50, 2, 26, 26, 0xFFFF);
+
+                sprite.pushSprite(&lcd, 0, 0);
+
+                message_text += alphabet_text;
+                alphabet_text = "";
+
+                // チャタリング防止用に100msのsleep
+                vTaskDelay(10 / portTICK_PERIOD_MS);
+
+                printf("message_text:%s\n", message_text.c_str());
+            }
+
+            // break_flagが立ってたら終了
+            if (break_flag) {
+                buzzer.deinit();
+                break;
+            }
+
+            // Play時間を取得
+            p_time = round((esp_timer_get_time() - st) / 10000) / 100;
+            char b_p_time[50];
+            std::sprintf(b_p_time, "%.2f", p_time);
+            std::string s_p_time(b_p_time);
+
+            std::string best_record = get_nvs("morse_score");
+            if (best_record == "") {
+                best_record = "1000";
+            }
+            float best_record_f = std::stof(best_record);
+
+            sprite.fillRect(0, 0, 128, 64, 0);
+
+            sprite.setFont(&fonts::Font4);
+            sprite.setCursor(32, 0);
+            sprite.print("Clear!");
+
+            printf("best time: %s", best_record.c_str());
+            printf("time: %s", s_p_time.c_str());
+
+            if (std::stof(s_p_time) < best_record_f) {
+                save_nvs("morse_score", s_p_time);
+
+                sprite.setFont(&fonts::Font2);
+
+                std::string t_text = "New Record!!";
+                sprite.drawCenterString(t_text.c_str(), 64, 22);
+
+                t_text = "Time: " + s_p_time + "s";
+                sprite.drawCenterString(t_text.c_str(), 64, 38);
+            } else {
+                sprite.setFont(&fonts::Font2);
+
+                sprite.setTextColor(0x000000u, 0xFFFFFFu);
+
+                std::string t_text = " BestTime: " + best_record + "s ";
+                sprite.drawCenterString(t_text.c_str(), 64, 38);
+
+                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+
+                t_text = "Time: " + s_p_time + "s";
+                sprite.drawCenterString(t_text.c_str(), 64, 22);
+            }
+            // Play時間を表示
+            sprite.pushSprite(&lcd, 0, 0);
+
+            while (1) {
+                Joystick::joystick_state_t joystick_state =
+                    joystick.get_joystick_state();
+                Button::button_state_t type_button_state =
+                    type_button.get_button_state();
+                Button::button_state_t back_button_state =
+                    back_button.get_button_state();
+
+                // ジョイスティック左を押されたらメニューへ戻る
+                // 戻るボタンを押されたらメニューへ戻る
+                if (joystick_state.left || back_button_state.pushed) {
+                    break_flag = true;
+                    break;
+                }
+
+                // タイプボタンを押されたら再度ゲームを再開
+                if (type_button_state.pushed) {
+                    break_flag = false;
+                    type_button.clear_button_state();
+                    break;
+                }
+            }
+
+            if (break_flag) {
+                break;
+            }
+        }
+
+        running_flag = false;
+        vTaskDelete(NULL);
+
+        buzzer.stop_tone();
+        buzzer.deinit();
+        reset_inputs(joystick, type_button, back_button, enter_button);
+        return false;
+    }
+
+    static void reset_inputs(Joystick &joystick, Button &type_button,
+                             Button &back_button, Button &enter_button) {
+        type_button.clear_button_state();
+        type_button.reset_timer();
+        back_button.clear_button_state();
+        back_button.reset_timer();
+        enter_button.clear_button_state();
+        enter_button.reset_timer();
+        joystick.reset_timer();
+    }
+
+    static char random_letter() {
+        static const char letters[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        const size_t count = sizeof(letters) - 1;
+        uint32_t r = esp_random();
+        return letters[r % count];
+    }
 };
 bool Game::running_flag = false;
 
