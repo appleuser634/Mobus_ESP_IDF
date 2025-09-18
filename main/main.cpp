@@ -56,6 +56,7 @@ static const char* TAG = "Mobus v3.14";
 #include <joystick.h>
 #include <power_monitor.h>
 #include <button.h>
+#include <haptic_motor.hpp>
 
 #include <nvs_rw.hpp>
 #include <wifi.hpp>
@@ -528,7 +529,7 @@ void check_notification() {
     Oled oled;
     (void)oled;  // suppress unused warning
     Max98357A buzzer;
-    Led led;
+    HapticMotor &haptic = HapticMotor::instance();
 
     printf("通知チェック中...");
     HttpClient http_client;
@@ -547,11 +548,9 @@ void check_notification() {
 
                 for (int n = 0; n < 2; n++) {
                     buzzer.start_tone(2600.0f, 0.6f);
-                    led.led_on();
                     neopixel.set_color(0, 10, 100);
-                    vTaskDelay(50 / portTICK_PERIOD_MS);
+                    haptic.pulse(HapticMotor::kDefaultFrequencyHz, 50);
                     buzzer.stop_tone();
-                    led.led_off();
                     neopixel.set_color(0, 0, 0);
                     vTaskDelay(50 / portTICK_PERIOD_MS);
                 }

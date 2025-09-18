@@ -11,7 +11,7 @@
 #include <gb_synth.hpp>
 #include <boot_sounds.hpp>
 #include <images.hpp>
-#include <led.hpp>
+#include <haptic_motor.hpp>
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -1065,7 +1065,6 @@ class ContactBook {
 
     static void message_menue_task(void *pvParameters) {
         Max98357A buzzer;
-        Led led;
 
         Joystick joystick;
 
@@ -3257,7 +3256,6 @@ class SettingMenu {
         WiFiSetting wifi_setting;
 
         Max98357A buzzer;
-        Led led;
 
         Joystick joystick;
 
@@ -4102,7 +4100,7 @@ class Game {
         Max98357A buzzer;
         buzzer.init();
 
-        Led led;
+        HapticMotor &haptic = HapticMotor::instance();
 
         lcd.setRotation(2);
 
@@ -4216,10 +4214,10 @@ class Game {
                     c += 1;
                     random_char = letters[rand() % 26];
                 } else if (message_text != "") {
-                    led.led_on();
+                    haptic.activate();
                     neopixel.set_color(10, 0, 0);
                     vTaskDelay(50 / portTICK_PERIOD_MS);
-                    led.led_off();
+                    haptic.deactivate();
                     neopixel.set_color(0, 0, 0);
                 }
 
