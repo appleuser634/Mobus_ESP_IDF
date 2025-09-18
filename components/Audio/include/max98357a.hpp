@@ -10,6 +10,8 @@
 #include <cmath>
 #include <vector>
 #include <algorithm>
+
+#include <sound_settings.hpp>
 #include "esp_heap_caps.h"
 
 #include "esp_err.h"
@@ -104,10 +106,14 @@ class Max98357A {
     // duration_ms: how long to play
     // volume: 0.0 to 1.0
     esp_err_t play_tone(float freq_hz, int duration_ms, float volume = 0.5f, bool stop_after = true) {
+        const float v = effective_volume(volume);
+        if (v <= 0.0f) {
+            return ESP_OK;
+        }
+
         ESP_RETURN_ON_ERROR(enable(), TAG, "enable failed");
 
         const int channels = 2;                // stereo (L/R duplicated)
-        const float v = clampf(volume, 0.0f, 1.0f);
         const float two_pi = 6.283185307179586f;
         const float phase_inc = two_pi * freq_hz / static_cast<float>(sample_rate);
 
@@ -173,8 +179,9 @@ class Max98357A {
 
     // Write raw mono 16-bit PCM samples; they will be duplicated to stereo
     esp_err_t play_pcm_mono16(const int16_t* samples, size_t sample_count, float volume = 1.0f) {
+        const float v = effective_volume(volume);
+        if (v <= 0.0f) return ESP_OK;
         ESP_RETURN_ON_ERROR(enable(), TAG, "enable failed");
-        const float v = clampf(volume, 0.0f, 1.0f);
         const int channels = 2;
 
         size_t buf_samples_per_ch = std::min<size_t>(1024, sample_count);
@@ -221,8 +228,9 @@ class Max98357A {
 
     // Abortable variant: checks abortp between chunks and exits early if set
     esp_err_t play_pcm_mono16_abortable(const int16_t* samples, size_t sample_count, float volume, volatile bool* abortp) {
+        const float v = effective_volume(volume);
+        if (v <= 0.0f) return ESP_OK;
         ESP_RETURN_ON_ERROR(enable(), TAG, "enable failed");
-        const float v = clampf(volume, 0.0f, 1.0f);
         const int channels = 2;
 
         size_t buf_samples_per_ch = std::min<size_t>(1024, sample_count);
@@ -273,8 +281,9 @@ class Max98357A {
     typedef size_t (*fill_mono_cb_t)(int16_t* dst, size_t max, void* user);
     esp_err_t play_pcm_mono16_stream(size_t total_samples, float volume, volatile bool* abortp,
                                      fill_mono_cb_t cb, void* user) {
+        const float v = effective_volume(volume);
+        if (v <= 0.0f) return ESP_OK;
         ESP_RETURN_ON_ERROR(enable(), TAG, "enable failed");
-        const float v = clampf(volume, 0.0f, 1.0f);
         const int channels = 2;
         const size_t mono_chunk = 512;
         int16_t* mono = (int16_t*)heap_caps_malloc(mono_chunk * sizeof(int16_t), MALLOC_CAP_INTERNAL);
@@ -327,15 +336,22 @@ class Max98357A {
 
     // Start a continuous tone in background task
     esp_err_t start_tone(float freq_hz = 2300.0f, float volume = 0.5f) {
-        ESP_RETURN_ON_ERROR(enable(), TAG, "enable failed");
+        float base_volume = clampf(volume, 0.0f, 1.0f);
+        float eff = effective_volume(base_volume);
+        tone_freq = freq_hz;
+        tone_volume = base_volume;
+
         if (tone_task_handle) {
-            // already running; update parameters
-            tone_freq = freq_hz;
-            tone_volume = clampf(volume, 0.0f, 1.0f);
+            if (eff > 0.0f) {
+                ESP_RETURN_ON_ERROR(enable(), TAG, "enable failed");
+            }
             return ESP_OK;
         }
-        tone_freq = freq_hz;
-        tone_volume = clampf(volume, 0.0f, 1.0f);
+        if (eff <= 0.0f) {
+            return ESP_OK;
+        }
+
+        ESP_RETURN_ON_ERROR(enable(), TAG, "enable failed");
         tone_phase = 0.0f;
         tone_running = true;
         BaseType_t ok = xTaskCreatePinnedToCore(
@@ -381,6 +397,13 @@ class Max98357A {
         return x;
     }
 
+    static inline float effective_volume(float requested) {
+        float base = clampf(requested, 0.0f, 1.0f);
+        if (!sound_settings::enabled()) return 0.0f;
+        float global = clampf(sound_settings::volume(), 0.0f, 1.0f);
+        return clampf(base * global, 0.0f, 1.0f);
+    }
+
     static void tone_task_trampoline(void* arg) {
         reinterpret_cast<Max98357A*>(arg)->tone_task_main();
     }
@@ -401,15 +424,21 @@ class Max98357A {
 
         while (tone_running) {
             float local_freq = tone_freq;
-            float v = tone_volume;
+            float v = effective_volume(tone_volume);
             float phase_inc = two_pi * local_freq / static_cast<float>(sample_rate);
-            for (size_t i = 0; i < chunk_samples; ++i) {
-                float s = sinf(tone_phase) * v;
-                int16_t smp = static_cast<int16_t>(s * 32767.0f);
-                buf[i * channels + 0] = smp;
-                buf[i * channels + 1] = smp;
-                tone_phase += phase_inc;
-                if (tone_phase > two_pi) tone_phase -= two_pi;
+            if (v <= 0.0f) {
+                for (size_t i = 0; i < chunk_samples * channels; ++i) {
+                    buf[i] = 0;
+                }
+            } else {
+                for (size_t i = 0; i < chunk_samples; ++i) {
+                    float s = sinf(tone_phase) * v;
+                    int16_t smp = static_cast<int16_t>(s * 32767.0f);
+                    buf[i * channels + 0] = smp;
+                    buf[i * channels + 1] = smp;
+                    tone_phase += phase_inc;
+                    if (tone_phase > two_pi) tone_phase -= two_pi;
+                }
             }
             size_t bytes_to_write = chunk_samples * channels * sizeof(int16_t);
             size_t bytes_written = 0;

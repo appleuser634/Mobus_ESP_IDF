@@ -10,6 +10,7 @@
 #include <max98357a.h>
 #include <gb_synth.hpp>
 #include <boot_sounds.hpp>
+#include <sound_settings.hpp>
 #include <images.hpp>
 #include <haptic_motor.hpp>
 #include "esp_err.h"
@@ -3324,6 +3325,13 @@ class SettingMenu {
                     std::string label =
                         settings[i].setting_name + (on ? " [ON]" : " [OFF]");
                     sprite.print(label.c_str());
+                } else if (settings[i].setting_name == "Sound") {
+                    bool on = sound_settings::enabled();
+                    int vol_pct = static_cast<int>(sound_settings::volume() * 100.0f + 0.5f);
+                    char label[40];
+                    std::snprintf(label, sizeof(label), "Sound [%s, %d%%]",
+                                  on ? "ON" : "OFF", vol_pct);
+                    sprite.print(label);
                 } else if (settings[i].setting_name == "Auto Update") {
                     std::string au = get_nvs((char *)"ota_auto");
                     bool on = (au == "true");
@@ -3397,6 +3405,84 @@ class SettingMenu {
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 joystick.reset_timer();
+            } else if (type_button_state.pushed &&
+                       settings[select_index].setting_name == "Sound") {
+                type_button.clear_button_state();
+                enter_button.clear_button_state();
+                back_button.clear_button_state();
+                joystick.reset_timer();
+
+                bool enabled = sound_settings::enabled();
+                float volume = sound_settings::volume();
+                bool dirty = false;
+
+                while (1) {
+                    sprite.fillRect(0, 0, 128, 64, 0);
+                    sprite.setFont(&fonts::Font2);
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                    sprite.drawCenterString("Sound Settings", 64, 6);
+
+                    char status[32];
+                    std::snprintf(status, sizeof(status), "Status: %s",
+                                  enabled ? "ON" : "OFF");
+                    sprite.drawCenterString(status, 64, 22);
+
+                    int vol_pct = static_cast<int>(volume * 100.0f + 0.5f);
+                    char vol_text[32];
+                    std::snprintf(vol_text, sizeof(vol_text), "Volume: %d%%",
+                                  vol_pct);
+                    sprite.drawCenterString(vol_text, 64, 36);
+
+                    sprite.setFont(&fonts::Font2);
+                    sprite.drawCenterString("Type:Toggle  Up/Down:Vol", 64, 50);
+                    sprite.drawCenterString("Back/Enter:Exit", 64, 58);
+                    sprite.pushSprite(&lcd, 0, 0);
+
+                    auto tbs = type_button.get_button_state();
+                    auto ebs = enter_button.get_button_state();
+                    auto bbs = back_button.get_button_state();
+                    auto js = joystick.get_joystick_state();
+
+                    if (tbs.pushed) {
+                        enabled = !enabled;
+                        sound_settings::set_enabled(enabled, false);
+                        dirty = true;
+                        type_button.clear_button_state();
+                        type_button.reset_timer();
+                    }
+
+                    const float step = 0.05f;
+                    bool volume_changed = false;
+                    if (js.pushed_up_edge || js.pushed_right_edge) {
+                        volume = std::min(1.0f, volume + step);
+                        volume_changed = true;
+                    } else if (js.pushed_down_edge || js.pushed_left_edge) {
+                        volume = std::max(0.0f, volume - step);
+                        volume_changed = true;
+                    }
+                    if (volume_changed) {
+                        sound_settings::set_volume(volume, false);
+                        dirty = true;
+                        volume = sound_settings::volume();
+                    }
+
+                    if (ebs.pushed || bbs.pushed) {
+                        enter_button.clear_button_state();
+                        back_button.clear_button_state();
+                        break;
+                    }
+
+                    vTaskDelay(50 / portTICK_PERIOD_MS);
+                }
+
+                joystick.reset_timer();
+                type_button.clear_button_state();
+                type_button.reset_timer();
+                if (dirty) {
+                    sound_settings::persist();
+                    dirty = false;
+                    vTaskDelay(10 / portTICK_PERIOD_MS);
+                }
             } else if (type_button_state.pushed &&
                        settings[select_index].setting_name == "Boot Sound") {
                 // Simple boot sound selector: Type=cycle, Enter=preview,
