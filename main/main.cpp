@@ -95,8 +95,9 @@ bool ensure_spiffs_mounted() {
 
     esp_err_t err = esp_vfs_spiffs_register(&conf);
     if (err == ESP_ERR_NOT_FOUND) {
-        ESP_LOGW(LOG_TAG,
-                 "SPIFFS partition label 'spiffs' not found; trying auto-detect");
+        ESP_LOGW(
+            LOG_TAG,
+            "SPIFFS partition label 'spiffs' not found; trying auto-detect");
         conf.partition_label = nullptr;
         err = esp_vfs_spiffs_register(&conf);
     }
@@ -114,7 +115,8 @@ bool ensure_spiffs_mounted() {
         ESP_LOGI(LOG_TAG, "SPIFFS mounted (total=%u, used=%u)",
                  static_cast<unsigned>(total), static_cast<unsigned>(used));
     } else {
-        ESP_LOGW(LOG_TAG, "Failed to query SPIFFS info: %s", esp_err_to_name(err));
+        ESP_LOGW(LOG_TAG, "Failed to query SPIFFS info: %s",
+                 esp_err_to_name(err));
     }
 
     mounted = true;
@@ -264,20 +266,18 @@ m3ApiRawFunction(host_get_input) {
     if (joy_state.pushed_up_edge) mask |= INPUT_JOY_UP;
     if (joy_state.pushed_down_edge) mask |= INPUT_JOY_DOWN;
 
-    m3ApiReturnType(uint32_t)
-    m3ApiReturn(mask);
+    m3ApiReturnType(uint32_t) m3ApiReturn(mask);
 }
 
 m3ApiRawFunction(host_random) {
     m3ApiGetArg(int32_t, max_val);
     if (max_val <= 0) {
-        m3ApiReturnType(int32_t)
-        m3ApiReturn(0);
+        m3ApiReturnType(int32_t) m3ApiReturn(0);
     }
     uint32_t value = esp_random();
-    int32_t result = static_cast<int32_t>(value % static_cast<uint32_t>(max_val));
-    m3ApiReturnType(int32_t)
-    m3ApiReturn(result);
+    int32_t result =
+        static_cast<int32_t>(value % static_cast<uint32_t>(max_val));
+    m3ApiReturnType(int32_t) m3ApiReturn(result);
 }
 
 m3ApiRawFunction(host_sleep) {
@@ -287,13 +287,13 @@ m3ApiRawFunction(host_sleep) {
     } else {
         taskYIELD();
     }
+    esp_task_wdt_reset();
     m3ApiSuccess();
 }
 
 m3ApiRawFunction(host_time_ms) {
     uint32_t ms = static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
-    m3ApiReturnType(uint32_t)
-    m3ApiReturn(ms);
+    m3ApiReturnType(uint32_t) m3ApiReturn(ms);
 }
 
 M3Result link_host_functions(IM3Module module) {
@@ -358,15 +358,16 @@ bool run_game(const char* path) {
     }
 
     size_t wasm_size = static_cast<size_t>(file_size);
-    uint8_t* wasm_bytes = static_cast<uint8_t*>(heap_caps_malloc(
-        wasm_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    uint8_t* wasm_bytes = static_cast<uint8_t*>(
+        heap_caps_malloc(wasm_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     bool used_heap_caps = true;
     if (!wasm_bytes) {
         used_heap_caps = false;
         wasm_bytes = static_cast<uint8_t*>(malloc(wasm_size));
     }
     if (!wasm_bytes) {
-        ESP_LOGE(LOG_TAG, "Failed to allocate %zu bytes for Wasm module", wasm_size);
+        ESP_LOGE(LOG_TAG, "Failed to allocate %zu bytes for Wasm module",
+                 wasm_size);
         return false;
     }
 
@@ -383,7 +384,8 @@ bool run_game(const char* path) {
 
     size_t read = fread(wasm_bytes, 1, wasm_size, file);
     if (read != wasm_size) {
-        ESP_LOGE(LOG_TAG, "Short read when loading Wasm (%zu/%zu) from %s", read, wasm_size, path);
+        ESP_LOGE(LOG_TAG, "Short read when loading Wasm (%zu/%zu) from %s",
+                 read, wasm_size, path);
         free_wasm();
         return false;
     }
@@ -470,9 +472,13 @@ bool run_game(const char* path) {
 
     while (true) {
         uint64_t now_us = esp_timer_get_time();
-        uint32_t dt_ms = static_cast<uint32_t>((now_us - last_tick_us) / 1000ULL);
+        uint32_t dt_ms =
+            static_cast<uint32_t>((now_us - last_tick_us) / 1000ULL);
         if (dt_ms == 0) {
             dt_ms = 1;
+        }
+        if (dt_ms > 200) {
+            dt_ms = 200;
         }
         last_tick_us = now_us;
 
@@ -495,6 +501,7 @@ bool run_game(const char* path) {
         }
 
         taskYIELD();
+        esp_task_wdt_reset();
     }
 
     m3_FreeRuntime(runtime);
@@ -529,7 +536,7 @@ void check_notification() {
     Oled oled;
     (void)oled;  // suppress unused warning
     Max98357A buzzer;
-    HapticMotor &haptic = HapticMotor::instance();
+    HapticMotor& haptic = HapticMotor::instance();
 
     printf("通知チェック中...");
     HttpClient http_client;
@@ -614,8 +621,9 @@ void app_main(void) {
     start_deferred_ota_validation();
 
     Max98357A spk;
-    // Helper to choose boot sound: cute (default) or majestic. NVS key: boot_sound = "cute"|"majestic"|"random"
-    auto play_boot_sound = [&](Max98357A& s){
+    // Helper to choose boot sound: cute (default) or majestic. NVS key:
+    // boot_sound = "cute"|"majestic"|"random"
+    auto play_boot_sound = [&](Max98357A& s) {
         std::string sel = get_nvs((char*)"boot_sound");
         if (sel == "majestic") {
             boot_sounds::play_majestic(s, 0.55f);
@@ -623,10 +631,13 @@ void app_main(void) {
             boot_sounds::play_gb(s, 0.9f);
         } else if (sel == "random") {
             uint64_t t = (uint64_t)esp_timer_get_time();
-            uint32_t r = (uint32_t)((t ^ (t>>7) ^ (t>>15)) & 0x3);
-            if (r == 0) boot_sounds::play_cute(s, 0.5f);
-            else if (r == 1) boot_sounds::play_majestic(s, 0.55f);
-            else boot_sounds::play_gb(s, 0.9f);
+            uint32_t r = (uint32_t)((t ^ (t >> 7) ^ (t >> 15)) & 0x3);
+            if (r == 0)
+                boot_sounds::play_cute(s, 0.5f);
+            else if (r == 1)
+                boot_sounds::play_majestic(s, 0.55f);
+            else
+                boot_sounds::play_gb(s, 0.9f);
         } else if (sel == "song1") {
             boot_sounds::play_song(s, 1, 0.9f);
         } else if (sel == "song2") {

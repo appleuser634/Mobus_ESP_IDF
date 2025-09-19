@@ -3245,18 +3245,25 @@ class SettingMenu {
     static bool running_flag;
     static bool sound_dirty;
 
+    static constexpr uint32_t kTaskStackWords = 16192;
+
     void start_message_menue_task() {
         printf("Start MessageMenue Task...");
-        BaseType_t ok = xTaskCreatePinnedToCore(
-            &message_menue_task, "message_menue_task", 16192, NULL, 6, NULL,
-            1);
-        if (ok != pdPASS) {
-            ESP_LOGE("SETTING_MENU", "Failed to start message menu task (err=%ld)",
-                     static_cast<long>(ok));
-            running_flag = false;
+        if (task_handle_) {
+            ESP_LOGW("SETTING_MENU", "Task already running");
             return;
         }
+
         running_flag = true;
+        task_handle_ = xTaskCreateStaticPinnedToCore(
+            &message_menue_task, "message_menue_task", kTaskStackWords, NULL, 6,
+            task_stack_, &task_buffer_, 1);
+        if (!task_handle_) {
+            ESP_LOGE("SETTING_MENU",
+                     "Failed to start message menu task (err=%d)",
+                     (int)errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY);
+            running_flag = false;
+        }
     }
 
     static void message_menue_task(void *pvParameters) {
@@ -4043,29 +4050,53 @@ class SettingMenu {
             vTaskDelay(1);
         }
 
+        UBaseType_t watermark_words = uxTaskGetStackHighWaterMark(nullptr);
+        ESP_LOGI("SETTING_MENU", "stack high watermark: %u words (%u bytes)",
+                 static_cast<unsigned>(watermark_words),
+                 static_cast<unsigned>(watermark_words *
+                                       sizeof(StackType_t)));
+
         running_flag = false;
+        task_handle_ = nullptr;
         vTaskDelete(NULL);
     };
+
+   private:
+    static TaskHandle_t task_handle_;
+    static StaticTask_t task_buffer_;
+    static StackType_t task_stack_[kTaskStackWords];
 };
 bool SettingMenu::running_flag = false;
 bool SettingMenu::sound_dirty = false;
+TaskHandle_t SettingMenu::task_handle_ = nullptr;
+StaticTask_t SettingMenu::task_buffer_;
+StackType_t SettingMenu::task_stack_[SettingMenu::kTaskStackWords];
 
 class Game {
    public:
     static constexpr uint32_t kTaskStackWords = 12288;  // 48 KB task stack
     static bool running_flag;
 
+    static TaskHandle_t task_handle_;
+    static StaticTask_t task_buffer_;
+    static StackType_t task_stack_[kTaskStackWords];
+
     void start_game_task() {
         printf("Start Game Task...");
-        BaseType_t ok = xTaskCreatePinnedToCore(
-            &game_task, "game_task", kTaskStackWords, NULL, 6, NULL, 1);
-        if (ok != pdPASS) {
-            ESP_LOGE("GAME", "Failed to start game task (err=%ld)",
-                     static_cast<long>(ok));
-            running_flag = false;
+        if (task_handle_) {
+            ESP_LOGW("GAME", "Task already running");
             return;
         }
         running_flag = true;
+        task_handle_ = xTaskCreateStaticPinnedToCore(
+            &game_task, "game_task", kTaskStackWords, NULL, 6, task_stack_,
+            &task_buffer_, 1);
+        if (!task_handle_) {
+            ESP_LOGE("GAME",
+                     "Failed to start game task (err=%d)",
+                     (int)errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY);
+            running_flag = false;
+        }
     }
 
     static std::map<std::string, std::string> morse_code;
@@ -4112,14 +4143,14 @@ class Game {
         }
 
         UBaseType_t watermark_words = uxTaskGetStackHighWaterMark(nullptr);
-        ESP_LOGI(
-            "WASM_GAME",
-            "game_task stack high watermark: %u words (%u bytes)%s",
-            static_cast<unsigned int>(watermark_words),
-            static_cast<unsigned int>(watermark_words * sizeof(StackType_t)),
-            watermark_words == 0 ? " [LOW]" : "");
+        ESP_LOGI("GAME", "game_task stack high watermark: %u words (%u bytes)%s",
+                 static_cast<unsigned int>(watermark_words),
+                 static_cast<unsigned int>(watermark_words *
+                                           sizeof(StackType_t)),
+                 watermark_words == 0 ? " [LOW]" : "");
 
         running_flag = false;
+        task_handle_ = nullptr;
         vTaskDelete(NULL);
     };
 
@@ -4476,6 +4507,9 @@ class Game {
     }
 };
 bool Game::running_flag = false;
+TaskHandle_t Game::task_handle_ = nullptr;
+StaticTask_t Game::task_buffer_;
+StackType_t Game::task_stack_[Game::kTaskStackWords];
 
 std::map<std::string, std::string> Game::morse_code = {
     {"._", "A"},     {"_...", "B"},   {"_._.", "C"},   {"_..", "D"},
