@@ -4111,7 +4111,7 @@ StackType_t SettingMenu::task_stack_[SettingMenu::kTaskStackWords];
 
 class Game {
    public:
-    static constexpr uint32_t kTaskStackWords = 12288;  // 48 KB task stack
+    static constexpr uint32_t kTaskStackWords = 22288;  // 48 KB task stack
     static bool running_flag;
 
     static TaskHandle_t task_handle_;
@@ -4138,6 +4138,7 @@ class Game {
     static std::map<std::string, std::string> morse_code;
     static std::map<std::string, std::string> morse_code_reverse;
     static void game_task(void *pvParameters) {
+        ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
         (void)pvParameters;
         lcd.init();
         lcd.setRotation(2);
@@ -4187,6 +4188,7 @@ class Game {
 
         running_flag = false;
         task_handle_ = nullptr;
+        ESP_ERROR_CHECK(esp_task_wdt_delete(NULL));
         vTaskDelete(NULL);
     };
 
