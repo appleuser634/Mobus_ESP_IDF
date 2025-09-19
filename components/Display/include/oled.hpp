@@ -1230,7 +1230,8 @@ class ContactBook {
                 vTaskDelay(100 / portTICK_PERIOD_MS);
             }
 
-            auto& api = chatapi::shared_client(true);  // uses NVS server_host/port
+            auto &api =
+                chatapi::shared_client(true);  // uses NVS server_host/port
             api.set_scheme("https");
             const auto creds = chatapi::load_credentials_from_nvs();
             (void)chatapi::ensure_authenticated(api, creds, false);
@@ -1392,10 +1393,12 @@ class ContactBook {
                                 waited += 50;
                             }
                         } else {
-                            auto& api = chatapi::shared_client(true);
+                            auto &api = chatapi::shared_client(true);
                             api.set_scheme("https");
-                            const auto creds = chatapi::load_credentials_from_nvs();
-                            (void)chatapi::ensure_authenticated(api, creds, false);
+                            const auto creds =
+                                chatapi::load_credentials_from_nvs();
+                            (void)chatapi::ensure_authenticated(api, creds,
+                                                                false);
                             std::string resp;
                             int status = 0;
                             auto err = api.send_friend_request(friend_code,
@@ -1427,7 +1430,7 @@ class ContactBook {
                     // Pending Requests UI
                     type_button.clear_button_state();
                     joystick.reset_timer();
-                    auto& api = chatapi::shared_client(true);
+                    auto &api = chatapi::shared_client(true);
                     api.set_scheme("https");
                     const auto creds = chatapi::load_credentials_from_nvs();
                     (void)chatapi::ensure_authenticated(api, creds, false);
@@ -2474,7 +2477,7 @@ void Profile() {
 
     // If friend_code is not saved, try to fetch via API and store
     if (friend_code == "") {
-        auto& api = chatapi::shared_client(true);
+        auto &api = chatapi::shared_client(true);
         api.set_scheme("https");
         const auto creds = chatapi::load_credentials_from_nvs();
         if (!user_name.empty()) {
@@ -3383,7 +3386,8 @@ class SettingMenu {
                     sprite.print(label.c_str());
                 } else if (settings[i].setting_name == "Sound") {
                     bool on = sound_settings::enabled();
-                    int vol_pct = static_cast<int>(sound_settings::volume() * 100.0f + 0.5f);
+                    int vol_pct = static_cast<int>(
+                        sound_settings::volume() * 100.0f + 0.5f);
                     char label[40];
                     std::snprintf(label, sizeof(label), "Sound [%s, %d%%]",
                                   on ? "ON" : "OFF", vol_pct);
@@ -4087,8 +4091,7 @@ class SettingMenu {
         UBaseType_t watermark_words = uxTaskGetStackHighWaterMark(nullptr);
         ESP_LOGI("SETTING_MENU", "stack high watermark: %u words (%u bytes)",
                  static_cast<unsigned>(watermark_words),
-                 static_cast<unsigned>(watermark_words *
-                                       sizeof(StackType_t)));
+                 static_cast<unsigned>(watermark_words * sizeof(StackType_t)));
 
         running_flag = false;
         task_handle_ = nullptr;
@@ -4126,8 +4129,7 @@ class Game {
             &game_task, "game_task", kTaskStackWords, NULL, 6, task_stack_,
             &task_buffer_, 1);
         if (!task_handle_) {
-            ESP_LOGE("GAME",
-                     "Failed to start game task (err=%d)",
+            ESP_LOGE("GAME", "Failed to start game task (err=%d)",
                      (int)errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY);
             running_flag = false;
         }
@@ -4177,11 +4179,11 @@ class Game {
         }
 
         UBaseType_t watermark_words = uxTaskGetStackHighWaterMark(nullptr);
-        ESP_LOGI("GAME", "game_task stack high watermark: %u words (%u bytes)%s",
-                 static_cast<unsigned int>(watermark_words),
-                 static_cast<unsigned int>(watermark_words *
-                                           sizeof(StackType_t)),
-                 watermark_words == 0 ? " [LOW]" : "");
+        ESP_LOGI(
+            "GAME", "game_task stack high watermark: %u words (%u bytes)%s",
+            static_cast<unsigned int>(watermark_words),
+            static_cast<unsigned int>(watermark_words * sizeof(StackType_t)),
+            watermark_words == 0 ? " [LOW]" : "");
 
         running_flag = false;
         task_handle_ = nullptr;
@@ -4217,7 +4219,6 @@ class Game {
             }
 
             sprite.setTextColor(0xFFFF, 0x0000);
-            sprite.drawCenterString("Type=Select  Back=Exit", 64, 54);
             sprite.pushSprite(&lcd, 0, 0);
 
             Joystick::joystick_state_t joy = joystick.get_joystick_state();
@@ -4612,8 +4613,8 @@ static void play_morse_message(const std::string &text,
     std::string display_accum;
 
     for (size_t idx = 0; idx < text.size();) {
-        size_t char_len = utf8_char_length(
-            static_cast<unsigned char>(text[idx]));
+        size_t char_len =
+            utf8_char_length(static_cast<unsigned char>(text[idx]));
         if (char_len == 0) char_len = 1;
         std::string raw_char = text.substr(idx, char_len);
         idx += char_len;
@@ -5199,7 +5200,7 @@ class ProfileSetting {
                 save_nvs((char *)"password", password);
             }
 
-            auto& api = chatapi::shared_client(true);
+            auto &api = chatapi::shared_client(true);
             api.set_scheme("https");
             esp_err_t err = api.register_user(user_name, password);
             if (err != ESP_OK) {
