@@ -224,6 +224,9 @@ void http_get_message_task(void *pvParameters) {
         } else {
             o["from"] = chat_from.c_str();
         }
+        if (m.containsKey("is_read")) {
+            o["is_read"] = m["is_read"].as<bool>();
+        }
     }
     // Serialize to buffer then parse into global res to keep type compatibility
     std::string outBuf;

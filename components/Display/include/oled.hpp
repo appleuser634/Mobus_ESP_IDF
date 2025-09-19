@@ -3,6 +3,8 @@
 #include <string>
 #include <cstdlib>
 #include <algorithm>
+#include <vector>
+#include <cctype>
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
@@ -117,6 +119,10 @@ void remove_last_utf8_char(std::string &str) {
 
     str.erase(pos);
 }
+
+static void play_morse_message(const std::string &text,
+                               const std::string &header = "", int cx = 64,
+                               int cy = 32);
 
 static constexpr char text[] = "MoBus!!";
 static constexpr size_t textlen = sizeof(text) / sizeof(text[0]);
@@ -703,6 +709,7 @@ class MessageBox {
     static std::string chat_title;  // display username for header
     static std::string active_short_id;
     static std::string active_friend_id;
+    static constexpr uint32_t kTaskStackWords = 9216;
 
     static void set_active_contact(const std::string &short_id,
                                    const std::string &friend_id) {
@@ -852,6 +859,9 @@ class MessageBox {
                                 } else {
                                     o["from"] = fid.c_str();
                                 }
+                                if (m.containsKey("is_read")) {
+                                    o["is_read"] = m["is_read"].as<bool>();
+                                }
                             }
                             count = arr.size();
                             std::string outBuf;
@@ -879,6 +889,9 @@ class MessageBox {
                                     o["from"] = my_name.c_str();
                                 } else {
                                     o["from"] = fid.c_str();
+                                }
+                                if (m.containsKey("is_read")) {
+                                    o["is_read"] = m["is_read"].as<bool>();
                                 }
                             }
                             count = arr.size();
@@ -914,6 +927,28 @@ class MessageBox {
             ESP_LOGW(TAG, "[BLE] Falling back to HTTP history fetch for %s",
                      chat_to.c_str());
             res = http_client.get_message(chat_to);
+        }
+
+        const std::string my_name = get_nvs((char *)"user_name");
+        std::string morse_header = !chat_title.empty() ? chat_title : chat_to;
+        if (res["messages"].is<JsonArray>()) {
+            for (JsonObject msg : res["messages"].as<JsonArray>()) {
+                bool unread = false;
+                if (msg.containsKey("is_read")) {
+                    unread = !msg["is_read"].as<bool>();
+                }
+                if (!unread) continue;
+                const char *from = msg["from"].as<const char *>();
+                if (from && !my_name.empty() && my_name == from) {
+                    continue;  // 自分の送信分はスキップ
+                }
+                const char *content = msg["message"].as<const char *>();
+                if (!content || content[0] == '\0') {
+                    continue;
+                }
+                play_morse_message(content, morse_header);
+                vTaskDelay(pdMS_TO_TICKS(200));
+            }
         }
 
         // 通知を非表示
@@ -974,7 +1009,6 @@ class MessageBox {
             for (int i = 0; i < res["messages"].size(); i++) {
                 std::string message(res["messages"][i]["message"]);
                 std::string message_from(res["messages"][i]["from"]);
-                std::string my_name = get_nvs((char *)"user_name");
 
                 // cursor_y = offset_y + sprite.getCursorY() + 20;
                 cursor_y = offset_y + (font_height * (i + 1));
@@ -4550,6 +4584,113 @@ std::map<std::string, std::string> Game::morse_code_reverse = {
     {";", "_._._."}, {":", "___..."}, {"+", "._._."},  {"-", "_...._"},
     {"/", "_.._."},  {"=", "_..._"}};
 
+static void play_morse_message(const std::string &text,
+                               const std::string &header, int cx, int cy) {
+    Max98357A buzzer;
+
+    sprite.setColorDepth(8);
+    sprite.setFont(&fonts::Font2);
+    sprite.setTextWrap(true);
+    sprite.createSprite(lcd.width(), lcd.height());
+
+    const TickType_t dot_ticks = pdMS_TO_TICKS(60);
+    const TickType_t dash_ticks = pdMS_TO_TICKS(180);
+    const TickType_t intra_symbol_gap = pdMS_TO_TICKS(40);
+    const TickType_t letter_gap = pdMS_TO_TICKS(120);
+
+    auto draw_frame = [&](const std::string &morse_part,
+                          const std::string &display) {
+        sprite.fillRect(0, 0, 128, 64, 0);
+        sprite.setFont(&fonts::Font2);
+        if (!header.empty()) {
+            sprite.drawCenterString(header.c_str(), cx, 15);
+        }
+        sprite.drawCenterString((display + morse_part).c_str(), cx, cy);
+        sprite.pushSprite(&lcd, 0, 0);
+    };
+
+    std::string display_accum;
+
+    for (size_t idx = 0; idx < text.size();) {
+        size_t char_len = utf8_char_length(
+            static_cast<unsigned char>(text[idx]));
+        if (char_len == 0) char_len = 1;
+        std::string raw_char = text.substr(idx, char_len);
+        idx += char_len;
+
+        if (raw_char == "\n" || raw_char == "\r") {
+            display_accum.push_back(' ');
+            draw_frame("", display_accum);
+            vTaskDelay(letter_gap);
+            continue;
+        }
+
+        std::string key;
+        if (char_len == 1) {
+            unsigned char c = static_cast<unsigned char>(raw_char[0]);
+            if (std::isalpha(c)) {
+                key.assign(1, static_cast<char>(std::toupper(c)));
+            } else if (std::isdigit(c)) {
+                key.assign(1, static_cast<char>(c));
+            } else if (std::isspace(c)) {
+                key = " ";
+            } else {
+                switch (c) {
+                    case '.':
+                    case ',':
+                    case '?':
+                    case '!':
+                    case '+':
+                    case '-':
+                    case '/':
+                    case '=':
+                    case ';':
+                    case ':':
+                        key.assign(1, static_cast<char>(c));
+                        break;
+                    default:
+                        key.clear();
+                        break;
+                }
+            }
+        }
+
+        std::string morse_txt;
+        if (!key.empty()) {
+            auto it = Game::morse_code_reverse.find(key);
+            if (it != Game::morse_code_reverse.end()) {
+                morse_txt = it->second;
+            }
+        }
+
+        if (morse_txt.empty()) {
+            display_accum += raw_char;
+            draw_frame("", display_accum);
+            vTaskDelay(letter_gap);
+            continue;
+        }
+
+        std::string morse_progress;
+        for (char symbol : morse_txt) {
+            morse_progress.push_back(symbol);
+            draw_frame(morse_progress, display_accum);
+            TickType_t tone_ticks = (symbol == '.') ? dot_ticks : dash_ticks;
+            buzzer.start_tone(2300.0f, 0.6f);
+            vTaskDelay(tone_ticks);
+            buzzer.stop_tone();
+            vTaskDelay(intra_symbol_gap);
+        }
+
+        display_accum += raw_char;
+        draw_frame("", display_accum);
+        vTaskDelay(letter_gap);
+    }
+
+    buzzer.stop_tone();
+    draw_frame("", display_accum);
+    vTaskDelay(pdMS_TO_TICKS(200));
+}
+
 class MenuDisplay {
 #define NAME_LENGTH_MAX 8
    public:
@@ -5002,61 +5143,10 @@ class ProfileSetting {
         return user_name;
     }
 
-    static void morse_greeting(const char *greet_txt,
-                               const char *last_greet_txt = "", int cx = 64,
+    static void morse_greeting(const std::string &text,
+                               const std::string &header = "", int cx = 64,
                                int cy = 32) {
-        Max98357A buzzer;
-
-        sprite.setColorDepth(8);
-        sprite.setFont(&fonts::Font2);
-        sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
-        sprite.createSprite(lcd.width(), lcd.height());
-
-        sprite.fillRect(0, 0, 128, 64, 0);
-        sprite.setCursor(30, 20);
-
-        std::string greet_str(greet_txt);
-        std::string morse_str;
-        std::string show_greet_str;
-
-        int greet_len = strlen(greet_txt);
-        for (int i = 0; i < greet_len; i++) {
-            char upper = std::toupper(static_cast<unsigned char>(greet_txt[i]));
-            std::string key(1, upper);
-            std::string morse_txt = Game::morse_code_reverse.at(key);
-
-            printf("Morse %s\n", morse_txt.c_str());
-
-            for (int j = 0; j < morse_txt.length(); j++) {
-                sprite.fillRect(0, 0, 128, 64, 0);
-                sprite.drawCenterString(last_greet_txt, cx, 15);
-                char m = morse_txt[j];
-
-                if (m == '.') {
-                    buzzer.start_tone(2300.0f, 0.6f);
-                    vTaskDelay(50 / portTICK_PERIOD_MS);
-                    buzzer.stop_tone();
-
-                } else if (m == '_') {
-                    buzzer.start_tone(2300.0f, 0.6f);
-                    vTaskDelay(150 / portTICK_PERIOD_MS);
-                    buzzer.stop_tone();
-                }
-                morse_str += m;
-                sprite.drawCenterString((show_greet_str + morse_str).c_str(),
-                                        cx, cy);
-                sprite.pushSprite(&lcd, 0, 0);
-            }
-            morse_str = "";
-
-            sprite.fillRect(0, 0, 128, 64, 0);
-            sprite.drawCenterString(last_greet_txt, cx, 15);
-            show_greet_str = greet_str.substr(0, i + 1).c_str();
-            sprite.drawCenterString(show_greet_str.c_str(), cx, cy);
-            sprite.pushSprite(&lcd, 0, 0);
-
-            vTaskDelay(50 / portTICK_PERIOD_MS);
-        }
+        play_morse_message(text, header, cx, cy);
     }
 
     static void profile_setting_task() {
