@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <string>
+#include <atomic>
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_event.h"
@@ -39,6 +40,11 @@ inline chatapi::ChatApiClient& dev_chat_api() {
     auto& client = chatapi::shared_client(true);
     client.set_scheme("https");
     return client;
+}
+
+inline std::atomic<bool>& notifications_task_running_flag() {
+    static std::atomic<bool> flag{false};
+    return flag;
 }
 
 /* Root cert for howsmyssl.com, taken from howsmyssl_com_root_cert.pem
@@ -269,11 +275,13 @@ void http_get_notifications_task(void *pvParameters) {
     mqtt_rt_configure(mqtt_host.c_str(), mqtt_port, api_user_id.c_str());
     if (mqtt_rt_start() != 0) {
         ESP_LOGE(TAG, "MQTT connect failed");
+        notifications_task_running_flag().store(false);
         vTaskDelete(NULL);
         return;
     }
     if (api_user_id.empty()) {
         ESP_LOGE(TAG, "No user_id for MQTT subscribe");
+        notifications_task_running_flag().store(false);
         vTaskDelete(NULL);
         return;
     }
@@ -296,6 +304,9 @@ void http_get_notifications_task(void *pvParameters) {
         }
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
+
+    notifications_task_running_flag().store(false);
+    vTaskDelete(NULL);
 }
 
 std::string chat_to = "";
@@ -387,9 +398,21 @@ class HttpClient {
     }
 
     void start_notifications() {
-        xTaskCreatePinnedToCore(&http_get_notifications_task,
-                                "http_get_notifications_task", 6000, NULL, 5,
-                                NULL, 0);
+        auto& running = notifications_task_running_flag();
+        bool expected = false;
+        if (!running.compare_exchange_strong(expected, true)) {
+            return;
+        }
+
+        TaskHandle_t handle = nullptr;
+        BaseType_t ok = xTaskCreatePinnedToCore(&http_get_notifications_task,
+                                                "http_get_notifications_task",
+                                                6000, NULL, 5, &handle, 0);
+        if (ok != pdPASS || handle == nullptr) {
+            ESP_LOGE(TAG, "Failed to start notification task (err=%ld)",
+                     static_cast<long>(ok));
+            running.store(false);
+        }
     }
 
     static JsonDocument get_notifications() {

@@ -3247,8 +3247,16 @@ class SettingMenu {
 
     void start_message_menue_task() {
         printf("Start MessageMenue Task...");
-        xTaskCreatePinnedToCore(&message_menue_task, "message_menue_task",
-                                16192, NULL, 6, NULL, 1);
+        BaseType_t ok = xTaskCreatePinnedToCore(
+            &message_menue_task, "message_menue_task", 16192, NULL, 6, NULL,
+            1);
+        if (ok != pdPASS) {
+            ESP_LOGE("SETTING_MENU", "Failed to start message menu task (err=%ld)",
+                     static_cast<long>(ok));
+            running_flag = false;
+            return;
+        }
+        running_flag = true;
     }
 
     static void message_menue_task(void *pvParameters) {
@@ -4049,9 +4057,15 @@ class Game {
 
     void start_game_task() {
         printf("Start Game Task...");
+        BaseType_t ok = xTaskCreatePinnedToCore(
+            &game_task, "game_task", kTaskStackWords, NULL, 6, NULL, 1);
+        if (ok != pdPASS) {
+            ESP_LOGE("GAME", "Failed to start game task (err=%ld)",
+                     static_cast<long>(ok));
+            running_flag = false;
+            return;
+        }
         running_flag = true;
-        xTaskCreatePinnedToCore(&game_task, "game_task", kTaskStackWords, NULL,
-                                6, NULL, 1);
     }
 
     static std::map<std::string, std::string> morse_code;
@@ -4172,9 +4186,7 @@ class Game {
         sprite.drawCenterString("Launching...", 64, 28);
         sprite.pushSprite(&lcd, 0, 0);
 
-        mopping_main();
-
-        return false;
+        return wasm_runtime::run_game("/spiffs/games/mopping.wasm");
     }
 
     static bool run_morse_trainer(Joystick &joystick, Button &type_button,
