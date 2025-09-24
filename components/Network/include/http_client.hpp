@@ -265,6 +265,11 @@ void http_get_message_task(void *pvParameters) {
     for (JsonObject m : in["messages"].as<JsonArray>()) {
         JsonObject o = arr.createNestedObject();
         o["message"] = m["content"].as<const char *>();
+        const char *mid = m["id"].as<const char *>();
+        if (!mid) mid = m["message_id"].as<const char *>();
+        if (mid && mid[0] != '\0') o["id"] = mid;
+        const char *created = m["created_at"].as<const char *>();
+        if (created && created[0] != '\0') o["created_at"] = created;
         // Mark origin by comparing sender_id to self
         const char *sender = m["sender_id"].as<const char *>();
         if (sender && my_id.size() && my_id == sender) {
@@ -485,6 +490,23 @@ class HttpClient {
         }
         res_flag = 0;
         return res;
+    }
+
+    bool mark_message_read(const std::string &message_id) {
+        if (message_id.empty()) return false;
+        auto &api = dev_chat_api();
+        const auto creds = chatapi::load_credentials_from_nvs();
+        if (chatapi::ensure_authenticated(api, creds, false) != ESP_OK) {
+            ESP_LOGW(TAG,
+                     "mark_message_read: auth failed, attempting with cached token");
+        }
+        esp_err_t err = api.mark_as_read(message_id);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "mark_as_read failed id=%s err=%s",
+                     message_id.c_str(), esp_err_to_name(err));
+            return false;
+        }
+        return true;
     }
 
     void start_notifications() {

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <vector>
 #include <cctype>
+#include <unordered_set>
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
@@ -720,6 +721,7 @@ class MessageBox {
     static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
     static StackType_t task_stack_[kTaskStackWords];
+    static std::unordered_set<std::string> played_message_ids_;
 
     static void set_active_contact(const std::string &short_id,
                                    const std::string &friend_id) {
@@ -890,7 +892,10 @@ class MessageBox {
                                 JsonObject o = arr.createNestedObject();
                                 const char *content =
                                     m["content"].as<const char *>();
-                                o["message"] = content ? content : "";
+                                const char *msg =
+                                    m["message"].as<const char *>();
+                                o["message"] =
+                                    content ? content : (msg ? msg : "");
                                 const char *sender =
                                     m["sender_id"].as<const char *>();
                                 if (sender && !my_id.empty() &&
@@ -899,6 +904,16 @@ class MessageBox {
                                 } else {
                                     o["from"] = fid.c_str();
                                 }
+                                const char *mid =
+                                    m["id"].as<const char *>();
+                                if (!mid)
+                                    mid =
+                                        m["message_id"].as<const char *>();
+                                if (mid && mid[0] != '\0') o["id"] = mid;
+                                const char *created =
+                                    m["created_at"].as<const char *>();
+                                if (created && created[0] != '\0')
+                                    o["created_at"] = created;
                                 if (m.containsKey("is_read")) {
                                     o["is_read"] = m["is_read"].as<bool>();
                                 }
@@ -930,6 +945,16 @@ class MessageBox {
                                 } else {
                                     o["from"] = fid.c_str();
                                 }
+                                const char *mid =
+                                    m["id"].as<const char *>();
+                                if (!mid)
+                                    mid =
+                                        m["message_id"].as<const char *>();
+                                if (mid && mid[0] != '\0') o["id"] = mid;
+                                const char *created =
+                                    m["created_at"].as<const char *>();
+                                if (created && created[0] != '\0')
+                                    o["created_at"] = created;
                                 if (m.containsKey("is_read")) {
                                     o["is_read"] = m["is_read"].as<bool>();
                                 }
@@ -981,9 +1006,20 @@ class MessageBox {
         std::string morse_header = !chat_title.empty() ? chat_title : chat_to;
         if (res["messages"].is<JsonArray>()) {
             for (JsonObject msg : res["messages"].as<JsonArray>()) {
-                bool unread = false;
+                bool unread = true;
                 if (msg.containsKey("is_read")) {
                     unread = !msg["is_read"].as<bool>();
+                }
+                const char *message_id = msg["id"].as<const char *>();
+                if (!message_id) {
+                    message_id = msg["message_id"].as<const char *>();
+                }
+                std::string message_id_str =
+                    (message_id && message_id[0] != '\0') ? message_id
+                                                           : std::string();
+                if (!message_id_str.empty() &&
+                    played_message_ids_.count(message_id_str)) {
+                    unread = false;
                 }
                 if (!unread) continue;
                 const char *from = msg["from"].as<const char *>();
@@ -995,6 +1031,22 @@ class MessageBox {
                     continue;
                 }
                 play_morse_message(content, morse_header);
+                if (!message_id_str.empty()) {
+                    played_message_ids_.insert(message_id_str);
+                    if (played_message_ids_.size() > 512) {
+                        played_message_ids_.clear();
+                        played_message_ids_.insert(message_id_str);
+                    }
+                    if (!http_client.mark_message_read(message_id_str)) {
+                        ESP_LOGW(TAG,
+                                 "Failed to mark message %s as read; will retry later",
+                                 message_id_str.c_str());
+                    } else {
+                        msg["is_read"] = true;
+                    }
+                } else {
+                    msg["is_read"] = true;
+                }
                 vTaskDelay(pdMS_TO_TICKS(200));
             }
         }
@@ -1148,6 +1200,7 @@ std::string MessageBox::active_friend_id = "";
 TaskHandle_t MessageBox::task_handle_ = nullptr;
 StaticTask_t MessageBox::task_buffer_;
 StackType_t MessageBox::task_stack_[MessageBox::kTaskStackWords];
+std::unordered_set<std::string> MessageBox::played_message_ids_;
 
 inline std::string resolve_chat_backend_id(const std::string &fallback) {
     return MessageBox::backend_identifier(fallback);
