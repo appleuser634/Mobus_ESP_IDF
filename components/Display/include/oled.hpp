@@ -21,6 +21,7 @@
 #include "esp_log.h"
 #include "esp_sleep.h"
 #include "esp_random.h"
+#include "esp_task_wdt.h"
 #include "esp_wifi.h"
 #include "freertos/event_groups.h"
 #include "freertos/FreeRTOS.h"
@@ -974,6 +975,12 @@ class MessageBox {
         if (!got_ble) {
             ESP_LOGW(TAG, "[BLE] Falling back to HTTP history fetch for %s",
                      chat_to.c_str());
+            ESP_LOGI(TAG,
+                     "[HTTP] Fetching history via Wi-Fi (free=%u largest=%u)",
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                                       MALLOC_CAP_8BIT),
+                     (unsigned)heap_caps_get_largest_free_block(
+                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
             sprite.deleteSprite();
             res = http_client.get_message(server_chat_id);
             recreate_message_sprite();
@@ -1047,6 +1054,12 @@ class MessageBox {
                     ESP_LOGW(
                         TAG,
                         "[BLE] Refresh via BLE failed; using HTTP fallback");
+                    ESP_LOGI(TAG,
+                             "[HTTP] Refresh via Wi-Fi (free=%u largest=%u)",
+                             (unsigned)heap_caps_get_free_size(
+                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                             (unsigned)heap_caps_get_largest_free_block(
+                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
                     sprite.deleteSprite();
                     res = http_client.get_message(server_chat_id);
                     recreate_message_sprite();
@@ -1173,6 +1186,41 @@ class ContactBook {
         Button back_button(GPIO_NUM_3);
         Button enter_button(GPIO_NUM_5);
 
+        bool wdt_registered = false;
+        if (esp_task_wdt_add(NULL) == ESP_OK) {
+            wdt_registered = true;
+        } else {
+            ESP_LOGW("CONTACT", "esp_task_wdt_add failed");
+        }
+        auto feed_wdt = [&]() {
+            if (!wdt_registered) return;
+            esp_err_t err = esp_task_wdt_reset();
+            if (err != ESP_OK) {
+                ESP_LOGW("CONTACT", "esp_task_wdt_reset failed: %s",
+                         esp_err_to_name(err));
+            }
+        };
+        auto finish_task = [&]() {
+            running_flag = false;
+            if (wdt_registered) {
+                esp_err_t del_err = esp_task_wdt_delete(NULL);
+                if (del_err != ESP_OK) {
+                    ESP_LOGW("CONTACT", "esp_task_wdt_delete failed: %s",
+                             esp_err_to_name(del_err));
+                }
+            }
+            vTaskDelete(NULL);
+        };
+
+        sprite.deleteSprite();
+        auto recreate_contact_sprite = [&]() {
+            sprite.setColorDepth(8);
+            sprite.setFont(&fonts::Font2);
+            sprite.setTextWrap(true);
+            sprite.createSprite(lcd.width(), lcd.height());
+        };
+        recreate_contact_sprite();
+
         int MAX_CONTACTS = 20;
         int CONTACT_PER_PAGE = 4;
 
@@ -1246,8 +1294,7 @@ class ContactBook {
                 sprite.pushSprite(&lcd, 0, 0);
                 // Allow exit during wait
                 if (back_button.get_button_state().pushed) {
-                    running_flag = false;
-                    vTaskDelete(NULL);
+                    finish_task();
                     return;
                 }
                 vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -1260,6 +1307,7 @@ class ContactBook {
             // With NimBLE using PSRAM, Wi‑Fi coexists without disabling BLE.
             // HTTP fallback (Wi‑Fi). Ensure Wi‑Fi is connected.
             while (true) {
+                feed_wdt();
                 bool connected = false;
                 if (s_wifi_event_group) {
                     EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
@@ -1283,8 +1331,7 @@ class ContactBook {
                 sprite.drawCenterString("Press Back to exit", 64, 40);
                 sprite.pushSprite(&lcd, 0, 0);
                 if (back_button.get_button_state().pushed) {
-                    running_flag = false;
-                    vTaskDelete(NULL);
+                    finish_task();
                     return;
                 }
                 vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -1298,6 +1345,19 @@ class ContactBook {
             std::string username = creds.username;
             std::string resp;
             int friends_status = 0;
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.setFont(&fonts::Font2);
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            sprite.drawCenterString("Loading contacts...", 64, 24);
+            sprite.drawCenterString("via Wi-Fi", 64, 40);
+            sprite.pushSprite(&lcd, 0, 0);
+            sprite.deleteSprite();
+            ESP_LOGI(TAG,
+                     "[HTTP] Contact list fetch start (free=%u largest=%u)",
+                     (unsigned)heap_caps_get_free_size(
+                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                     (unsigned)heap_caps_get_largest_free_block(
+                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
             esp_err_t friends_err = api.get_friends(resp, &friends_status);
             if (friends_err == ESP_OK && friends_status == 401) {
                 ESP_LOGW(TAG,
@@ -1310,6 +1370,7 @@ class ContactBook {
                     friends_err = api.get_friends(resp, &friends_status);
                 }
             }
+            recreate_contact_sprite();
             if (friends_err == ESP_OK && friends_status >= 200 &&
                 friends_status < 300) {
                 StaticJsonDocument<4096> doc;
@@ -1527,6 +1588,7 @@ class ContactBook {
                         const int timeout_ms = 2500;
                         int waited = 0;
                         while (waited < timeout_ms) {
+                            feed_wdt();
                             std::string js = get_nvs((char *)"ble_pending");
                             if (!js.empty()) {
                                 StaticJsonDocument<4096> pdoc;
@@ -1842,10 +1904,11 @@ class ContactBook {
                     MessageBox::set_active_contact(
                         contacts[select_index].short_id,
                         contacts[select_index].friend_id);
-                    box.start_box_task(contacts[select_index].identifier);
-                    while (box.running_flag) {
-                        vTaskDelay(100 / portTICK_PERIOD_MS);
-                    }
+                box.start_box_task(contacts[select_index].identifier);
+                while (box.running_flag) {
+                    feed_wdt();
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                }
 
                     // 通知の取得
                     notif_res = http_client.get_notifications();
@@ -1857,11 +1920,11 @@ class ContactBook {
                 joystick.reset_timer();
             }
 
+            feed_wdt();
             vTaskDelay(10);
         }
 
-        running_flag = false;
-        vTaskDelete(NULL);
+        finish_task();
     };
 };
 bool ContactBook::running_flag = false;
@@ -3396,6 +3459,32 @@ class SettingMenu {
         Button back_button(GPIO_NUM_3);
         Button enter_button(GPIO_NUM_5);
 
+        bool wdt_registered = false;
+        if (esp_task_wdt_add(NULL) == ESP_OK) {
+            wdt_registered = true;
+        } else {
+            ESP_LOGW("SETTING_MENU", "esp_task_wdt_add failed");
+        }
+        auto feed_wdt = [&]() {
+            if (!wdt_registered) return;
+            esp_err_t err = esp_task_wdt_reset();
+            if (err != ESP_OK) {
+                ESP_LOGW("SETTING_MENU", "esp_task_wdt_reset failed: %s",
+                         esp_err_to_name(err));
+            }
+        };
+        auto finish_task = [&]() {
+            running_flag = false;
+            if (wdt_registered) {
+                esp_err_t del_err = esp_task_wdt_delete(NULL);
+                if (del_err != ESP_OK) {
+                    ESP_LOGW("SETTING_MENU", "esp_task_wdt_delete failed: %s",
+                             esp_err_to_name(del_err));
+                }
+            }
+            vTaskDelete(NULL);
+        };
+
         lcd.setRotation(2);
         // int MAX_SETTINGS = 20; // unused
         int ITEM_PER_PAGE = 4;
@@ -3422,6 +3511,7 @@ class SettingMenu {
         int margin = 3;
 
         while (1) {
+            feed_wdt();
             // Joystickの状態を取得
             Joystick::joystick_state_t joystick_state =
                 joystick.get_joystick_state();
@@ -3540,6 +3630,7 @@ class SettingMenu {
                 wifi_setting.running_flag = true;
                 wifi_setting.start_wifi_setting_task();
                 while (wifi_setting.running_flag) {
+                    feed_wdt();
                     vTaskDelay(100 / portTICK_PERIOD_MS);
                 }
                 type_button.clear_button_state();
@@ -3556,6 +3647,7 @@ class SettingMenu {
                 float volume = sound_settings::volume();
 
                 while (1) {
+                    feed_wdt();
                     sprite.fillRect(0, 0, 128, 64, 0);
                     sprite.setFont(&fonts::Font2);
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
@@ -3611,6 +3703,7 @@ class SettingMenu {
                         break;
                     }
 
+                    feed_wdt();
                     vTaskDelay(50 / portTICK_PERIOD_MS);
                 }
 
@@ -3643,6 +3736,7 @@ class SettingMenu {
                 if (cur.empty()) cur = "cute";
                 int idx = idx_of(cur);
                 while (1) {
+                    feed_wdt();
                     sprite.fillRect(0, 0, 128, 64, 0);
                     sprite.setFont(&fonts::Font2);
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
@@ -3887,6 +3981,7 @@ class SettingMenu {
                         joystick.reset_timer();
                     }
 
+                    feed_wdt();
                     vTaskDelay(50 / portTICK_PERIOD_MS);
                 }
             } else if (type_button_state.pushed &&
@@ -3910,6 +4005,7 @@ class SettingMenu {
                 back_button.clear_button_state();
                 back_button.reset_timer();
                 while (1) {
+                    feed_wdt();
                     Joystick::joystick_state_t js =
                         joystick.get_joystick_state();
                     Button::button_state_t tb = type_button.get_button_state();
@@ -3927,6 +4023,7 @@ class SettingMenu {
                     if (bb.pushed || js.left || tb.pushed) {
                         break;
                     }
+                    feed_wdt();
                     vTaskDelay(50 / portTICK_PERIOD_MS);
                 }
                 type_button.clear_button_state();
@@ -4188,9 +4285,8 @@ class SettingMenu {
                  static_cast<unsigned>(watermark_words),
                  static_cast<unsigned>(watermark_words * sizeof(StackType_t)));
 
-        running_flag = false;
         task_handle_ = nullptr;
-        vTaskDelete(NULL);
+        finish_task();
     };
 
    private:
@@ -4212,6 +4308,7 @@ class Game {
     static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
     static StackType_t task_stack_[kTaskStackWords];
+    static bool wdt_registered_;
 
     void start_game_task() {
         printf("Start Game Task...");
@@ -4234,6 +4331,16 @@ class Game {
     static std::map<std::string, std::string> morse_code_reverse;
     static void game_task(void *pvParameters) {
         (void)pvParameters;
+        bool wdt_registered = false;
+        esp_err_t wdt_add_err = esp_task_wdt_add(NULL);
+        if (wdt_add_err == ESP_OK) {
+            wdt_registered = true;
+        } else {
+            ESP_LOGW("GAME", "esp_task_wdt_add failed: %s",
+                     esp_err_to_name(wdt_add_err));
+        }
+        wdt_registered_ = wdt_registered;
+
         lcd.init();
         lcd.setRotation(2);
         sprite.setColorDepth(8);
@@ -4250,7 +4357,7 @@ class Game {
 
         bool exit_task = false;
         while (!exit_task) {
-            esp_task_wdt_reset();
+            feed_wdt();
             MenuChoice choice = show_game_menu(joystick, type_button,
                                                back_button, enter_button);
             bool exit_requested = false;
@@ -4283,11 +4390,21 @@ class Game {
 
         running_flag = false;
         task_handle_ = nullptr;
+        wdt_registered_ = false;
+        if (wdt_registered) {
+            esp_err_t del_err = esp_task_wdt_delete(NULL);
+            if (del_err != ESP_OK) {
+                ESP_LOGW("GAME", "esp_task_wdt_delete failed: %s",
+                         esp_err_to_name(del_err));
+            }
+        }
         vTaskDelete(NULL);
     };
 
    private:
-    enum class MenuChoice { kMopping = 0, kMorse = 1, kExit = 2 };
+   enum class MenuChoice { kMopping = 0, kMorse = 1, kExit = 2 };
+
+    static void feed_wdt();
 
     static MenuChoice show_game_menu(Joystick &joystick, Button &type_button,
                                      Button &back_button,
@@ -4321,8 +4438,6 @@ class Game {
             Button::button_state_t type_state = type_button.get_button_state();
             Button::button_state_t back_state = back_button.get_button_state();
 
-            esp_task_wdt_reset();
-
             if (joy.pushed_down_edge) {
                 index = (index + 1) % 2;
             } else if (joy.pushed_up_edge) {
@@ -4339,6 +4454,7 @@ class Game {
                 return MenuChoice::kExit;
             }
 
+            feed_wdt();
             vTaskDelay(10 / portTICK_PERIOD_MS);
         }
     }
@@ -4375,7 +4491,7 @@ class Game {
         char random_char = letters[rand() % 26];
 
         while (1) {
-            esp_task_wdt_reset();
+            feed_wdt();
             std::string morse_text = "";
             std::string message_text = "";
             std::string alphabet_text = "";
@@ -4399,7 +4515,7 @@ class Game {
 
             // 問題を解き終わるまでループ
             while (c < n) {
-                esp_task_wdt_reset();
+                feed_wdt();
                 sprite.fillRect(0, 0, 128, 64, 0);
 
                 // Joystickの状態を取得
@@ -4645,6 +4761,16 @@ bool Game::running_flag = false;
 TaskHandle_t Game::task_handle_ = nullptr;
 StaticTask_t Game::task_buffer_;
 StackType_t Game::task_stack_[Game::kTaskStackWords];
+bool Game::wdt_registered_ = false;
+
+void Game::feed_wdt() {
+    if (!wdt_registered_) return;
+    esp_err_t r = esp_task_wdt_reset();
+    if (r != ESP_OK) {
+        ESP_LOGW("GAME", "esp_task_wdt_reset failed: %s",
+                 esp_err_to_name(r));
+    }
+}
 
 std::map<std::string, std::string> Game::morse_code = {
     {"._", "A"},     {"_...", "B"},   {"_._.", "C"},   {"_..", "D"},

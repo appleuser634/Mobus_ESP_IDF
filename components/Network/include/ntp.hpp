@@ -12,16 +12,19 @@ static void wait_for_time_sync(void) {
     struct tm timeinfo = {0};
 
     int retry = 0;
-    const int retry_count = 10;
-    while (timeinfo.tm_year < (2016 - 1900) && ++retry < retry_count) {
+    const int retry_count = 5;
+    while (timeinfo.tm_year < (2016 - 1900) && ++retry <= retry_count) {
         // Use ROM-backed logging to avoid VFS/stdout interactions during early
         // network bring-up or unusual console states.
         ESP_DRAM_LOGI(TAG,
                       "Waiting for system time to be set... (%d/%d)", retry,
                       retry_count);
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(500));
         time(&now);
         localtime_r(&now, &timeinfo);
+    }
+    if (timeinfo.tm_year < (2016 - 1900)) {
+        ESP_DRAM_LOGW(TAG, "System time sync timed out");
     }
 }
 

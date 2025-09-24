@@ -29,6 +29,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 
 #include "esp_http_client.h"
 
@@ -196,6 +197,13 @@ void http_get_message_task(void *pvParameters) {
 
     std::string response;
     int status = 0;
+    ESP_LOGI(TAG,
+             "HTTP get_messages start (free=%u largest=%u stack_hwm=%u)",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                               MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                        MALLOC_CAP_8BIT),
+             (unsigned)uxTaskGetStackHighWaterMark(nullptr));
     esp_err_t err = api.get_messages(chat_from, 20, response, &status);
     if (err == ESP_OK && status == 401) {
         ESP_LOGW(TAG, "get_messages unauthorized; refreshing token");
@@ -207,7 +215,8 @@ void http_get_message_task(void *pvParameters) {
         }
     }
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "get_messages failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "get_messages failed: %s (status=%d)",
+                 esp_err_to_name(err), status);
         // Return empty messages to avoid indefinite Loading... UI
         StaticJsonDocument<128> emptyDoc;
         emptyDoc.createNestedArray("messages");
