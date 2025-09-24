@@ -33,6 +33,7 @@ class Max98357A {
     i2s_chan_handle_t tx_chan = nullptr;
     bool initialized = false;
     bool is_enabled = false;
+    static inline bool audio_blacklisted = false;
 
     // Continuous tone state
     TaskHandle_t tone_task_handle = nullptr;
@@ -48,11 +49,27 @@ class Max98357A {
     ~Max98357A() { deinit(); }
 
     esp_err_t init() {
+        if (audio_blacklisted) {
+            ESP_LOGW(TAG, "audio blacklisted; skipping init");
+            return ESP_ERR_INVALID_STATE;
+        }
         if (initialized) return ESP_OK;
+
+        if (heap_caps_get_largest_free_block(MALLOC_CAP_DMA) < 4096) {
+            ESP_LOGW(TAG, "insufficient DMA-capable heap (largest=%u)",
+                     (unsigned)heap_caps_get_largest_free_block(
+                         MALLOC_CAP_DMA));
+            return ESP_ERR_NO_MEM;
+        }
 
         // Create TX channel (master)
         i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
-        ESP_RETURN_ON_ERROR(i2s_new_channel(&chan_cfg, &tx_chan, nullptr), TAG, "i2s_new_channel failed");
+        esp_err_t err = i2s_new_channel(&chan_cfg, &tx_chan, nullptr);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "i2s_new_channel failed: %s", esp_err_to_name(err));
+            audio_blacklisted = true;
+            return err;
+        }
 
         // Configure standard I2S (Philips) in stereo, 16-bit slots
         i2s_std_config_t std_cfg = {
@@ -72,8 +89,24 @@ class Max98357A {
             },
         };
 
-        ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(tx_chan, &std_cfg), TAG, "i2s_channel_init_std_mode failed");
-        ESP_RETURN_ON_ERROR(i2s_channel_enable(tx_chan), TAG, "i2s_channel_enable failed");
+        err = i2s_channel_init_std_mode(tx_chan, &std_cfg);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "i2s_channel_init_std_mode failed: %s",
+                     esp_err_to_name(err));
+            audio_blacklisted = true;
+            i2s_del_channel(tx_chan);
+            tx_chan = nullptr;
+            return err;
+        }
+        err = i2s_channel_enable(tx_chan);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "i2s_channel_enable failed: %s",
+                     esp_err_to_name(err));
+            audio_blacklisted = true;
+            i2s_del_channel(tx_chan);
+            tx_chan = nullptr;
+            return err;
+        }
 
         initialized = true;
         is_enabled = true;
@@ -81,6 +114,7 @@ class Max98357A {
     }
 
     esp_err_t enable() {
+        if (audio_blacklisted) return ESP_ERR_INVALID_STATE;
         if (!initialized) {
             esp_err_t err = init();
             if (err != ESP_OK) return err;
@@ -110,6 +144,7 @@ class Max98357A {
         if (v <= 0.0f) {
             return ESP_OK;
         }
+        if (audio_blacklisted) return ESP_ERR_INVALID_STATE;
 
         ESP_RETURN_ON_ERROR(enable(), TAG, "enable failed");
 
@@ -481,3 +516,12 @@ class Max98357A {
         vTaskDelete(self);
     }
 };
+
+namespace audio {
+
+inline Max98357A& speaker() {
+    static Max98357A instance;
+    return instance;
+}
+
+}  // namespace audio

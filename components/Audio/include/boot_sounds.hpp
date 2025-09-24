@@ -22,7 +22,7 @@ inline void play_sequence(Max98357A& spk, const std::vector<std::pair<float,int>
         spk.play_tone(nd.first, nd.second, volume);
         vTaskDelay(pdMS_TO_TICKS(10)); // tiny gap
     }
-    spk.deinit();
+    spk.disable();
 }
 
 // Cute chiptune-like boot (Game Boy-ish) — short arpeggios and staccato

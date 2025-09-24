@@ -535,7 +535,8 @@ void app_main();
 void check_notification() {
     Oled oled;
     (void)oled;  // suppress unused warning
-    Max98357A buzzer;
+    auto& buzzer = audio::speaker();
+    buzzer.init();
     HapticMotor& haptic = HapticMotor::instance();
 
     printf("通知チェック中...");
@@ -563,6 +564,8 @@ void check_notification() {
                 }
                 neopixel.set_color(0, 10, 10);
                 save_nvs("notif_flag", "true");
+                buzzer.stop_tone();
+                buzzer.disable();
                 return;
             } else {
                 printf("notofication not found");
@@ -571,6 +574,8 @@ void check_notification() {
         }
         vTaskDelay(500 / portTICK_PERIOD_MS);
     }
+    buzzer.stop_tone();
+    buzzer.disable();
 }
 
 void app_main(void) {
@@ -620,32 +625,32 @@ void app_main(void) {
 
     start_deferred_ota_validation();
 
-    Max98357A spk;
+    auto& speaker = audio::speaker();
     // Helper to choose boot sound: cute (default) or majestic. NVS key:
     // boot_sound = "cute"|"majestic"|"random"
-    auto play_boot_sound = [&](Max98357A& s) {
+    auto play_boot_sound = [&]() {
         std::string sel = get_nvs((char*)"boot_sound");
         if (sel == "majestic") {
-            boot_sounds::play_majestic(s, 0.55f);
+            boot_sounds::play_majestic(speaker, 0.55f);
         } else if (sel == "gb") {
-            boot_sounds::play_gb(s, 0.9f);
+            boot_sounds::play_gb(speaker, 0.9f);
         } else if (sel == "random") {
             uint64_t t = (uint64_t)esp_timer_get_time();
             uint32_t r = (uint32_t)((t ^ (t >> 7) ^ (t >> 15)) & 0x3);
             if (r == 0)
-                boot_sounds::play_cute(s, 0.5f);
+                boot_sounds::play_cute(speaker, 0.5f);
             else if (r == 1)
-                boot_sounds::play_majestic(s, 0.55f);
+                boot_sounds::play_majestic(speaker, 0.55f);
             else
-                boot_sounds::play_gb(s, 0.9f);
+                boot_sounds::play_gb(speaker, 0.9f);
         } else if (sel == "song1") {
-            boot_sounds::play_song(s, 1, 0.9f);
+            boot_sounds::play_song(speaker, 1, 0.9f);
         } else if (sel == "song2") {
-            boot_sounds::play_song(s, 2, 0.9f);
+            boot_sounds::play_song(speaker, 2, 0.9f);
         } else if (sel == "song3") {
-            boot_sounds::play_song(s, 3, 0.9f);
+            boot_sounds::play_song(speaker, 3, 0.9f);
         } else {
-            boot_sounds::play_cute(s, 0.5f);
+            boot_sounds::play_cute(speaker, 0.5f);
         }
     };
     Oled oled;
@@ -674,7 +679,7 @@ void app_main(void) {
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
     if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
         // 起動音（選択式）
-        play_boot_sound(spk);
+        play_boot_sound();
         // 起動時のロゴを表示
         oled.BootDisplay();
         // LEDを光らす
@@ -704,8 +709,7 @@ void app_main(void) {
         esp_deep_sleep_start();
     } else {
         // 起動音（選択式）
-        Max98357A spk2;
-        play_boot_sound(spk2);
+        play_boot_sound();
         // 起動時のロゴを表示
         oled.BootDisplay();
         // LEDを光らす

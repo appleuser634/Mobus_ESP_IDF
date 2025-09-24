@@ -203,7 +203,7 @@ class TalkDisplay {
         lcd.init();
         lcd.setRotation(0);
 
-        Max98357A buzzer;
+        auto& buzzer = audio::speaker();
         buzzer.init();
 
         Joystick joystick;
@@ -461,17 +461,8 @@ class TalkDisplay {
         // Ensure I2S is released even if we delete the task (avoid missing C++
         // destructors) so that re-entering Game can re-initialize audio
         // properly.
-        {
-            Max98357A
-                cleanup;  // dummy handle to satisfy scope; does not allocate
-        }
-        // Explicitly deinit the buzzer used above
-        // (declare as static_cast to silence unused warning if optimized)
-        (void)0;  // no-op
-        // Note: buzzer is still in scope here; ensure it is deinitialized
-        // in case we exited without hitting earlier deinit paths.
-        // (double-deinit is safe in our helper)
-        buzzer.deinit();
+        buzzer.stop_tone();
+        buzzer.disable();
         running_flag = false;
         vTaskDelete(NULL);
     };
@@ -1169,17 +1160,27 @@ std::string wifi_input_info_proxy(std::string input_type,
 #define CONTACT_SIZE 5
 class ContactBook {
    public:
-    static bool running_flag;
+   static bool running_flag;
+   static constexpr uint32_t kTaskStackWords = 12288;
 
     void start_message_menue_task() {
         printf("Start ContactBook Task...");
-        xTaskCreatePinnedToCore(&message_menue_task, "message_menue_task", 8096,
-                                NULL, 6, NULL, 1);
+        if (task_handle_) {
+            ESP_LOGW("CONTACT", "Task already running");
+            return;
+        }
+        running_flag = true;
+        task_handle_ = xTaskCreateStaticPinnedToCore(
+            &message_menue_task, "message_menue_task", kTaskStackWords, NULL,
+            6, task_stack_, &task_buffer_, 1);
+        if (!task_handle_) {
+            ESP_LOGE("CONTACT", "Failed to start contact task (stack=%u)",
+                     kTaskStackWords);
+            running_flag = false;
+        }
     }
 
     static void message_menue_task(void *pvParameters) {
-        Max98357A buzzer;
-
         Joystick joystick;
 
         Button type_button(GPIO_NUM_46);
@@ -1202,6 +1203,7 @@ class ContactBook {
         };
         auto finish_task = [&]() {
             running_flag = false;
+            task_handle_ = nullptr;
             if (wdt_registered) {
                 esp_err_t del_err = esp_task_wdt_delete(NULL);
                 if (del_err != ESP_OK) {
@@ -1212,14 +1214,51 @@ class ContactBook {
             vTaskDelete(NULL);
         };
 
-        sprite.deleteSprite();
-        auto recreate_contact_sprite = [&]() {
-            sprite.setColorDepth(8);
-            sprite.setFont(&fonts::Font2);
-            sprite.setTextWrap(true);
-            sprite.createSprite(lcd.width(), lcd.height());
+        auto recreate_contact_sprite = [&](int width, int height) -> bool {
+            struct Attempt {
+                uint8_t depth;
+                bool use_psram;
+            };
+            constexpr Attempt attempts[] = {
+                {8, true},  {8, false}, {4, true},
+                {4, false}, {1, true},  {1, false},
+            };
+
+            sprite.deleteSprite();
+            for (const auto &attempt : attempts) {
+                sprite.setPsram(attempt.use_psram);
+                sprite.setColorDepth(attempt.depth);
+                sprite.setFont(&fonts::Font2);
+                sprite.setTextWrap(true);
+                if (sprite.createSprite(width, height)) {
+                    ESP_LOGI(
+                        "CONTACT",
+                        "Sprite created %dx%d depth=%u psram=%s (free=%u largest=%u)",
+                        width, height, attempt.depth,
+                        attempt.use_psram ? "true" : "false",
+                        (unsigned)heap_caps_get_free_size(
+                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                        (unsigned)heap_caps_get_largest_free_block(
+                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+                    return true;
+                }
+                ESP_LOGW(
+                    "CONTACT",
+                    "createSprite(%d,%d) depth=%u psram=%s failed (free=%u largest=%u)",
+                    width, height, attempt.depth,
+                    attempt.use_psram ? "true" : "false",
+                    (unsigned)heap_caps_get_free_size(
+                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                    (unsigned)heap_caps_get_largest_free_block(
+                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+                sprite.deleteSprite();
+            }
+            return false;
         };
-        recreate_contact_sprite();
+        if (!recreate_contact_sprite(lcd.width(), lcd.height())) {
+            finish_task();
+            return;
+        }
 
         int MAX_CONTACTS = 20;
         int CONTACT_PER_PAGE = 4;
@@ -1345,19 +1384,21 @@ class ContactBook {
             std::string username = creds.username;
             std::string resp;
             int friends_status = 0;
-            sprite.fillRect(0, 0, 128, 64, 0);
-            sprite.setFont(&fonts::Font2);
-            sprite.setTextColor(0xFFFFFFu, 0x000000u);
-            sprite.drawCenterString("Loading contacts...", 64, 24);
-            sprite.drawCenterString("via Wi-Fi", 64, 40);
-            sprite.pushSprite(&lcd, 0, 0);
-            sprite.deleteSprite();
+            if (recreate_contact_sprite(lcd.width(), lcd.height())) {
+                sprite.fillRect(0, 0, 128, 64, 0);
+                sprite.setFont(&fonts::Font2);
+                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                sprite.drawCenterString("Loading contacts...", 64, 24);
+                sprite.drawCenterString("via Wi-Fi", 64, 40);
+                sprite.pushSprite(&lcd, 0, 0);
+            }
             ESP_LOGI(TAG,
                      "[HTTP] Contact list fetch start (free=%u largest=%u)",
                      (unsigned)heap_caps_get_free_size(
                          MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                      (unsigned)heap_caps_get_largest_free_block(
                          MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+            feed_wdt();
             esp_err_t friends_err = api.get_friends(resp, &friends_status);
             if (friends_err == ESP_OK && friends_status == 401) {
                 ESP_LOGW(TAG,
@@ -1370,11 +1411,20 @@ class ContactBook {
                     friends_err = api.get_friends(resp, &friends_status);
                 }
             }
-            recreate_contact_sprite();
+            feed_wdt();
+            if (!recreate_contact_sprite(lcd.width(), lcd.height())) {
+                ESP_LOGE("CONTACT", "Sprite recreate failed after HTTP");
+                finish_task();
+                return;
+            }
+            ESP_LOGI(TAG, "[HTTP] friends status=%d err=%s len=%u",
+                     friends_status, esp_err_to_name(friends_err),
+                     (unsigned)resp.size());
             if (friends_err == ESP_OK && friends_status >= 200 &&
                 friends_status < 300) {
                 StaticJsonDocument<4096> doc;
-                if (deserializeJson(doc, resp) == DeserializationError::Ok) {
+                DeserializationError derr = deserializeJson(doc, resp);
+                if (derr == DeserializationError::Ok) {
                     for (JsonObject f : doc["friends"].as<JsonArray>()) {
                         contact_t c;
                         c.display_name =
@@ -1397,6 +1447,8 @@ class ContactBook {
                             contacts.push_back(c);
                         }
                     }
+                } else {
+                    ESP_LOGW("CONTACT", "JSON parse failed: %s", derr.c_str());
                 }
             } else {
                 ESP_LOGW(TAG,
@@ -1926,8 +1978,15 @@ class ContactBook {
 
         finish_task();
     };
+   private:
+    static TaskHandle_t task_handle_;
+    static StaticTask_t task_buffer_;
+    static StackType_t task_stack_[kTaskStackWords];
 };
 bool ContactBook::running_flag = false;
+TaskHandle_t ContactBook::task_handle_ = nullptr;
+StaticTask_t ContactBook::task_buffer_;
+StackType_t ContactBook::task_stack_[ContactBook::kTaskStackWords];
 
 class WiFiSetting {
    public:
@@ -2412,7 +2471,7 @@ class P2P_Display {
     void morse_p2p() {
         p2p_init();
 
-        Max98357A buzzer;
+        auto& buzzer = audio::speaker();
         Joystick joystick;
 
         Button type_button(GPIO_NUM_46);
@@ -2592,6 +2651,9 @@ class P2P_Display {
             espnow_send(display_text);
             vTaskDelay(10 / portTICK_PERIOD_MS);
         }
+
+        buzzer.stop_tone();
+        buzzer.disable();
 
         // 実行フラグをfalseへ変更
         running_flag = false;
@@ -3343,7 +3405,7 @@ class Composer {
 
                 auto task = +[](void *pv) {
                     PlayArgs *a = (PlayArgs *)pv;
-                    Max98357A spk(40, 39, 41, 44100);  // unify with system rate
+                    auto& spk = audio::speaker();
                     chiptune::GBSynth synth(spk.sample_rate);
                     // Streaming render to DMA buffers (no large PSRAM
                     // allocations)
@@ -3378,12 +3440,10 @@ class Composer {
                         (size_t)step_samples * (size_t)a->pat.steps;
                     spk.play_pcm_mono16_stream(total_samples, 1.0f, a->abortp,
                                                fill, &ctx);
+                    spk.disable();
                     a->~PlayArgs();
                     heap_caps_free(a);
                     Composer::s_play_task = nullptr;
-                    // Explicitly release I2S channel before task exit so others
-                    // can use audio
-                    spk.deinit();
                     vTaskDelete(NULL);
                 };
                 xTaskCreatePinnedToCore(task, "compose_play", 4096, args, 5,
@@ -3450,8 +3510,6 @@ class SettingMenu {
         lcd.init();
 
         WiFiSetting wifi_setting;
-
-        Max98357A buzzer;
 
         Joystick joystick;
 
@@ -3776,7 +3834,7 @@ class SettingMenu {
                         type_button.clear_button_state();
                     }
                     if (ebs.pushed) {
-                        Max98357A sp;
+                        auto& sp = audio::speaker();
                         if (opts[idx] == "majestic")
                             boot_sounds::play_majestic(sp, 0.5f);
                         else if (opts[idx] == "gb")
@@ -4473,7 +4531,7 @@ class Game {
                                   Button &back_button, Button &enter_button) {
         reset_inputs(joystick, type_button, back_button, enter_button);
 
-        Max98357A buzzer;
+        auto& buzzer = audio::speaker();
         buzzer.init();
 
         HapticMotor &haptic = HapticMotor::instance();
@@ -4651,7 +4709,8 @@ class Game {
 
             // break_flagが立ってたら終了
             if (break_flag) {
-                buzzer.deinit();
+                buzzer.stop_tone();
+                buzzer.disable();
                 break;
             }
 
@@ -4734,7 +4793,7 @@ class Game {
         vTaskDelete(NULL);
 
         buzzer.stop_tone();
-        buzzer.deinit();
+        buzzer.disable();
         reset_inputs(joystick, type_button, back_button, enter_button);
         return false;
     }
@@ -4813,7 +4872,8 @@ std::map<std::string, std::string> Game::morse_code_reverse = {
 
 static void play_morse_message(const std::string &text,
                                const std::string &header, int cx, int cy) {
-    Max98357A buzzer;
+    auto& buzzer = audio::speaker();
+    buzzer.init();
 
     sprite.setColorDepth(8);
     sprite.setFont(&fonts::Font2);
@@ -4914,6 +4974,7 @@ static void play_morse_message(const std::string &text,
     }
 
     buzzer.stop_tone();
+    buzzer.disable();
     draw_frame("", display_accum);
     vTaskDelay(pdMS_TO_TICKS(200));
 }

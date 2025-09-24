@@ -56,6 +56,11 @@ static void restart_network_stack() {
     (void)esp_wifi_start();
 }
 
+static bool wifi_has_link() {
+    wifi_ap_record_t ap = {};
+    return esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+}
+
 // Define shared frame handler outside of BLE implementation branches so
 // both NimBLE and Bluedroid paths can link against it.
 static void handle_frame_from_phone(const std::string& frame) {
@@ -357,6 +362,11 @@ static void on_reset_cb(int reason) {
 
 extern "C" void ble_uart_enable(void) {
     g_last_err = 0;
+    if (wifi_has_link()) {
+        ESP_LOGW(GATTS_TAG, "Wi-Fi connected; skip BLE enable");
+        g_last_err = ESP_ERR_INVALID_STATE;
+        return;
+    }
     if (g_stack_inited) {
         host_sync_cb();
         return;
@@ -698,6 +708,11 @@ static void gatts_cb(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
 
 extern "C" void ble_uart_enable(void) {
     g_last_err = 0;
+    if (wifi_has_link()) {
+        ESP_LOGW(GATTS_TAG, "Wi-Fi connected; skip BLE enable");
+        g_last_err = ESP_ERR_INVALID_STATE;
+        return;
+    }
     if (g_stack_inited) {
         start_advertising();
         return;
