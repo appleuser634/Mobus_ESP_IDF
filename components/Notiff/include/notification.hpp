@@ -18,10 +18,11 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "http_client.hpp"
 
 #pragma once
 
-HttpClient http_client;
+inline HttpClient &http_client = HttpClient::shared();
 
 class Notification {
 	

@@ -15,16 +15,31 @@
 #include <sound_settings.hpp>
 #include <images.hpp>
 #include <haptic_motor.hpp>
+#include <http_client.hpp>
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
 #include "esp_random.h"
+#include "esp_wifi.h"
+#include "freertos/event_groups.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <ctype.h>
 
 #pragma once
+
+inline std::string resolve_chat_backend_id(const std::string &fallback);
+
+inline bool wifi_is_connected() {
+    constexpr EventBits_t kWifiConnectedBit = BIT0;
+    if (s_wifi_event_group) {
+        EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
+        if (bits & kWifiConnectedBit) return true;
+    }
+    wifi_ap_record_t ap = {};
+    return esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+}
 
 class LGFX : public lgfx::LGFX_Device {
     lgfx::Panel_SSD1306
@@ -192,7 +207,7 @@ class TalkDisplay {
 
         Joystick joystick;
 
-        HttpClient http_client;
+        HttpClient &http_client = HttpClient::shared();
 
         Button type_button(GPIO_NUM_46);
         Button back_button(GPIO_NUM_3);
@@ -202,6 +217,7 @@ class TalkDisplay {
         enter_button.long_push_thresh = 300000;  // ~300ms
 
         std::string chat_to = *(std::string *)pvParameters;
+        const std::string server_chat_id = resolve_chat_backend_id(chat_to);
 
         lcd.setRotation(2);
 
@@ -306,11 +322,10 @@ class TalkDisplay {
                 printf("Pushing time:%lld\n", enter_button_state.pushing_sec);
                 printf("Push type:%c\n", enter_button_state.push_type);
 
-                std::string chat_to_data[] = {chat_to, message_text};
-                // std::string chat_to_data = message_text;
+                std::string chat_to_data[] = {server_chat_id, message_text};
                 http_client.post_message(chat_to_data);
                 // Also relay via BLE to phone app if connected
-                if (ble_uart_is_ready()) {
+                if (!wifi_is_connected() && ble_uart_is_ready()) {
                     auto esc = [](const std::string &s) {
                         std::string o;
                         o.reserve(s.size() + 8);
@@ -710,6 +725,9 @@ class MessageBox {
     static std::string active_short_id;
     static std::string active_friend_id;
     static constexpr uint32_t kTaskStackWords = 9216;
+    static TaskHandle_t task_handle_;
+    static StaticTask_t task_buffer_;
+    static StackType_t task_stack_[kTaskStackWords];
 
     static void set_active_contact(const std::string &short_id,
                                    const std::string &friend_id) {
@@ -720,11 +738,31 @@ class MessageBox {
                  active_short_id.c_str(), active_friend_id.c_str());
     }
 
+    static std::string backend_identifier(const std::string &fallback) {
+        if (!active_friend_id.empty()) return active_friend_id;
+        if (!active_short_id.empty()) return active_short_id;
+        return fallback;
+    }
+
     void start_box_task(std::string chat_to) {
         printf("Start Box Task...");
         // Pass heap-allocated copy to avoid dangling pointer
         auto *arg = new std::string(chat_to);
-        xTaskCreatePinnedToCore(&box_task, "box_task", 8012, arg, 6, NULL, 1);
+        if (task_handle_) {
+            ESP_LOGW(TAG, "box_task already running");
+            delete arg;
+            return;
+        }
+        task_handle_ = xTaskCreateStaticPinnedToCore(
+            &box_task, "box_task", kTaskStackWords, arg, 6, task_stack_,
+            &task_buffer_, 1);
+        if (!task_handle_) {
+            ESP_LOGE(TAG, "Failed to start box_task (free_heap=%u)",
+                     static_cast<unsigned>(heap_caps_get_free_size(
+                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+            delete arg;
+            running_flag = false;
+        }
     }
 
     static void box_task(void *pvParameters) {
@@ -745,13 +783,15 @@ class MessageBox {
         sprite.print("Loading...");
         sprite.pushSprite(&lcd, 0, 0);
 
-        sprite.setColorDepth(8);
-        sprite.setFont(&fonts::Font2);
-        sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
-        // 安定描画のため画面サイズのスプライトに統一
-        sprite.createSprite(lcd.width(), lcd.height());
+        auto recreate_message_sprite = [&]() {
+            sprite.setColorDepth(8);
+            sprite.setFont(&fonts::Font2);
+            sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
+            sprite.createSprite(lcd.width(), lcd.height());
+        };
+        recreate_message_sprite();
 
-        HttpClient http_client;
+        HttpClient &http_client = HttpClient::shared();
 
         // メッセージの取得（BLE優先、HTTPフォールバック）
         // Take ownership of heap arg and free after copy
@@ -762,8 +802,16 @@ class MessageBox {
             "[BLE] Opening message box (identifier=%s short=%s friend_id=%s)",
             chat_to.c_str(), active_short_id.c_str(), active_friend_id.c_str());
         JsonDocument res;
+        const std::string server_chat_id = resolve_chat_backend_id(chat_to);
         auto fetch_messages_via_ble = [&](const std::string &fid,
                                           int timeout_ms) -> bool {
+            if (wifi_is_connected()) {
+                ESP_LOGI(TAG,
+                         "[BLE] fetch_messages skipped; Wi-Fi connected "
+                         "(friend=%s)",
+                         fid.c_str());
+                return false;
+            }
             if (!ble_uart_is_ready()) {
                 ESP_LOGW(
                     TAG,
@@ -926,7 +974,9 @@ class MessageBox {
         if (!got_ble) {
             ESP_LOGW(TAG, "[BLE] Falling back to HTTP history fetch for %s",
                      chat_to.c_str());
-            res = http_client.get_message(chat_to);
+            sprite.deleteSprite();
+            res = http_client.get_message(server_chat_id);
+            recreate_message_sprite();
         }
 
         const std::string my_name = get_nvs((char *)"user_name");
@@ -997,7 +1047,9 @@ class MessageBox {
                     ESP_LOGW(
                         TAG,
                         "[BLE] Refresh via BLE failed; using HTTP fallback");
-                    res = http_client.get_message(chat_to);
+                    sprite.deleteSprite();
+                    res = http_client.get_message(server_chat_id);
+                    recreate_message_sprite();
                 }
             }
 
@@ -1081,6 +1133,7 @@ class MessageBox {
         running_flag = false;
         active_short_id.clear();
         active_friend_id.clear();
+        task_handle_ = nullptr;
         vTaskDelete(NULL);
     };
 };
@@ -1088,6 +1141,13 @@ bool MessageBox::running_flag = false;
 std::string MessageBox::chat_title = "";
 std::string MessageBox::active_short_id = "";
 std::string MessageBox::active_friend_id = "";
+TaskHandle_t MessageBox::task_handle_ = nullptr;
+StaticTask_t MessageBox::task_buffer_;
+StackType_t MessageBox::task_stack_[MessageBox::kTaskStackWords];
+
+inline std::string resolve_chat_backend_id(const std::string &fallback) {
+    return MessageBox::backend_identifier(fallback);
+}
 
 // Forward declaration for helper proxy
 std::string wifi_input_info_proxy(std::string input_type,
@@ -1127,7 +1187,7 @@ class ContactBook {
         // Fetch friends list via BLE (if connected) or HTTP( Wi‑Fi )
         std::vector<contact_t> contacts;
         bool got_from_ble = false;
-        if (ble_uart_is_ready()) {
+        if (!wifi_is_connected() && ble_uart_is_ready()) {
             // Request friends list from phone app over BLE
             long long rid = esp_timer_get_time();
             std::string req = std::string("{ \"id\":\"") + std::to_string(rid) +
@@ -1237,7 +1297,21 @@ class ContactBook {
             (void)chatapi::ensure_authenticated(api, creds, false);
             std::string username = creds.username;
             std::string resp;
-            if (api.get_friends(resp) == ESP_OK) {
+            int friends_status = 0;
+            esp_err_t friends_err = api.get_friends(resp, &friends_status);
+            if (friends_err == ESP_OK && friends_status == 401) {
+                ESP_LOGW(TAG,
+                         "Friends list request unauthorized; refreshing token");
+                if (chatapi::ensure_authenticated(api, creds, false,
+                                                  /*force_refresh=*/true) ==
+                    ESP_OK) {
+                    resp.clear();
+                    friends_status = 0;
+                    friends_err = api.get_friends(resp, &friends_status);
+                }
+            }
+            if (friends_err == ESP_OK && friends_status >= 200 &&
+                friends_status < 300) {
                 StaticJsonDocument<4096> doc;
                 if (deserializeJson(doc, resp) == DeserializationError::Ok) {
                     for (JsonObject f : doc["friends"].as<JsonArray>()) {
@@ -1263,6 +1337,10 @@ class ContactBook {
                         }
                     }
                 }
+            } else {
+                ESP_LOGW(TAG,
+                         "Friend list fetch failed (err=%s status=%d)",
+                         esp_err_to_name(friends_err), friends_status);
             }
         }
 
@@ -1271,7 +1349,7 @@ class ContactBook {
         int margin = 3;
         int noti_circle_margin = 13;
 
-        HttpClient http_client;
+        HttpClient &http_client = HttpClient::shared();
         // 通知の取得
         JsonDocument notif_res = http_client.get_notifications();
 
@@ -1359,7 +1437,7 @@ class ContactBook {
 
                         bool ok = false;
                         const char *emsg = nullptr;
-                        if (ble_uart_is_ready()) {
+                        if (!wifi_is_connected() && ble_uart_is_ready()) {
                             long long rid = esp_timer_get_time();
                             std::string req =
                                 std::string("{ \"id\":\"") +
@@ -1438,7 +1516,7 @@ class ContactBook {
                     // Fetch pending (BLE first)
                     std::vector<std::pair<std::string, std::string>>
                         pending;  // {request_id, username}
-                    if (ble_uart_is_ready()) {
+                    if (!wifi_is_connected() && ble_uart_is_ready()) {
                         long long rid = esp_timer_get_time();
                         std::string req = std::string("{ \"id\":\"") +
                                           std::to_string(rid) +
@@ -1589,7 +1667,8 @@ class ContactBook {
                                         // Send respond
                                         std::string rid = pending[psel].first;
                                         bool ok = false;
-                                        if (ble_uart_is_ready()) {
+                                        if (!wifi_is_connected() &&
+                                            ble_uart_is_ready()) {
                                             long long crid =
                                                 esp_timer_get_time();
                                             std::string req =
@@ -1650,7 +1729,8 @@ class ContactBook {
                                         // Refresh pending list
                                         pending.clear();
                                         // Re-fetch pending (BLE first)
-                                        if (ble_uart_is_ready()) {
+                                        if (!wifi_is_connected() &&
+                                            ble_uart_is_ready()) {
                                             long long rid2 =
                                                 esp_timer_get_time();
                                             std::string req2 =
@@ -3411,7 +3491,7 @@ class SettingMenu {
                     sprite.print("Update Now");
                 } else if (settings[i].setting_name == "Bluetooth") {
                     std::string label = "Bluetooth";
-                    bool connected = ble_uart_is_ready();
+                    bool connected = !wifi_is_connected() && ble_uart_is_ready();
                     std::string pairing = get_nvs((char *)"ble_pair");
                     if (connected)
                         label += " [Connected]";
@@ -3736,6 +3816,21 @@ class SettingMenu {
                     if (jst.pushed_right_edge) sel = 1;
                     if (tbs.pushed || ebs.pushed) {
                         if (!pairing) {
+                            if (wifi_is_connected()) {
+                                sprite.fillRect(0, 0, 128, 64, 0);
+                                sprite.setFont(&fonts::Font2);
+                                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                                sprite.drawCenterString(
+                                    "Disconnect Wi-Fi to use BLE", 64, 22);
+                                sprite.pushSprite(&lcd, 0, 0);
+                                vTaskDelay(1200 / portTICK_PERIOD_MS);
+                                type_button.clear_button_state();
+                                type_button.reset_timer();
+                                enter_button.clear_button_state();
+                                enter_button.reset_timer();
+                                joystick.reset_timer();
+                                continue;
+                            }
                             // Turn on pairing, generate code and 120s window
                             code = gen_code();
                             nvs_put("ble_code", code);
@@ -4138,7 +4233,6 @@ class Game {
     static std::map<std::string, std::string> morse_code;
     static std::map<std::string, std::string> morse_code_reverse;
     static void game_task(void *pvParameters) {
-        ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
         (void)pvParameters;
         lcd.init();
         lcd.setRotation(2);
@@ -4156,6 +4250,7 @@ class Game {
 
         bool exit_task = false;
         while (!exit_task) {
+            esp_task_wdt_reset();
             MenuChoice choice = show_game_menu(joystick, type_button,
                                                back_button, enter_button);
             bool exit_requested = false;
@@ -4188,7 +4283,6 @@ class Game {
 
         running_flag = false;
         task_handle_ = nullptr;
-        ESP_ERROR_CHECK(esp_task_wdt_delete(NULL));
         vTaskDelete(NULL);
     };
 
@@ -4226,6 +4320,8 @@ class Game {
             Joystick::joystick_state_t joy = joystick.get_joystick_state();
             Button::button_state_t type_state = type_button.get_button_state();
             Button::button_state_t back_state = back_button.get_button_state();
+
+            esp_task_wdt_reset();
 
             if (joy.pushed_down_edge) {
                 index = (index + 1) % 2;
@@ -4279,6 +4375,7 @@ class Game {
         char random_char = letters[rand() % 26];
 
         while (1) {
+            esp_task_wdt_reset();
             std::string morse_text = "";
             std::string message_text = "";
             std::string alphabet_text = "";
@@ -4302,6 +4399,7 @@ class Game {
 
             // 問題を解き終わるまでループ
             while (c < n) {
+                esp_task_wdt_reset();
                 sprite.fillRect(0, 0, 128, 64, 0);
 
                 // Joystickの状態を取得
@@ -4719,7 +4817,7 @@ class MenuDisplay {
 
         int cursor_index = 0;
 
-        HttpClient http_client;
+        HttpClient &http_client = HttpClient::shared();
 
         Joystick joystick;
 
@@ -4776,7 +4874,7 @@ class MenuDisplay {
         int power_per_pix = (int)(0.12 * power_per);
 
         auto enter_light_sleep = [&](const char *reason, bool force) -> bool {
-            if (!force && ble_uart_is_ready()) {
+            if (!force && !wifi_is_connected() && ble_uart_is_ready()) {
                 ESP_LOGI(TAG, "Skip light sleep (%s): BLE link active", reason);
                 return false;
             }

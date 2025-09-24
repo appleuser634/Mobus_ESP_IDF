@@ -308,13 +308,15 @@ class ChatApiClient {
     }
 
     esp_err_t get_messages(const std::string& friend_identifier, int limit,
-                           std::string& out_response) {
+                           std::string& out_response,
+                           int* out_status = nullptr) {
         if (!has_token()) return ESP_ERR_INVALID_STATE;
         char path[192];
         if (limit < 1 || limit > 100) limit = 50;
         snprintf(path, sizeof(path), "/api/friends/%s/messages?limit=%d",
                  friend_identifier.c_str(), limit);
-        return perform_request("GET", path, "", out_response, /*auth*/ true, nullptr);
+        return perform_request("GET", path, "", out_response, /*auth*/ true,
+                               out_status);
     }
 
     esp_err_t get_unread_count(std::string& out_response) {
@@ -354,14 +356,17 @@ class ChatApiClient {
         return perform_request("PUT", path.c_str(), "", resp, /*auth*/ true, nullptr);
     }
 
-    esp_err_t get_friends(std::string& out_response) {
+    esp_err_t get_friends(std::string& out_response, int* out_status = nullptr) {
         if (!has_token()) return ESP_ERR_INVALID_STATE;
-        return perform_request("GET", "/api/friends", "", out_response, /*auth*/ true, nullptr);
+        return perform_request("GET", "/api/friends", "", out_response,
+                               /*auth*/ true, out_status);
     }
 
-    esp_err_t get_pending_requests(std::string& out_response) {
+    esp_err_t get_pending_requests(std::string& out_response,
+                                   int* out_status = nullptr) {
         if (!has_token()) return ESP_ERR_INVALID_STATE;
-        return perform_request("GET", "/api/friends/pending", "", out_response, /*auth*/ true, nullptr);
+        return perform_request("GET", "/api/friends/pending", "",
+                               out_response, /*auth*/ true, out_status);
     }
 
     esp_err_t respond_friend_request(const std::string& request_id, bool accept, std::string* out_response, int* out_status) {
@@ -566,8 +571,9 @@ inline Credentials load_credentials_from_nvs() {
 }
 
 inline esp_err_t ensure_authenticated(ChatApiClient& api, const Credentials& cred,
-                                      bool allow_register = true) {
-    if (api.has_token()) return ESP_OK;
+                                      bool allow_register = true,
+                                      bool force_refresh = false) {
+    if (!force_refresh && api.has_token()) return ESP_OK;
     esp_err_t err = api.login(cred.username, cred.password);
     if (err == ESP_OK) return ESP_OK;
     if (!allow_register) return err;

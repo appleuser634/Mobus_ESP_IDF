@@ -7,6 +7,8 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
+#pragma once
+
 #include <string.h>
 #include <sys/param.h>
 #include <stdlib.h>
@@ -36,13 +38,13 @@
 #define MAX_HTTP_RECV_BUFFER 512
 #define MAX_HTTP_OUTPUT_BUFFER 2048
 
-inline chatapi::ChatApiClient& dev_chat_api() {
-    auto& client = chatapi::shared_client(true);
+inline chatapi::ChatApiClient &dev_chat_api() {
+    auto &client = chatapi::shared_client(true);
     client.set_scheme("https");
     return client;
 }
 
-inline std::atomic<bool>& notifications_task_running_flag() {
+inline std::atomic<bool> &notifications_task_running_flag() {
     static std::atomic<bool> flag{false};
     return flag;
 }
@@ -169,24 +171,41 @@ esp_err_t _http_client_event_handler(esp_http_client_event_t *evt) {
     return ESP_OK;
 }
 
+static constexpr uint32_t kHttpGetTaskStackWords = 6192;
+static StackType_t http_get_task_stack[kHttpGetTaskStackWords];
+static StaticTask_t http_get_task_buffer;
+static TaskHandle_t http_get_task_handle = nullptr;
+
 JsonDocument res;
 volatile int res_flag = 0;
 void http_get_message_task(void *pvParameters) {
+    ESP_LOGW(TAG, "Start http_get_message_task");
     // Take ownership of heap arg and free after copy
     std::string chat_from = *(std::string *)pvParameters;  // friend identifier
-    delete (std::string*)pvParameters;
+    delete (std::string *)pvParameters;
 
     // Prepare API client and ensure logged in
-    auto& api = dev_chat_api();
+    auto &api = dev_chat_api();
     api.set_scheme("https");
     const auto creds = chatapi::load_credentials_from_nvs();
     if (chatapi::ensure_authenticated(api, creds) != ESP_OK) {
-        ESP_LOGW(TAG, "Chat API auth failed; continuing with cached token state");
+        ESP_LOGW(TAG,
+                 "Chat API auth failed; continuing with cached token state");
     }
     const std::string username = creds.username;
 
     std::string response;
-    esp_err_t err = api.get_messages(chat_from, 20, response);
+    int status = 0;
+    esp_err_t err = api.get_messages(chat_from, 20, response, &status);
+    if (err == ESP_OK && status == 401) {
+        ESP_LOGW(TAG, "get_messages unauthorized; refreshing token");
+        if (chatapi::ensure_authenticated(api, creds, false,
+                                          /*force_refresh=*/true) == ESP_OK) {
+            response.clear();
+            status = 0;
+            err = api.get_messages(chat_from, 20, response, &status);
+        }
+    }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "get_messages failed: %s", esp_err_to_name(err));
         // Return empty messages to avoid indefinite Loading... UI
@@ -196,6 +215,7 @@ void http_get_message_task(void *pvParameters) {
         serializeJson(emptyDoc, outBuf);
         deserializeJson(res, outBuf);
         res_flag = 1;
+        http_get_task_handle = nullptr;
         vTaskDelete(NULL);
         return;
     }
@@ -208,9 +228,28 @@ void http_get_message_task(void *pvParameters) {
     StaticJsonDocument<4096> in;
     if (deserializeJson(in, response) != DeserializationError::Ok) {
         ESP_LOGE(TAG, "JSON parse error");
+        StaticJsonDocument<128> emptyDoc;
+        emptyDoc.createNestedArray("messages");
+        std::string outBuf;
+        serializeJson(emptyDoc, outBuf);
+        deserializeJson(res, outBuf);
+        res_flag = 1;
+        http_get_task_handle = nullptr;
         vTaskDelete(NULL);
         return;
     }
+    if (status < 200 || status >= 300) {
+        ESP_LOGW(TAG, "get_messages non-OK HTTP status=%d", status);
+        StaticJsonDocument<128> emptyDoc;
+        emptyDoc.createNestedArray("messages");
+        std::string outBuf;
+        serializeJson(emptyDoc, outBuf);
+        deserializeJson(res, outBuf);
+        res_flag = 1;
+        vTaskDelete(NULL);
+        return;
+    }
+
     StaticJsonDocument<4096> out;
     auto arr = out.createNestedArray("messages");
     std::string my_id = api.user_id();
@@ -233,6 +272,7 @@ void http_get_message_task(void *pvParameters) {
     serializeJson(out, outBuf);
     deserializeJson(res, outBuf);
     res_flag = 1;
+    http_get_task_handle = nullptr;
     vTaskDelete(NULL);
 }
 
@@ -259,11 +299,12 @@ void http_get_notifications_task(void *pvParameters) {
         }
     }
     // Initialize MQTT and subscribe to user topic (via runtime)
-    auto& api = chatapi::shared_client(true); // use NVS-configured endpoint
+    auto &api = chatapi::shared_client(true);  // use NVS-configured endpoint
     api.set_scheme("https");
     const auto creds = chatapi::load_credentials_from_nvs();
     if (chatapi::ensure_authenticated(api, creds) != ESP_OK) {
-        ESP_LOGW(TAG, "Chat API auth failed; continuing with cached token state");
+        ESP_LOGW(TAG,
+                 "Chat API auth failed; continuing with cached token state");
     }
 
     auto api_user_id = api.user_id();
@@ -272,9 +313,12 @@ void http_get_notifications_task(void *pvParameters) {
     // Choose MQTT host/port
     std::string mqtt_host = get_nvs("mqtt_host");
     if (mqtt_host.empty()) mqtt_host = api_host;
-    std::string mqtt_port_str = get_nvs((char*)"mqtt_port");
+    std::string mqtt_port_str = get_nvs((char *)"mqtt_port");
     int mqtt_port = 1883;
-    if (!mqtt_port_str.empty()) { int p = atoi(mqtt_port_str.c_str()); if (p>0) mqtt_port = p; }
+    if (!mqtt_port_str.empty()) {
+        int p = atoi(mqtt_port_str.c_str());
+        if (p > 0) mqtt_port = p;
+    }
     mqtt_rt_configure(mqtt_host.c_str(), mqtt_port, api_user_id.c_str());
     if (mqtt_rt_start() != 0) {
         ESP_LOGE(TAG, "MQTT connect failed");
@@ -316,11 +360,12 @@ std::string chat_to = "";
 std::string message = "";
 void http_post_message_task(void *pvParameters) {
     // Prepare API client and send message using new /api/messages/send
-    auto& api = chatapi::shared_client(true);
+    auto &api = chatapi::shared_client(true);
     api.set_scheme("https");
     const auto creds = chatapi::load_credentials_from_nvs();
     if (chatapi::ensure_authenticated(api, creds) != ESP_OK) {
-        ESP_LOGW(TAG, "Chat API auth failed; continuing with cached token state");
+        ESP_LOGW(TAG,
+                 "Chat API auth failed; continuing with cached token state");
     }
 
     std::string dummy;
@@ -335,6 +380,11 @@ void http_post_message_task(void *pvParameters) {
 
 class HttpClient {
    public:
+    static HttpClient &shared() {
+        static HttpClient instance;
+        return instance;
+    }
+
     bool notif_flag = false;
 
     HttpClient(void) {
@@ -344,7 +394,8 @@ class HttpClient {
             if (ret == ESP_OK) {
                 s_nvs_ok = true;
             } else {
-                ESP_LOGW(TAG, "nvs_flash_init failed: %s", esp_err_to_name(ret));
+                ESP_LOGW(TAG, "nvs_flash_init failed: %s",
+                         esp_err_to_name(ret));
             }
         }
         static bool s_netif_ok = false;
@@ -377,10 +428,37 @@ class HttpClient {
 
     JsonDocument get_message(std::string chat_from) {
         // Launch task with heap-allocated argument to avoid dangling pointer
-        auto* arg = new std::string(chat_from);
+        auto *arg = new std::string(chat_from);
+
+        ESP_LOGI(TAG, "Start get message!");
         res_flag = 0;
-        xTaskCreatePinnedToCore(&http_get_message_task, "http_get_message_task",
-                                8192, arg, 5, NULL, 0);
+        if (http_get_task_handle != nullptr) {
+            ESP_LOGW(TAG, "Previous http_get_message_task still running; "
+                           "skipping new request");
+            delete arg;
+            StaticJsonDocument<128> emptyDoc;
+            emptyDoc.createNestedArray("messages");
+            std::string outBuf;
+            serializeJson(emptyDoc, outBuf);
+            deserializeJson(res, outBuf);
+            return res;
+        }
+        res_flag = 0;
+        http_get_task_handle = xTaskCreateStaticPinnedToCore(
+            &http_get_message_task, "http_get_message_task",
+            kHttpGetTaskStackWords, arg, 5, http_get_task_stack,
+            &http_get_task_buffer, tskNO_AFFINITY);
+        if (!http_get_task_handle) {
+            ESP_LOGE(TAG, "Task create failed! free_heap=%u",
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
+            delete arg;
+            StaticJsonDocument<128> emptyDoc;
+            emptyDoc.createNestedArray("messages");
+            std::string outBuf;
+            serializeJson(emptyDoc, outBuf);
+            deserializeJson(res, outBuf);
+            return res;
+        }
         // Wait with timeout to avoid indefinite freeze
         const int timeout_ms = 7000;
         int waited = 0;
@@ -401,7 +479,7 @@ class HttpClient {
     }
 
     void start_notifications() {
-        auto& running = notifications_task_running_flag();
+        auto &running = notifications_task_running_flag();
         bool expected = false;
         if (!running.compare_exchange_strong(expected, true)) {
             return;

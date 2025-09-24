@@ -8,6 +8,8 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include <nvs_rw.hpp>
+#include <ble_uart.hpp>
+#include <mqtt_runtime.h>
 
 #include "lwip/err.h"
 #include "lwip/sys.h"
@@ -65,6 +67,14 @@ class WiFi {
             s_retry_num = 0;
             if (s_wifi_event_group) {
                 xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+            }
+            if (ble_uart_is_ready()) {
+                ESP_LOGI(TAG, "Wi-Fi connected; disabling BLE bridge");
+                ble_uart_disable();
+                mqtt_rt_resume();
+                save_nvs((char *)"ble_pair", std::string("false"));
+                save_nvs((char *)"ble_code", std::string(""));
+                save_nvs((char *)"ble_exp_us", std::string("0"));
             }
         }
     }

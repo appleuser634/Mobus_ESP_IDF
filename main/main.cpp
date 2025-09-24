@@ -539,7 +539,7 @@ void check_notification() {
     HapticMotor& haptic = HapticMotor::instance();
 
     printf("通知チェック中...");
-    HttpClient http_client;
+    HttpClient &http_client = HttpClient::shared();
     // 通知の取得
     http_client.start_notifications();
 
