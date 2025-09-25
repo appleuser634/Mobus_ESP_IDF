@@ -192,7 +192,7 @@ class TalkDisplay {
         vTaskDelay(250 / portTICK_PERIOD_MS);
     };
 
-   static bool running_flag;
+    static bool running_flag;
 
     bool start_talk_task(const std::string &chat_to) {
         if (running_flag) {
@@ -201,8 +201,8 @@ class TalkDisplay {
         }
         running_flag = true;
         ESP_LOGI(TAG, "[Talk] inline start (free=%u largest=%u)",
-                 (unsigned)heap_caps_get_free_size(
-                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                                   MALLOC_CAP_8BIT),
                  (unsigned)heap_caps_get_largest_free_block(
                      MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
         bool ok = run_talk_session(chat_to);
@@ -262,8 +262,8 @@ class TalkDisplay {
                     " (free=%u largest=%u)",
                     width, height, attempt.depth,
                     attempt.use_psram ? "true" : "false",
-                    (unsigned)heap_caps_get_free_size(
-                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                                      MALLOC_CAP_8BIT),
                     (unsigned)heap_caps_get_largest_free_block(
                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
             }
@@ -274,7 +274,7 @@ class TalkDisplay {
             ESP_LOGE(TAG, "talk_task: sprite allocation failed");
             running_flag = false;
             buzzer.stop_tone();
-            buzzer.disable();
+            buzzer.deinit();
             return false;
         }
 
@@ -283,6 +283,8 @@ class TalkDisplay {
 
         size_t input_switch_pos = 0;
         size_t pos = 0;
+
+        bool tone_playing = false;
 
         while (true) {
             Joystick::joystick_state_t joystick_state =
@@ -297,8 +299,18 @@ class TalkDisplay {
             Button::button_state_t enter_button_state =
                 enter_button.get_button_state();
 
+            if ((!type_button_state.pushing || back_button_state.pushing) &&
+                tone_playing) {
+                buzzer.stop_tone();
+                tone_playing = false;
+            }
+
             if (type_button_state.push_edge and !back_button_state.pushing) {
-                buzzer.start_tone(2300.0f, 0.6f);
+                if (!tone_playing) {
+                    if (buzzer.start_tone(2300.0f, 0.6f) == ESP_OK) {
+                        tone_playing = true;
+                    }
+                }
             }
 
             if (type_button_state.pushed and !back_button_state.pushing) {
@@ -313,6 +325,7 @@ class TalkDisplay {
 
                 type_button.clear_button_state();
                 buzzer.stop_tone();
+                tone_playing = false;
             }
 
             // printf("Release time:%lld\n",button_state.release_sec);
@@ -371,8 +384,10 @@ class TalkDisplay {
                 printf("Pushing time:%lld\n", enter_button_state.pushing_sec);
                 printf("Push type:%c\n", enter_button_state.push_type);
 
-                std::string chat_to_data[] = {server_chat_id, message_text};
-                http_client.post_message(chat_to_data);
+                ESP_LOGI(TAG, "[Talk] send message to %s (bytes=%zu)",
+                         server_chat_id.c_str(), message_text.size());
+
+                http_client.post_message(server_chat_id, message_text);
                 // Also relay via BLE to phone app if connected
                 if (!wifi_is_connected() && ble_uart_is_ready()) {
                     auto esc = [](const std::string &s) {
@@ -462,34 +477,27 @@ class TalkDisplay {
                 std::string translate_target = message_text.substr(safe_pos);
                 // Longest-match transliteration
                 auto transliterate = [](const std::string &src) -> std::string {
-                    // Build sorted mapping by key length desc once
-                    static std::vector<std::pair<std::string, std::string>>
-                        sorted;
-                    static bool inited = false;
-                    if (!inited) {
-                        sorted = romaji_kana;  // copy
-                        std::stable_sort(
-                            sorted.begin(), sorted.end(), [](auto &a, auto &b) {
-                                return a.first.size() > b.first.size();
-                            });
-                        inited = true;
-                    }
                     std::string out;
                     out.reserve(src.size() * 3);
                     size_t i = 0;
                     while (i < src.size()) {
-                        bool matched = false;
-                        for (auto &kv : sorted) {
+                        size_t best_len = 0;
+                        const std::string *best_value = nullptr;
+                        for (const auto &kv : romaji_kana) {
                             const std::string &k = kv.first;
-                            if (k.size() > 0 && i + k.size() <= src.size() &&
+                            if (k.empty()) continue;
+                            if (k.size() <= src.size() - i &&
                                 src.compare(i, k.size(), k) == 0) {
-                                out += kv.second;
-                                i += k.size();
-                                matched = true;
-                                break;
+                                if (k.size() > best_len) {
+                                    best_len = k.size();
+                                    best_value = &kv.second;
+                                }
                             }
                         }
-                        if (!matched) {
+                        if (best_value) {
+                            out += *best_value;
+                            i += best_len;
+                        } else {
                             out += src[i++];
                         }
                     }
@@ -509,9 +517,16 @@ class TalkDisplay {
         // Ensure I2S is released even if we delete the task (avoid missing C++
         // destructors) so that re-entering Game can re-initialize audio
         // properly.
+        std::string().swap(morse_text);
+        std::string().swap(message_text);
+        std::string().swap(alphabet_text);
         sprite.deleteSprite();
+        if (tone_playing) {
+            buzzer.stop_tone();
+            tone_playing = false;
+        }
         buzzer.stop_tone();
-        buzzer.disable();
+        buzzer.deinit();
         ESP_LOGI(TAG, "[Talk] session exit");
         return true;
     };
@@ -855,8 +870,8 @@ class MessageBox {
                     " (free=%u largest=%u)",
                     width, height, attempt.depth,
                     attempt.use_psram ? "true" : "false",
-                    (unsigned)heap_caps_get_free_size(
-                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                                      MALLOC_CAP_8BIT),
                     (unsigned)heap_caps_get_largest_free_block(
                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
             }
@@ -939,7 +954,7 @@ class MessageBox {
                 if (!js.empty()) {
                     ESP_LOGI(TAG, "[BLE] Received cached response (%zu bytes)",
                              js.size());
-                        StaticJsonDocument<4096> in;
+                    StaticJsonDocument<4096> in;
                     DeserializationError err = deserializeJson(in, js);
                     if (err == DeserializationError::Ok) {
                         int count = 0;
@@ -987,11 +1002,9 @@ class MessageBox {
                                 } else {
                                     o["from"] = fid.c_str();
                                 }
-                                const char *mid =
-                                    m["id"].as<const char *>();
+                                const char *mid = m["id"].as<const char *>();
                                 if (!mid)
-                                    mid =
-                                        m["message_id"].as<const char *>();
+                                    mid = m["message_id"].as<const char *>();
                                 if (mid && mid[0] != '\0') o["id"] = mid;
                                 const char *created =
                                     m["created_at"].as<const char *>();
@@ -1028,11 +1041,9 @@ class MessageBox {
                                 } else {
                                     o["from"] = fid.c_str();
                                 }
-                                const char *mid =
-                                    m["id"].as<const char *>();
+                                const char *mid = m["id"].as<const char *>();
                                 if (!mid)
-                                    mid =
-                                        m["message_id"].as<const char *>();
+                                    mid = m["message_id"].as<const char *>();
                                 if (mid && mid[0] != '\0') o["id"] = mid;
                                 const char *created =
                                     m["created_at"].as<const char *>();
@@ -1099,7 +1110,7 @@ class MessageBox {
                 }
                 std::string message_id_str =
                     (message_id && message_id[0] != '\0') ? message_id
-                                                           : std::string();
+                                                          : std::string();
                 if (!message_id_str.empty() &&
                     played_message_ids_.count(message_id_str)) {
                     unread = false;
@@ -1122,7 +1133,8 @@ class MessageBox {
                     }
                     if (!http_client.mark_message_read(message_id_str)) {
                         ESP_LOGW(TAG,
-                                 "Failed to mark message %s as read; will retry later",
+                                 "Failed to mark message %s as read; will "
+                                 "retry later",
                                  message_id_str.c_str());
                     } else {
                         msg["is_read"] = true;
@@ -1226,7 +1238,6 @@ class MessageBox {
                 while (pos < message.length()) {
                     // UTF-8の先頭バイトを調べる
                     uint8_t c = message[pos];
-                    printf("pos:%d.c:0x%02X\n", pos, c);
                     int char_len = 1;
                     if ((c & 0xE0) == 0xC0)
                         char_len = 2;  // 2バイト文字
@@ -1298,8 +1309,8 @@ std::string wifi_input_info_proxy(std::string input_type,
 #define CONTACT_SIZE 5
 class ContactBook {
    public:
-   static bool running_flag;
-   static constexpr uint32_t kTaskStackWords = 12288;
+    static bool running_flag;
+    static constexpr uint32_t kTaskStackWords = 12288;
 
     void start_message_menue_task() {
         printf("Start ContactBook Task...");
@@ -1309,8 +1320,8 @@ class ContactBook {
         }
         running_flag = true;
         task_handle_ = xTaskCreateStaticPinnedToCore(
-            &message_menue_task, "message_menue_task", kTaskStackWords, NULL,
-            6, task_stack_, &task_buffer_, 1);
+            &message_menue_task, "message_menue_task", kTaskStackWords, NULL, 6,
+            task_stack_, &task_buffer_, 1);
         if (!task_handle_) {
             ESP_LOGE("CONTACT", "Failed to start contact task (stack=%u)",
                      kTaskStackWords);
@@ -1369,26 +1380,26 @@ class ContactBook {
                 sprite.setFont(&fonts::Font2);
                 sprite.setTextWrap(true);
                 if (sprite.createSprite(width, height)) {
-                    ESP_LOGI(
-                        "CONTACT",
-                        "Sprite created %dx%d depth=%u psram=%s (free=%u largest=%u)",
-                        width, height, attempt.depth,
-                        attempt.use_psram ? "true" : "false",
-                        (unsigned)heap_caps_get_free_size(
-                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-                        (unsigned)heap_caps_get_largest_free_block(
-                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+                    ESP_LOGI("CONTACT",
+                             "Sprite created %dx%d depth=%u psram=%s (free=%u "
+                             "largest=%u)",
+                             width, height, attempt.depth,
+                             attempt.use_psram ? "true" : "false",
+                             (unsigned)heap_caps_get_free_size(
+                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                             (unsigned)heap_caps_get_largest_free_block(
+                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
                     return true;
                 }
-                ESP_LOGW(
-                    "CONTACT",
-                    "createSprite(%d,%d) depth=%u psram=%s failed (free=%u largest=%u)",
-                    width, height, attempt.depth,
-                    attempt.use_psram ? "true" : "false",
-                    (unsigned)heap_caps_get_free_size(
-                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-                    (unsigned)heap_caps_get_largest_free_block(
-                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+                ESP_LOGW("CONTACT",
+                         "createSprite(%d,%d) depth=%u psram=%s failed "
+                         "(free=%u largest=%u)",
+                         width, height, attempt.depth,
+                         attempt.use_psram ? "true" : "false",
+                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                                           MALLOC_CAP_8BIT),
+                         (unsigned)heap_caps_get_largest_free_block(
+                             MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
                 sprite.deleteSprite();
             }
             return false;
@@ -1532,8 +1543,8 @@ class ContactBook {
             }
             ESP_LOGI(TAG,
                      "[HTTP] Contact list fetch start (free=%u largest=%u)",
-                     (unsigned)heap_caps_get_free_size(
-                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                                       MALLOC_CAP_8BIT),
                      (unsigned)heap_caps_get_largest_free_block(
                          MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
             feed_wdt();
@@ -1589,8 +1600,7 @@ class ContactBook {
                     ESP_LOGW("CONTACT", "JSON parse failed: %s", derr.c_str());
                 }
             } else {
-                ESP_LOGW(TAG,
-                         "Friend list fetch failed (err=%s status=%d)",
+                ESP_LOGW(TAG, "Friend list fetch failed (err=%s status=%d)",
                          esp_err_to_name(friends_err), friends_status);
             }
         }
@@ -2094,11 +2104,11 @@ class ContactBook {
                     MessageBox::set_active_contact(
                         contacts[select_index].short_id,
                         contacts[select_index].friend_id);
-                box.start_box_task(contacts[select_index].identifier);
-                while (box.running_flag) {
-                    feed_wdt();
-                    vTaskDelay(100 / portTICK_PERIOD_MS);
-                }
+                    box.start_box_task(contacts[select_index].identifier);
+                    while (box.running_flag) {
+                        feed_wdt();
+                        vTaskDelay(100 / portTICK_PERIOD_MS);
+                    }
 
                     // 通知の取得
                     notif_res = http_client.get_notifications();
@@ -2116,6 +2126,7 @@ class ContactBook {
 
         finish_task();
     };
+
    private:
     static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
@@ -2609,7 +2620,7 @@ class P2P_Display {
     void morse_p2p() {
         p2p_init();
 
-        auto& buzzer = audio::speaker();
+        auto &buzzer = audio::speaker();
         Joystick joystick;
 
         Button type_button(GPIO_NUM_46);
@@ -2791,7 +2802,7 @@ class P2P_Display {
         }
 
         buzzer.stop_tone();
-        buzzer.disable();
+        buzzer.deinit();
 
         // 実行フラグをfalseへ変更
         running_flag = false;
@@ -3543,7 +3554,7 @@ class Composer {
 
                 auto task = +[](void *pv) {
                     PlayArgs *a = (PlayArgs *)pv;
-                    auto& spk = audio::speaker();
+                    auto &spk = audio::speaker();
                     chiptune::GBSynth synth(spk.sample_rate);
                     // Streaming render to DMA buffers (no large PSRAM
                     // allocations)
@@ -3578,7 +3589,7 @@ class Composer {
                         (size_t)step_samples * (size_t)a->pat.steps;
                     spk.play_pcm_mono16_stream(total_samples, 1.0f, a->abortp,
                                                fill, &ctx);
-                    spk.disable();
+                    spk.deinit();
                     a->~PlayArgs();
                     heap_caps_free(a);
                     Composer::s_play_task = nullptr;
@@ -3777,7 +3788,8 @@ class SettingMenu {
                     sprite.print("Update Now");
                 } else if (settings[i].setting_name == "Bluetooth") {
                     std::string label = "Bluetooth";
-                    bool connected = !wifi_is_connected() && ble_uart_is_ready();
+                    bool connected =
+                        !wifi_is_connected() && ble_uart_is_ready();
                     std::string pairing = get_nvs((char *)"ble_pair");
                     if (connected)
                         label += " [Connected]";
@@ -3972,7 +3984,7 @@ class SettingMenu {
                         type_button.clear_button_state();
                     }
                     if (ebs.pushed) {
-                        auto& sp = audio::speaker();
+                        auto &sp = audio::speaker();
                         if (opts[idx] == "majestic")
                             boot_sounds::play_majestic(sp, 0.5f);
                         else if (opts[idx] == "gb")
@@ -4598,7 +4610,7 @@ class Game {
     };
 
    private:
-   enum class MenuChoice { kMopping = 0, kMorse = 1, kExit = 2 };
+    enum class MenuChoice { kMopping = 0, kMorse = 1, kExit = 2 };
 
     static void feed_wdt();
 
@@ -4669,7 +4681,7 @@ class Game {
                                   Button &back_button, Button &enter_button) {
         reset_inputs(joystick, type_button, back_button, enter_button);
 
-        auto& buzzer = audio::speaker();
+        auto &buzzer = audio::speaker();
         buzzer.init();
 
         HapticMotor &haptic = HapticMotor::instance();
@@ -4848,7 +4860,7 @@ class Game {
             // break_flagが立ってたら終了
             if (break_flag) {
                 buzzer.stop_tone();
-                buzzer.disable();
+                buzzer.deinit();
                 break;
             }
 
@@ -4931,7 +4943,7 @@ class Game {
         vTaskDelete(NULL);
 
         buzzer.stop_tone();
-        buzzer.disable();
+        buzzer.deinit();
         reset_inputs(joystick, type_button, back_button, enter_button);
         return false;
     }
@@ -4964,8 +4976,7 @@ void Game::feed_wdt() {
     if (!wdt_registered_) return;
     esp_err_t r = esp_task_wdt_reset();
     if (r != ESP_OK) {
-        ESP_LOGW("GAME", "esp_task_wdt_reset failed: %s",
-                 esp_err_to_name(r));
+        ESP_LOGW("GAME", "esp_task_wdt_reset failed: %s", esp_err_to_name(r));
     }
 }
 
@@ -5010,7 +5021,7 @@ std::map<std::string, std::string> Game::morse_code_reverse = {
 
 static void play_morse_message(const std::string &text,
                                const std::string &header, int cx, int cy) {
-    auto& buzzer = audio::speaker();
+    auto &buzzer = audio::speaker();
     buzzer.init();
 
     sprite.setColorDepth(8);
@@ -5112,7 +5123,7 @@ static void play_morse_message(const std::string &text,
     }
 
     buzzer.stop_tone();
-    buzzer.disable();
+    buzzer.deinit();
     draw_frame("", display_accum);
     vTaskDelay(pdMS_TO_TICKS(200));
 }

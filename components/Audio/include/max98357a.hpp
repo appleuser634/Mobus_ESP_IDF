@@ -55,7 +55,8 @@ class Max98357A {
         }
         if (initialized) return ESP_OK;
 
-        if (heap_caps_get_largest_free_block(MALLOC_CAP_DMA) < 4096) {
+        constexpr size_t kMinDmaBlock = 2048;
+        if (heap_caps_get_largest_free_block(MALLOC_CAP_DMA) < kMinDmaBlock) {
             ESP_LOGW(TAG, "insufficient DMA-capable heap (largest=%u)",
                      (unsigned)heap_caps_get_largest_free_block(
                          MALLOC_CAP_DMA));

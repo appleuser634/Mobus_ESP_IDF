@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <string>
+#include <utility>
 #include <atomic>
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -255,6 +256,7 @@ void http_get_message_task(void *pvParameters) {
         serializeJson(emptyDoc, outBuf);
         deserializeJson(res, outBuf);
         res_flag = 1;
+        http_get_task_handle = nullptr;
         vTaskDelete(NULL);
         return;
     }
@@ -370,10 +372,16 @@ void http_get_notifications_task(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
-std::string chat_to = "";
-std::string message = "";
-void http_post_message_task(void *pvParameters) {
-    // Prepare API client and send message using new /api/messages/send
+struct HttpPostMessageArgs {
+    std::string chat_to;
+    std::string message;
+};
+
+static TaskHandle_t http_post_task_handle = nullptr;
+static constexpr uint32_t kHttpPostTaskStackWords = 8192;
+
+static void send_message_via_api(const std::string &chat_to,
+                                 const std::string &message) {
     auto &api = chatapi::shared_client(true);
     api.set_scheme("https");
     const auto creds = chatapi::load_credentials_from_nvs();
@@ -389,6 +397,20 @@ void http_post_message_task(void *pvParameters) {
     } else {
         ESP_LOGI(TAG, "Message sent to %s", chat_to.c_str());
     }
+}
+
+void http_post_message_task(void *pvParameters) {
+    auto *args = static_cast<HttpPostMessageArgs *>(pvParameters);
+    if (!args) {
+        ESP_LOGE(TAG, "http_post_message_task received null args");
+        http_post_task_handle = nullptr;
+        vTaskDelete(NULL);
+        return;
+    }
+    HttpPostMessageArgs data = std::move(*args);
+    delete args;
+    send_message_via_api(data.chat_to, data.message);
+    http_post_task_handle = nullptr;
     vTaskDelete(NULL);
 }
 
@@ -432,12 +454,25 @@ class HttpClient {
         ESP_LOGI(TAG, "Connected to AP, begin http example");
     }
 
-    void post_message(const std::string *chat_to_data) {
-        chat_to = chat_to_data[0];
-        message = chat_to_data[1];
-        xTaskCreatePinnedToCore(&http_post_message_task,
-                                "http_post_message_task", 8192, &chat_to_data,
-                                5, NULL, 0);
+    void post_message(const std::string &chat_to,
+                      const std::string &message) {
+        auto *args = new HttpPostMessageArgs{chat_to, message};
+        if (http_post_task_handle) {
+            ESP_LOGW(TAG, "http_post_message_task already running");
+            delete args;
+            return;
+        }
+        BaseType_t ok = xTaskCreatePinnedToCore(
+            &http_post_message_task, "http_post_message_task",
+            kHttpPostTaskStackWords, args, 5, &http_post_task_handle, 1);
+        if (ok != pdPASS || http_post_task_handle == nullptr) {
+            ESP_LOGE(TAG,
+                     "Failed to create http_post_message_task (stack_words=%u ok=%ld)",
+                     kHttpPostTaskStackWords, static_cast<long>(ok));
+            delete args;
+            http_post_task_handle = nullptr;
+            send_message_via_api(chat_to, message);
+        }
     }
 
     JsonDocument get_message(std::string chat_from) {

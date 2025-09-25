@@ -88,10 +88,11 @@ class Joystick {
                                        false, false, false, false, false, false,
                                        0,     0,     0,     0};
 
-    bool do_calibration1_chan0;
-    bool do_calibration1_chan1;
-    adc_cali_handle_t adc1_cali_chan0_handle = NULL;
-    adc_cali_handle_t adc1_cali_chan1_handle = NULL;
+    static bool do_calibration1_chan0;
+    static bool do_calibration1_chan1;
+    static adc_cali_handle_t adc1_cali_chan0_handle;
+    static adc_cali_handle_t adc1_cali_chan1_handle;
+    static bool channels_configured;
 
     static adc_oneshot_unit_init_cfg_t init_config1;
     static adc_oneshot_unit_handle_t adc1_handle;
@@ -106,36 +107,50 @@ class Joystick {
 
     Joystick() {
         adc_init_unit();
-        //-------------ADC1 Config---------------//
-        adc_oneshot_chan_cfg_t config = {
-            .atten = EXAMPLE_ADC_ATTEN,
-            .bitwidth = ADC_BITWIDTH_DEFAULT,
-        };
-        adc_oneshot_config_channel(adc1_handle, EXAMPLE_ADC1_CHAN0, &config);
-        adc_oneshot_config_channel(adc1_handle, EXAMPLE_ADC1_CHAN1, &config);
+        if (!channels_configured) {
+            adc_oneshot_chan_cfg_t config = {
+                .atten = EXAMPLE_ADC_ATTEN,
+                .bitwidth = ADC_BITWIDTH_DEFAULT,
+            };
+            adc_oneshot_config_channel(adc1_handle, EXAMPLE_ADC1_CHAN0,
+                                       &config);
+            adc_oneshot_config_channel(adc1_handle, EXAMPLE_ADC1_CHAN1,
+                                       &config);
+            channels_configured = true;
+        }
 
-        //-------------ADC1 Calibration Init---------------//
-        do_calibration1_chan0 = example_adc_calibration_init(
-            ADC_UNIT_1, EXAMPLE_ADC1_CHAN0, EXAMPLE_ADC_ATTEN,
-            &adc1_cali_chan0_handle);
-        do_calibration1_chan1 = example_adc_calibration_init(
-            ADC_UNIT_1, EXAMPLE_ADC1_CHAN1, EXAMPLE_ADC_ATTEN,
-            &adc1_cali_chan1_handle);
+        if (!do_calibration1_chan0) {
+            do_calibration1_chan0 = example_adc_calibration_init(
+                ADC_UNIT_1, EXAMPLE_ADC1_CHAN0, EXAMPLE_ADC_ATTEN,
+                &adc1_cali_chan0_handle);
+        }
+        if (!do_calibration1_chan1) {
+            do_calibration1_chan1 = example_adc_calibration_init(
+                ADC_UNIT_1, EXAMPLE_ADC1_CHAN1, EXAMPLE_ADC_ATTEN,
+                &adc1_cali_chan1_handle);
+        }
     }
 
     int get_joystick_value(adc_channel_t channel) {
-        int adc_raw;
-        int voltage;
-
+        int adc_raw = 0;
         adc_oneshot_read(adc1_handle, channel, &adc_raw);
-        // ESP_LOGI(TAG, "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1,
-        // channel,
-        //          adc_raw);
-        if (do_calibration1_chan0) {
-            adc_cali_raw_to_voltage(adc1_cali_chan0_handle, adc_raw, &voltage);
-            // ESP_LOGI(TAG, "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_1
-            // + 1,
-            //         channel, voltage);
+
+        int voltage = adc_raw;
+        adc_cali_handle_t handle = NULL;
+        bool calibrated = false;
+
+        if (channel == EXAMPLE_ADC1_CHAN0) {
+            handle = adc1_cali_chan0_handle;
+            calibrated = do_calibration1_chan0;
+        } else if (channel == EXAMPLE_ADC1_CHAN1) {
+            handle = adc1_cali_chan1_handle;
+            calibrated = do_calibration1_chan1;
+        }
+
+        if (calibrated && handle) {
+            if (adc_cali_raw_to_voltage(handle, adc_raw, &voltage) != ESP_OK) {
+                voltage = adc_raw;
+            }
         }
 
         return voltage;
@@ -219,3 +234,9 @@ adc_oneshot_unit_init_cfg_t Joystick::init_config1 = {
 };
 
 adc_oneshot_unit_handle_t Joystick::adc1_handle = 0;
+
+bool Joystick::do_calibration1_chan0 = false;
+bool Joystick::do_calibration1_chan1 = false;
+adc_cali_handle_t Joystick::adc1_cali_chan0_handle = NULL;
+adc_cali_handle_t Joystick::adc1_cali_chan1_handle = NULL;
+bool Joystick::channels_configured = false;
