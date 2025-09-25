@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <vector>
 #include <cctype>
+#include <memory>
 #include <unordered_set>
 
 #define LGFX_USE_V1
@@ -191,16 +192,26 @@ class TalkDisplay {
         vTaskDelay(250 / portTICK_PERIOD_MS);
     };
 
-    static bool running_flag;
+   static bool running_flag;
 
-    void start_talk_task(std::string chat_to) {
-        printf("Start Talk Task...");
-        // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
-        xTaskCreatePinnedToCore(&talk_task, "talk_task", 4096, &chat_to, 6,
-                                NULL, 1);
+    bool start_talk_task(const std::string &chat_to) {
+        if (running_flag) {
+            ESP_LOGW(TAG, "talk_task already running");
+            return false;
+        }
+        running_flag = true;
+        ESP_LOGI(TAG, "[Talk] inline start (free=%u largest=%u)",
+                 (unsigned)heap_caps_get_free_size(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        bool ok = run_talk_session(chat_to);
+        running_flag = false;
+        return ok;
     }
 
-    static void talk_task(void *pvParameters) {
+    static bool run_talk_session(const std::string &chat_to) {
+        ESP_LOGI(TAG, "[Talk] session start");
         lcd.init();
         lcd.setRotation(0);
 
@@ -217,19 +228,55 @@ class TalkDisplay {
         // Enter long-press threshold: only for entering Save/Load (do not
         // change global default)
         enter_button.long_push_thresh = 300000;  // ~300ms
-
-        std::string chat_to = *(std::string *)pvParameters;
         const std::string server_chat_id = resolve_chat_backend_id(chat_to);
 
         lcd.setRotation(2);
 
-        sprite.setColorDepth(8);
-        sprite.setFont(&fonts::Font2);
+        auto ensure_talk_sprite = [&](int width, int height) -> bool {
+            struct Attempt {
+                uint8_t depth;
+                bool use_psram;
+            };
+            constexpr Attempt attempts[] = {
+                {8, true},  {8, false}, {4, true},
+                {4, false}, {1, true},  {1, false},
+            };
 
-        // sprite.setFont(&fonts::Font2);
-        // sprite.setFont(&fonts::FreeMono9pt7b);
-        sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
-        sprite.createSprite(lcd.width(), lcd.height());
+            sprite.deleteSprite();
+            for (const auto &attempt : attempts) {
+                sprite.setPsram(attempt.use_psram);
+                sprite.setColorDepth(attempt.depth);
+                sprite.setFont(&fonts::Font2);
+                sprite.setTextWrap(true);
+                if (sprite.createSprite(width, height)) {
+                    ESP_LOGI(
+                        TAG,
+                        "[UI] talk sprite %dx%d depth=%u psram=%s created",
+                        width, height, attempt.depth,
+                        attempt.use_psram ? "true" : "false");
+                    return true;
+                }
+                ESP_LOGW(
+                    TAG,
+                    "[UI] talk sprite alloc fail %dx%d depth=%u psram=%s"
+                    " (free=%u largest=%u)",
+                    width, height, attempt.depth,
+                    attempt.use_psram ? "true" : "false",
+                    (unsigned)heap_caps_get_free_size(
+                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                    (unsigned)heap_caps_get_largest_free_block(
+                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+            }
+            return false;
+        };
+
+        if (!ensure_talk_sprite(lcd.width(), lcd.height())) {
+            ESP_LOGE(TAG, "talk_task: sprite allocation failed");
+            running_flag = false;
+            buzzer.stop_tone();
+            buzzer.disable();
+            return false;
+        }
 
         // カーソル点滅制御用タイマー
         long long int t = esp_timer_get_time();
@@ -462,10 +509,11 @@ class TalkDisplay {
         // Ensure I2S is released even if we delete the task (avoid missing C++
         // destructors) so that re-entering Game can re-initialize audio
         // properly.
+        sprite.deleteSprite();
         buzzer.stop_tone();
         buzzer.disable();
-        running_flag = false;
-        vTaskDelete(NULL);
+        ESP_LOGI(TAG, "[Talk] session exit");
+        return true;
     };
 };
 
@@ -777,13 +825,48 @@ class MessageBox {
         sprite.print("Loading...");
         sprite.pushSprite(&lcd, 0, 0);
 
-        auto recreate_message_sprite = [&]() {
-            sprite.setColorDepth(8);
-            sprite.setFont(&fonts::Font2);
-            sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
-            sprite.createSprite(lcd.width(), lcd.height());
+        auto recreate_message_sprite = [&](int width, int height) -> bool {
+            struct Attempt {
+                uint8_t depth;
+                bool use_psram;
+            };
+            constexpr Attempt attempts[] = {
+                {8, true},  {8, false}, {4, true},
+                {4, false}, {1, true},  {1, false},
+            };
+
+            sprite.deleteSprite();
+            for (const auto &attempt : attempts) {
+                sprite.setPsram(attempt.use_psram);
+                sprite.setColorDepth(attempt.depth);
+                sprite.setFont(&fonts::Font2);
+                sprite.setTextWrap(true);
+                if (sprite.createSprite(width, height)) {
+                    ESP_LOGI(
+                        TAG,
+                        "[UI] message sprite %dx%d depth=%u psram=%s created",
+                        width, height, attempt.depth,
+                        attempt.use_psram ? "true" : "false");
+                    return true;
+                }
+                ESP_LOGW(
+                    TAG,
+                    "[UI] message sprite alloc fail %dx%d depth=%u psram=%s"
+                    " (free=%u largest=%u)",
+                    width, height, attempt.depth,
+                    attempt.use_psram ? "true" : "false",
+                    (unsigned)heap_caps_get_free_size(
+                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                    (unsigned)heap_caps_get_largest_free_block(
+                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+            }
+            return false;
         };
-        recreate_message_sprite();
+        if (!recreate_message_sprite(lcd.width(), lcd.height())) {
+            running_flag = false;
+            vTaskDelete(NULL);
+            return;
+        }
 
         HttpClient &http_client = HttpClient::shared();
 
@@ -856,7 +939,7 @@ class MessageBox {
                 if (!js.empty()) {
                     ESP_LOGI(TAG, "[BLE] Received cached response (%zu bytes)",
                              js.size());
-                    StaticJsonDocument<8192> in;
+                        StaticJsonDocument<4096> in;
                     DeserializationError err = deserializeJson(in, js);
                     if (err == DeserializationError::Ok) {
                         int count = 0;
@@ -883,7 +966,7 @@ class MessageBox {
                         } else if (in["messages"].is<JsonArray>()) {
                             // Transform {content,sender_id,receiver_id} ->
                             // {message,from}
-                            StaticJsonDocument<8192> out;
+                            StaticJsonDocument<4096> out;
                             auto arr = out.createNestedArray("messages");
                             std::string my_id = get_nvs((char *)"user_id");
                             std::string my_name = get_nvs((char *)"user_name");
@@ -924,7 +1007,7 @@ class MessageBox {
                             deserializeJson(res, outBuf);
                         } else if (in["payload"]["messages"].is<JsonArray>()) {
                             // Handle { type:..., payload: { messages:[...] } }
-                            StaticJsonDocument<8192> out;
+                            StaticJsonDocument<4096> out;
                             auto arr = out.createNestedArray("messages");
                             std::string my_id = get_nvs((char *)"user_id");
                             std::string my_name = get_nvs((char *)"user_name");
@@ -999,7 +1082,7 @@ class MessageBox {
                          MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
             sprite.deleteSprite();
             res = http_client.get_message(server_chat_id);
-            recreate_message_sprite();
+            (void)recreate_message_sprite(lcd.width(), lcd.height());
         }
 
         const std::string my_name = get_nvs((char *)"user_name");
@@ -1081,14 +1164,16 @@ class MessageBox {
                 offset_y -= font_height;
             }
             if (type_button_state.pushed) {
-                talk.running_flag = true;
+                sprite.deleteSprite();
+                res.clear();
+                res = JsonDocument();
                 talk.start_talk_task(chat_to);
-
-                while (talk.running_flag) {
-                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                res = JsonDocument();
+                if (!recreate_message_sprite(lcd.width(), lcd.height())) {
+                    running_flag = false;
+                    vTaskDelete(NULL);
+                    return;
                 }
-                sprite.setColorDepth(8);
-                sprite.setFont(&fonts::Font2);
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 joystick.reset_timer();
@@ -1105,7 +1190,7 @@ class MessageBox {
                                  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
                     sprite.deleteSprite();
                     res = http_client.get_message(server_chat_id);
-                    recreate_message_sprite();
+                    (void)recreate_message_sprite(lcd.width(), lcd.height());
                 }
             }
 

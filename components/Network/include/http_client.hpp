@@ -234,7 +234,7 @@ void http_get_message_task(void *pvParameters) {
     // {"messages":[{"id","sender_id","receiver_id","content","is_read","created_at"},
     // ...]} Legacy expected: {"messages":[{"message":"...","from":"<friend or
     // me>"}, ...]}
-    StaticJsonDocument<4096> in;
+    StaticJsonDocument<3072> in;
     if (deserializeJson(in, response) != DeserializationError::Ok) {
         ESP_LOGE(TAG, "JSON parse error");
         StaticJsonDocument<128> emptyDoc;
@@ -259,7 +259,7 @@ void http_get_message_task(void *pvParameters) {
         return;
     }
 
-    StaticJsonDocument<4096> out;
+    StaticJsonDocument<3072> out;
     auto arr = out.createNestedArray("messages");
     std::string my_id = api.user_id();
     for (JsonObject m : in["messages"].as<JsonArray>()) {
@@ -493,20 +493,8 @@ class HttpClient {
     }
 
     bool mark_message_read(const std::string &message_id) {
-        if (message_id.empty()) return false;
-        auto &api = dev_chat_api();
-        const auto creds = chatapi::load_credentials_from_nvs();
-        if (chatapi::ensure_authenticated(api, creds, false) != ESP_OK) {
-            ESP_LOGW(TAG,
-                     "mark_message_read: auth failed, attempting with cached token");
-        }
-        esp_err_t err = api.mark_as_read(message_id);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "mark_as_read failed id=%s err=%s",
-                     message_id.c_str(), esp_err_to_name(err));
-            return false;
-        }
-        return true;
+        (void)message_id;
+        return false;
     }
 
     void start_notifications() {
