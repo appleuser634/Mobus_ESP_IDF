@@ -2343,6 +2343,463 @@ TaskHandle_t ContactBook::task_handle_ = nullptr;
 StaticTask_t ContactBook::task_buffer_;
 StackType_t *ContactBook::task_stack_ = nullptr;
 
+class OpenChat {
+   public:
+    static bool running_flag;
+    static constexpr uint32_t kTaskStackWords = 9216;
+
+    void start_open_chat_task();
+
+   private:
+    struct RoomOption {
+        const char *label;
+        const char *topic_suffix;
+    };
+
+    struct ChatMessage {
+        std::string user;
+        std::string short_id;
+        std::string text;
+        uint64_t ts = 0;
+        bool mine = false;
+    };
+
+    static TaskHandle_t task_handle_;
+    static StaticTask_t task_buffer_;
+    static StackType_t *task_stack_;
+
+    static bool compose_morse_message(std::string &out,
+                                      const std::string &header);
+    static bool recreate_room_sprite();
+    static void open_chat_task(void *pvParameters);
+};
+
+bool OpenChat::running_flag = false;
+TaskHandle_t OpenChat::task_handle_ = nullptr;
+StaticTask_t OpenChat::task_buffer_;
+StackType_t *OpenChat::task_stack_ = nullptr;
+
+bool OpenChat::recreate_room_sprite() {
+    return ensure_sprite_surface(lcd.width(), lcd.height(), 8, "OpenChat");
+}
+
+bool OpenChat::compose_morse_message(std::string &out,
+                                     const std::string &header) {
+    Button type_button(GPIO_NUM_46);
+    Button back_button(GPIO_NUM_3);
+    Button enter_button(GPIO_NUM_5);
+    Joystick joystick;
+
+    auto &buzzer = audio::speaker();
+    buzzer.init();
+    bool tone_playing = false;
+
+    std::string morse_text;
+    std::string message_text;
+    std::string preview;
+
+    const std::string &short_push_text = TalkDisplay::short_push_text;
+    const std::string &long_push_text = TalkDisplay::long_push_text;
+    const auto &morse_map = TalkDisplay::morse_code;
+
+    if (!recreate_room_sprite()) {
+        buzzer.deinit();
+        return false;
+    }
+
+    auto draw = [&]() {
+        sprite.fillRect(0, 0, lcd.width(), lcd.height(), 0);
+        sprite.setFont(&fonts::Font2);
+        sprite.setTextColor(0xFFFFFFu, 0x000000u);
+        sprite.drawCenterString(header.c_str(), 64, 0);
+        sprite.drawFastHLine(0, 12, 128, 0xFFFF);
+        sprite.setCursor(0, 16);
+        sprite.setTextWrap(true);
+        sprite.print(message_text.c_str());
+        sprite.setTextWrap(false);
+        sprite.setCursor(0, 44);
+        if (!morse_text.empty()) {
+            sprite.print(morse_text.c_str());
+        }
+        if (!preview.empty()) {
+            sprite.setCursor(0, 52);
+            sprite.print(preview.c_str());
+        }
+        sprite.setCursor(0, 56);
+        sprite.print("Enter=Send  Back=Exit");
+        push_sprite_safe(0, 0);
+    };
+
+    draw();
+    bool result = false;
+    while (true) {
+        auto joystick_state = joystick.get_joystick_state();
+        auto type_state = type_button.get_button_state();
+        auto back_state = back_button.get_button_state();
+        auto enter_state = enter_button.get_button_state();
+
+        if (type_state.push_edge && !back_state.pushing) {
+            if (!tone_playing) {
+                if (buzzer.start_tone(2300.0f, 0.6f) == ESP_OK) {
+                    tone_playing = true;
+                }
+            }
+        }
+
+        if (!type_state.pushing && tone_playing) {
+            buzzer.stop_tone();
+            tone_playing = false;
+        }
+
+        if (type_state.pushed && !back_state.pushing) {
+            if (type_state.push_type == 's') {
+                morse_text += short_push_text;
+            } else if (type_state.push_type == 'l') {
+                morse_text += long_push_text;
+            }
+            preview.clear();
+            type_button.clear_button_state();
+            draw();
+        }
+
+        if (!type_state.pushing && type_state.release_sec > 200000 &&
+            !morse_text.empty()) {
+            auto it = morse_map.find(morse_text);
+            if (it != morse_map.end()) {
+                message_text += it->second;
+                preview = it->second;
+            } else {
+                preview = "?";
+            }
+            morse_text.clear();
+            type_button.reset_timer();
+            draw();
+        }
+
+        if (joystick_state.pushed_down_edge) {
+            message_text.push_back(' ');
+            preview.clear();
+            draw();
+        }
+        if (joystick_state.pushed_up_edge) {
+            message_text.push_back('\n');
+            preview.clear();
+            draw();
+        }
+
+        if (back_state.pushing && type_state.pushed) {
+            if (!message_text.empty()) {
+                remove_last_utf8_char(message_text);
+            }
+            type_button.clear_button_state();
+            draw();
+        } else if (back_state.pushed && message_text.empty()) {
+            back_button.clear_button_state();
+            buzzer.stop_tone();
+            buzzer.deinit();
+            return false;
+        } else if (back_state.pushed) {
+            remove_last_utf8_char(message_text);
+            back_button.clear_button_state();
+            draw();
+        }
+
+        if (enter_state.pushed && !message_text.empty()) {
+            out = message_text;
+            result = true;
+            enter_button.clear_button_state();
+            break;
+        }
+        if (enter_state.pushed) {
+            enter_button.clear_button_state();
+        }
+
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+
+    buzzer.stop_tone();
+    buzzer.deinit();
+    return result;
+}
+
+void OpenChat::open_chat_task(void *pvParameters) {
+    (void)pvParameters;
+    HttpClient &http_client = HttpClient::shared();
+    http_client.start_notifications();
+    mqtt_rt_resume();
+
+    const auto creds = chatapi::load_credentials_from_nvs();
+    std::string username = creds.username;
+    if (username.empty()) username = "Anonymous";
+    std::string short_id = get_nvs((char *)"short_id");
+    if (!short_id.empty() && short_id.back() == '\0') short_id.pop_back();
+
+    constexpr RoomOption rooms[] = {
+        {"430.10", "430_10"},
+        {"430.20", "430_20"},
+        {"144.64", "144_64"},
+        {"HF", "hf_general"},
+    };
+
+    Button type_button(GPIO_NUM_46);
+    Button back_button(GPIO_NUM_3);
+    Button enter_button(GPIO_NUM_5);
+    Joystick joystick;
+
+    bool exit_all = false;
+    int selected = 0;
+    const int room_count = sizeof(rooms) / sizeof(RoomOption);
+
+    auto draw_room_selector = [&]() {
+        if (!recreate_room_sprite()) return;
+        sprite.fillRect(0, 0, lcd.width(), lcd.height(), 0);
+        sprite.setFont(&fonts::Font2);
+        sprite.setTextColor(0xFFFFFFu, 0x000000u);
+        sprite.drawCenterString("Open Chat", 64, 0);
+        sprite.drawFastHLine(0, 12, 128, 0xFFFF);
+        int room_height = 12;
+        for (int i = 0; i < room_count; ++i) {
+            int y = 16 + i * room_height;
+            if (i == selected) {
+                sprite.fillRect(0, y - 2, 128, room_height, 0xFFFF);
+                sprite.setTextColor(0x000000u, 0xFFFFFFu);
+            } else {
+                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            }
+            sprite.setCursor(4, y);
+            sprite.print(rooms[i].label);
+        }
+        sprite.setTextColor(0xFFFFFFu, 0x000000u);
+        sprite.setCursor(0, 56);
+        sprite.print("Type:Join  Back:Exit");
+        push_sprite_safe(0, 0);
+    };
+
+    while (!exit_all && running_flag) {
+        // Room selection
+        while (running_flag) {
+            draw_room_selector();
+            auto js = joystick.get_joystick_state();
+            auto tb = type_button.get_button_state();
+            auto bb = back_button.get_button_state();
+
+            if (js.pushed_down_edge) {
+                selected = (selected + 1) % room_count;
+            } else if (js.pushed_up_edge) {
+                selected = (selected - 1 + room_count) % room_count;
+            }
+
+            if (tb.pushed) {
+                type_button.clear_button_state();
+                break;
+            }
+
+            if (bb.pushed) {
+                back_button.clear_button_state();
+                exit_all = true;
+                break;
+            }
+
+            vTaskDelay(60 / portTICK_PERIOD_MS);
+        }
+
+        if (exit_all || !running_flag) break;
+
+        std::string topic = std::string("chat/open/") + rooms[selected].topic_suffix;
+        int listener_id = mqtt_rt_add_listener(topic.c_str());
+        if (listener_id < 0) {
+            recreate_room_sprite();
+            sprite.setFont(&fonts::Font2);
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            sprite.drawCenterString("Subscribe failed", 64, 26);
+            push_sprite_safe(0, 0);
+            vTaskDelay(1200 / portTICK_PERIOD_MS);
+            continue;
+        }
+
+        std::vector<ChatMessage> messages;
+        std::unordered_set<std::string> seen_ids;
+        bool stay_in_room = true;
+
+        auto add_message = [&](ChatMessage msg, const std::string &id) {
+            if (!id.empty()) {
+                if (!seen_ids.insert(id).second) return;
+            }
+            messages.push_back(std::move(msg));
+            if (messages.size() > 30) {
+                messages.erase(messages.begin());
+            }
+        };
+
+    auto draw_room = [&]() {
+        if (!recreate_room_sprite()) return;
+        sprite.fillRect(0, 0, lcd.width(), lcd.height(), 0);
+        sprite.setFont(&fonts::Font2);
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            sprite.drawCenterString(rooms[selected].label, 64, 0);
+            sprite.drawFastHLine(0, 12, 128, 0xFFFF);
+
+            int start = 0;
+            int max_lines = 4;
+            if ((int)messages.size() > max_lines) {
+                start = messages.size() - max_lines;
+            }
+            int y = 16;
+            for (size_t i = start; i < messages.size(); ++i) {
+                const auto &msg = messages[i];
+                std::string sender = msg.user.empty() ?
+                    (msg.short_id.empty() ? std::string("?") : msg.short_id)
+                    : msg.user;
+                if (msg.mine) {
+                    sprite.setTextColor(0x000000u, 0xFFFFu);
+                    sprite.fillRect(0, y - 2, 128, 12, 0xFFFF);
+                } else {
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                }
+                std::string line = sender + ": " + msg.text;
+                sprite.setCursor(0, y);
+                sprite.setTextWrap(true);
+                sprite.print(line.c_str());
+                sprite.setTextWrap(false);
+                y += 12;
+                if (y > 52) break;
+            }
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            sprite.setCursor(0, 56);
+            sprite.print("Enter:Send  Back:Leave");
+            push_sprite_safe(0, 0);
+        };
+
+        draw_room();
+
+        while (stay_in_room && running_flag) {
+            // pump incoming messages
+            char buf[512];
+            while (mqtt_rt_listener_pop(listener_id, buf, sizeof(buf))) {
+                DynamicJsonDocument doc(768);
+                if (deserializeJson(doc, buf) != DeserializationError::Ok) {
+                    continue;
+                }
+                ChatMessage msg;
+                msg.user = doc["user"].as<const char *>()
+                               ? doc["user"].as<const char *>()
+                               : "";
+                msg.short_id = doc["short_id"].as<const char *>()
+                                   ? doc["short_id"].as<const char *>()
+                                   : "";
+                msg.text = doc["message"].as<const char *>()
+                               ? doc["message"].as<const char *>()
+                               : "";
+                msg.ts = doc["ts"].as<uint64_t>();
+                std::string msg_id = doc["id"].as<const char *>()
+                                         ? doc["id"].as<const char *>()
+                                         : std::string();
+                msg.mine = (!short_id.empty() && msg.short_id == short_id);
+                if (!msg.mine && !msg.text.empty()) {
+                    std::string header = msg.user.empty()
+                                             ? (msg.short_id.empty()
+                                                    ? std::string("Open")
+                                                    : msg.short_id)
+                                             : msg.user;
+                    play_morse_message(msg.text, header);
+                }
+                add_message(std::move(msg), msg_id);
+            }
+
+            draw_room();
+
+            auto js = joystick.get_joystick_state();
+            auto tb = type_button.get_button_state();
+            auto eb = enter_button.get_button_state();
+            auto bb = back_button.get_button_state();
+
+            if (bb.pushed) {
+                back_button.clear_button_state();
+                stay_in_room = false;
+                break;
+            }
+
+            bool trigger_compose = false;
+            if (eb.pushed) {
+                enter_button.clear_button_state();
+                trigger_compose = true;
+            } else if (tb.pushed) {
+                type_button.clear_button_state();
+                trigger_compose = true;
+            }
+
+            if (trigger_compose) {
+                std::string message;
+                std::string header = std::string("TX ") + rooms[selected].label;
+                if (compose_morse_message(message, header) && !message.empty()) {
+                    DynamicJsonDocument payload(256);
+                    payload["room"] = rooms[selected].topic_suffix;
+                    payload["user"] = username;
+                    payload["short_id"] = short_id;
+                    payload["message"] = message;
+                    uint64_t ts = esp_timer_get_time();
+                    payload["ts"] = ts;
+                    std::string msg_id = short_id.empty()
+                                             ? std::to_string(ts)
+                                             : short_id + "_" +
+                                                   std::to_string(ts);
+                    payload["id"] = msg_id;
+                    std::string json;
+                    serializeJson(payload, json);
+                    int mid = mqtt_rt_publish(topic.c_str(), json.c_str(), 1,
+                                               false);
+                    if (mid < 0) {
+                        ESP_LOGW("OPEN_CHAT",
+                                 "Publish failed (topic=%s err=%d)",
+                                 topic.c_str(), mid);
+                    }
+                    ChatMessage local;
+                    local.user = username;
+                    local.short_id = short_id;
+                    local.text = message;
+                    local.ts = ts;
+                    local.mine = true;
+                    add_message(std::move(local), msg_id);
+                    draw_room();
+                }
+            }
+
+            if (js.pushed_left_edge || js.pushed_right_edge) {
+                stay_in_room = false;
+                break;
+            }
+
+            vTaskDelay(60 / portTICK_PERIOD_MS);
+        }
+
+        mqtt_rt_remove_listener(listener_id);
+    }
+
+    running_flag = false;
+    task_handle_ = nullptr;
+    vTaskDelete(NULL);
+}
+
+void OpenChat::start_open_chat_task() {
+    if (task_handle_) {
+        ESP_LOGW("OPEN_CHAT", "Task already running");
+        return;
+    }
+    if (!allocate_internal_stack(task_stack_, kTaskStackWords, "OpenChat")) {
+        ESP_LOGE("OPEN_CHAT", "Stack alloc failed");
+        running_flag = false;
+        return;
+    }
+    running_flag = true;
+    task_handle_ = xTaskCreateStaticPinnedToCore(
+        &open_chat_task, "open_chat_task", kTaskStackWords, NULL, 6,
+        task_stack_, &task_buffer_, 1);
+    if (!task_handle_) {
+        ESP_LOGE("OPEN_CHAT", "Failed to start open chat task");
+        running_flag = false;
+    }
+}
+
 class WiFiSetting {
    public:
     static bool running_flag;
@@ -3926,6 +4383,7 @@ class SettingMenu {
         lcd.init();
 
         WiFiSetting wifi_setting;
+        OpenChat open_chat;
 
         Joystick joystick;
 
@@ -3973,12 +4431,12 @@ class SettingMenu {
         } setting_t;
 
         // Settings list
-        setting_t settings[13] = {
+        setting_t settings[14] = {
             {"Profile"},      {"Wi-Fi"},         {"Bluetooth"},
             {"Sound"},        {"Boot Sound"},    {"Real Time Chat"},
-            {"Composer"},     {"Auto Update"},   {"OTA Manifest"},
-            {"Update Now"},   {"Firmware Info"}, {"Develop"},
-            {"Factory Reset"}};
+            {"Open Chat"},    {"Composer"},      {"Auto Update"},
+            {"OTA Manifest"}, {"Update Now"},    {"Firmware Info"},
+            {"Develop"},      {"Factory Reset"}};
 
         int select_index = 0;
         int font_height = 13;
@@ -4707,6 +5165,20 @@ class SettingMenu {
                            "Real Time Chat") {
                 P2P_Display p2p;
                 p2p.morse_p2p();
+            } else if (type_button_state.pushed &&
+                       settings[select_index].setting_name == "Open Chat") {
+                type_button.clear_button_state();
+                type_button.reset_timer();
+                enter_button.clear_button_state();
+                back_button.clear_button_state();
+                joystick.reset_timer();
+
+                open_chat.running_flag = true;
+                open_chat.start_open_chat_task();
+                while (open_chat.running_flag) {
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                }
+                sprite.setFont(&fonts::Font2);
             } else if (type_button_state.pushed &&
                        settings[select_index].setting_name == "Composer") {
                 Composer comp;
@@ -5497,7 +5969,6 @@ class MenuDisplay {
         PowerMonitor power;
 
         // メニューから遷移する機能のインスタンス
-        MessageBox box;
         Game game;
         ContactBook contactBook;
         SettingMenu settingMenu;
@@ -5741,14 +6212,6 @@ class MenuDisplay {
                         vTaskDelay(100 / portTICK_PERIOD_MS);
                     }
                     sprite.setFont(&fonts::Font4);
-
-                    // box.running_flag = true;
-                    // box.start_box_task();
-                    // // talkタスクの実行フラグがfalseになるまで待機
-                    // while(box.running_flag){
-                    // 	vTaskDelay(100 / portTICK_PERIOD_MS);
-                    // }
-                    // sprite.setFont(&fonts::Font4);
                 } else if (cursor_index == 2) {
                     game.running_flag = true;
                     game.start_game_task();
