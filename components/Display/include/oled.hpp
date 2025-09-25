@@ -19,6 +19,7 @@
 #include <images.hpp>
 #include <haptic_motor.hpp>
 #include <http_client.hpp>
+#include "esp_attr.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -1159,7 +1160,8 @@ class MessageBox {
                         played_message_ids_.clear();
                         played_message_ids_.insert(playback_key);
                     }
-                    if (!http_client.mark_message_read(message_id_str)) {
+                    if (!message_id_str.empty() &&
+                        !http_client.mark_message_read(message_id_str)) {
                         ESP_LOGW(TAG,
                                  "Failed to mark message %s as read; will "
                                  "retry later",
@@ -1360,7 +1362,8 @@ std::string MessageBox::active_short_id = "";
 std::string MessageBox::active_friend_id = "";
 TaskHandle_t MessageBox::task_handle_ = nullptr;
 StaticTask_t MessageBox::task_buffer_;
-StackType_t MessageBox::task_stack_[MessageBox::kTaskStackWords];
+EXT_RAM_ATTR StackType_t
+    MessageBox::task_stack_[MessageBox::kTaskStackWords];
 std::unordered_set<std::string> MessageBox::played_message_ids_;
 
 inline std::string resolve_chat_backend_id(const std::string &fallback) {
@@ -2200,17 +2203,31 @@ class ContactBook {
 bool ContactBook::running_flag = false;
 TaskHandle_t ContactBook::task_handle_ = nullptr;
 StaticTask_t ContactBook::task_buffer_;
-StackType_t ContactBook::task_stack_[ContactBook::kTaskStackWords];
+EXT_RAM_ATTR StackType_t
+    ContactBook::task_stack_[ContactBook::kTaskStackWords];
 
 class WiFiSetting {
    public:
     static bool running_flag;
+    static constexpr uint32_t kTaskStackWords = 8096;
 
     void start_wifi_setting_task() {
         printf("Start WiFi Setting Task...");
-        // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
-        xTaskCreatePinnedToCore(&wifi_setting_task, "wifi_setting_task", 8096,
-                                NULL, 6, NULL, 1);
+        if (task_handle_) {
+            ESP_LOGW(TAG, "wifi_setting_task already running");
+            return;
+        }
+        task_handle_ = xTaskCreateStaticPinnedToCore(
+            &wifi_setting_task, "wifi_setting_task", kTaskStackWords, NULL, 6,
+            task_stack_, &task_buffer_, 1);
+        if (!task_handle_) {
+            ESP_LOGE(TAG, "Failed to start wifi_setting_task (free_heap=%u)",
+                     static_cast<unsigned>(heap_caps_get_free_size(
+                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+            running_flag = false;
+        } else {
+            running_flag = true;
+        }
     }
 
     static std::string char_to_string_ssid(uint8_t *uint_ssid) {
@@ -2581,10 +2598,20 @@ class WiFiSetting {
         }
 
         running_flag = false;
+        task_handle_ = nullptr;
         vTaskDelete(NULL);
     };
+
+   private:
+    static TaskHandle_t task_handle_;
+    static StaticTask_t task_buffer_;
+    static StackType_t task_stack_[kTaskStackWords];
 };
 bool WiFiSetting::running_flag = false;
+TaskHandle_t WiFiSetting::task_handle_ = nullptr;
+StaticTask_t WiFiSetting::task_buffer_;
+EXT_RAM_ATTR StackType_t
+    WiFiSetting::task_stack_[WiFiSetting::kTaskStackWords];
 
 // Define proxy after WiFiSetting is fully defined
 inline std::string wifi_input_info_proxy(std::string input_type,
@@ -2973,6 +3000,7 @@ void Profile() {
 // Simple Game Boy-like step composer UI (2x Pulse + Noise)
 class Composer {
    public:
+    static constexpr uint32_t kTaskStackWords = 16384;
     static bool running_flag;
     static TaskHandle_t s_play_task;
     static volatile bool s_abort;
@@ -2983,8 +3011,18 @@ class Composer {
     static volatile int s_popup_val;   // midi or noise index
 
     void start_composer_task() {
-        xTaskCreatePinnedToCore(&composer_task, "composer_task", 16384, NULL, 6,
-                                NULL, 1);
+        if (s_task_handle) {
+            ESP_LOGW(TAG, "composer_task already running");
+            return;
+        }
+        s_task_handle = xTaskCreateStaticPinnedToCore(
+            &composer_task, "composer_task", kTaskStackWords, NULL, 6,
+            s_task_stack_, &s_task_buffer_, 1);
+        if (!s_task_handle) {
+            ESP_LOGE(TAG, "Failed to start composer_task (free_heap=%u)",
+                     static_cast<unsigned>(heap_caps_get_free_size(
+                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        }
     }
 
     static void composer_task(void *pv) {
@@ -3682,9 +3720,16 @@ class Composer {
         }
         s_play_pos_step = -1;
         running_flag = false;
+        s_task_handle = nullptr;
         vTaskDelete(NULL);
     }
+
+   private:
+    static TaskHandle_t s_task_handle;
+    static StaticTask_t s_task_buffer_;
+    static StackType_t s_task_stack_[kTaskStackWords];
 };
+
 bool Composer::running_flag = false;
 TaskHandle_t Composer::s_play_task = nullptr;
 volatile bool Composer::s_abort = false;
@@ -3693,6 +3738,10 @@ long long Composer::s_pitch_popup_until = 0;
 char Composer::s_pitch_popup_text[16] = {0};
 volatile int Composer::s_popup_kind = 0;
 volatile int Composer::s_popup_val = 60;
+TaskHandle_t Composer::s_task_handle = nullptr;
+StaticTask_t Composer::s_task_buffer_;
+EXT_RAM_ATTR StackType_t
+    Composer::s_task_stack_[Composer::kTaskStackWords];
 
 class SettingMenu {
    public:
@@ -4089,6 +4138,29 @@ class SettingMenu {
                     save_nvs((char *)key, v);
                 };
 
+                auto get_wifi_restore_flag = [&]() {
+                    return nvs_str("ble_wifi_rst") == std::string("1");
+                };
+                auto set_wifi_restore_flag = [&](bool enable) {
+                    nvs_put("ble_wifi_rst", enable ? "1" : "0");
+                };
+                auto restore_wifi_if_needed = [&]() {
+                    if (!get_wifi_restore_flag()) return;
+                    ESP_LOGI(TAG, "[BLE] Restoring Wi-Fi after pairing");
+                    set_wifi_restore_flag(false);
+                    esp_err_t err = esp_wifi_start();
+                    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN &&
+                        err != ESP_ERR_WIFI_NOT_STOPPED) {
+                        ESP_LOGW(TAG, "esp_wifi_start returned %s",
+                                 esp_err_to_name(err));
+                    }
+                    err = esp_wifi_connect();
+                    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
+                        ESP_LOGW(TAG, "esp_wifi_connect returned %s",
+                                 esp_err_to_name(err));
+                    }
+                };
+
                 // Helper to generate 6-digit code
                 auto gen_code = []() -> std::string {
                     uint32_t r = (uint32_t)esp_timer_get_time();
@@ -4140,6 +4212,7 @@ class SettingMenu {
                         pairing = false;
                         nvs_put("ble_pair", "false");
                         ble_uart_disable();
+                        restore_wifi_if_needed();
                         mqtt_rt_resume();
                     }
 
@@ -4183,20 +4256,43 @@ class SettingMenu {
                     if (jst.pushed_right_edge) sel = 1;
                     if (tbs.pushed || ebs.pushed) {
                         if (!pairing) {
-                            if (wifi_is_connected()) {
-                                sprite.fillRect(0, 0, 128, 64, 0);
-                                sprite.setFont(&fonts::Font2);
-                                sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                                sprite.drawCenterString(
-                                    "Disconnect Wi-Fi to use BLE", 64, 22);
-                                sprite.pushSprite(&lcd, 0, 0);
-                                vTaskDelay(1200 / portTICK_PERIOD_MS);
-                                type_button.clear_button_state();
-                                type_button.reset_timer();
-                                enter_button.clear_button_state();
-                                enter_button.reset_timer();
-                                joystick.reset_timer();
-                                continue;
+                            bool had_wifi = wifi_is_connected();
+                            set_wifi_restore_flag(had_wifi);
+                            if (had_wifi) {
+                                ESP_LOGI(TAG,
+                                         "[BLE] Disabling Wi-Fi for pairing");
+                                esp_err_t derr = esp_wifi_disconnect();
+                                if (derr != ESP_OK &&
+                                    derr != ESP_ERR_WIFI_NOT_STARTED &&
+                                    derr != ESP_ERR_WIFI_CONN) {
+                                    ESP_LOGW(TAG,
+                                             "esp_wifi_disconnect returned %s",
+                                             esp_err_to_name(derr));
+                                }
+                                esp_err_t serr = esp_wifi_stop();
+                                if (serr != ESP_OK &&
+                                    serr != ESP_ERR_WIFI_NOT_STARTED) {
+                                    ESP_LOGW(TAG,
+                                             "esp_wifi_stop returned %s",
+                                             esp_err_to_name(serr));
+                                }
+                                if (s_wifi_event_group) {
+                                    xEventGroupClearBits(s_wifi_event_group,
+                                                        WIFI_CONNECTED_BIT);
+                                }
+                                constexpr int kMaxWaitIters = 40;
+                                int wait = 0;
+                                while (wifi_is_connected() &&
+                                       wait < kMaxWaitIters) {
+                                    vTaskDelay(50 / portTICK_PERIOD_MS);
+                                    ++wait;
+                                }
+                                if (wifi_is_connected()) {
+                                    ESP_LOGW(TAG,
+                                             "[BLE] Wi-Fi still marked connected after stop; continuing");
+                                }
+                            } else {
+                                set_wifi_restore_flag(false);
                             }
                             // Turn on pairing, generate code and 120s window
                             code = gen_code();
@@ -4224,6 +4320,7 @@ class SettingMenu {
                                 // BLE init failed; roll back and show message
                                 pairing = false;
                                 nvs_put("ble_pair", "false");
+                                restore_wifi_if_needed();
                                 // Recreate sprite to render error
                                 sprite.createSprite(lcd.width(), lcd.height());
                                 sprite.fillRect(0, 0, 128, 64, 0);
@@ -4245,6 +4342,7 @@ class SettingMenu {
                             nvs_put("ble_pair", "false");
                             pairing = false;
                             ble_uart_disable();
+                            restore_wifi_if_needed();
                             mqtt_rt_resume();
                         }
                         type_button.clear_button_state();
@@ -4571,7 +4669,8 @@ bool SettingMenu::running_flag = false;
 bool SettingMenu::sound_dirty = false;
 TaskHandle_t SettingMenu::task_handle_ = nullptr;
 StaticTask_t SettingMenu::task_buffer_;
-StackType_t SettingMenu::task_stack_[SettingMenu::kTaskStackWords];
+EXT_RAM_ATTR StackType_t
+    SettingMenu::task_stack_[SettingMenu::kTaskStackWords];
 
 class Game {
    public:
@@ -5034,7 +5133,7 @@ class Game {
 bool Game::running_flag = false;
 TaskHandle_t Game::task_handle_ = nullptr;
 StaticTask_t Game::task_buffer_;
-StackType_t Game::task_stack_[Game::kTaskStackWords];
+EXT_RAM_ATTR StackType_t Game::task_stack_[Game::kTaskStackWords];
 bool Game::wdt_registered_ = false;
 
 void Game::feed_wdt() {
@@ -5196,12 +5295,23 @@ static void play_morse_message(const std::string &text,
 class MenuDisplay {
 #define NAME_LENGTH_MAX 8
    public:
+    static constexpr uint32_t kTaskStackWords = 12288;
+
     void start_menu_task() {
         printf("Start Menu Task...");
-        // xTaskCreate(&menu_task, "menu_task", 4096, NULL, 6, NULL, 1);
+        if (task_handle_) {
+            ESP_LOGW(TAG, "menu_task already running");
+            return;
+        }
         // Increase stack to avoid rare overflows during heavy UI & networking
-        xTaskCreatePinnedToCore(&menu_task, "menu_task", 12288, NULL, 6, NULL,
-                                0);
+        task_handle_ = xTaskCreateStaticPinnedToCore(
+            &menu_task, "menu_task", kTaskStackWords, NULL, 6, task_stack_,
+            &task_buffer_, 0);
+        if (!task_handle_) {
+            ESP_LOGE(TAG, "Failed to start menu_task (free_heap=%u)",
+                     static_cast<unsigned>(heap_caps_get_free_size(
+                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        }
     }
 
     // static HttpClient http;
@@ -5527,9 +5637,20 @@ class MenuDisplay {
             vTaskDelay(50 / portTICK_PERIOD_MS);
         }
 
+        task_handle_ = nullptr;
         vTaskDelete(NULL);
     };
+
+   private:
+    static TaskHandle_t task_handle_;
+    static StaticTask_t task_buffer_;
+    static StackType_t task_stack_[kTaskStackWords];
 };
+
+TaskHandle_t MenuDisplay::task_handle_ = nullptr;
+StaticTask_t MenuDisplay::task_buffer_;
+EXT_RAM_ATTR StackType_t
+    MenuDisplay::task_stack_[MenuDisplay::kTaskStackWords];
 
 class ProfileSetting {
    public:

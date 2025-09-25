@@ -29,6 +29,8 @@
 #include <stdio.h>
 #include <cstdio>
 #include <vector>
+#include <functional>
+#include <limits>
 #include <memory>
 
 #include <string.h>
@@ -46,6 +48,139 @@ void check_heap() {
              heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
     heap_caps_print_heap_info(MALLOC_CAP_DEFAULT);
 }
+
+namespace {
+
+constexpr bool kMemoryProfilerEnabled = true;
+
+struct HeapSnapshot {
+    size_t free_internal = 0;
+    size_t largest_internal = 0;
+    size_t allocated_internal = 0;
+    size_t free_psram = 0;
+    size_t largest_psram = 0;
+};
+
+static HeapSnapshot TakeHeapSnapshot() {
+    HeapSnapshot snap;
+    multi_heap_info_t info = {};
+    heap_caps_get_info(&info, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    snap.free_internal = info.total_free_bytes;
+    snap.largest_internal = info.largest_free_block;
+    snap.allocated_internal = info.total_allocated_bytes;
+
+    multi_heap_info_t psram_info = {};
+    heap_caps_get_info(&psram_info, MALLOC_CAP_SPIRAM);
+    snap.free_psram = psram_info.total_free_bytes;
+    snap.largest_psram = psram_info.largest_free_block;
+    return snap;
+}
+
+class MemoryProfiler {
+   public:
+    explicit MemoryProfiler(bool enabled) : enabled_(enabled) {
+        if (enabled_) {
+            reports_.reserve(16);
+        }
+    }
+
+    template <typename Func>
+    void run_step(const char* name, Func&& func) {
+        if (!enabled_) {
+            func();
+            return;
+        }
+        HeapSnapshot before = TakeHeapSnapshot();
+        func();
+        HeapSnapshot after = TakeHeapSnapshot();
+        reports_.push_back({std::string(name), before, after});
+        log_step(reports_.back());
+    }
+
+    void report_summary() const {
+        if (!enabled_ || reports_.empty()) return;
+        constexpr const char* tag = "MEM_PROFILE";
+        ESP_LOGI(tag, "===== Memory Profile Summary (%zu steps) =====",
+                 reports_.size());
+        const StepReport& first = reports_.front();
+        const StepReport& last = reports_.back();
+        size_t min_free = std::numeric_limits<size_t>::max();
+        const StepReport* min_step = nullptr;
+        for (const auto& r : reports_) {
+            if (r.after.free_internal < min_free) {
+                min_free = r.after.free_internal;
+                min_step = &r;
+            }
+        }
+        if (min_step) {
+            ESP_LOGI(tag, "Lowest free internal heap: %zu bytes after '%s'",
+                     min_step->after.free_internal, min_step->name.c_str());
+        }
+        double initial_usage = usage_percent(first.before);
+        double final_usage = usage_percent(last.after);
+        ESP_LOGI(tag,
+                 "Initial internal usage: %.2f%%, Final internal usage: %.2f%%"
+                 " (delta: %+0.2f%%)",
+                 initial_usage, final_usage, final_usage - initial_usage);
+        ESP_LOGI(tag, "Remaining internal free: %zu bytes",
+                 last.after.free_internal);
+        ESP_LOGI(tag, "Largest free internal block: %zu bytes",
+                 last.after.largest_internal);
+        if (last.after.free_psram > 0 || last.after.largest_psram > 0) {
+            ESP_LOGI(tag, "Remaining PSRAM free: %zu bytes (largest block %zu)",
+                     last.after.free_psram, last.after.largest_psram);
+        }
+        ESP_LOGI(tag, "===== End Memory Profile =====");
+    }
+
+    bool enabled() const { return enabled_; }
+
+   private:
+    struct StepReport {
+        std::string name;
+        HeapSnapshot before;
+        HeapSnapshot after;
+    };
+
+    static double usage_percent(const HeapSnapshot& snap) {
+        const size_t total = snap.free_internal + snap.allocated_internal;
+        if (total == 0) return 0.0;
+        return static_cast<double>(snap.allocated_internal) * 100.0 /
+               static_cast<double>(total);
+    }
+
+    void log_step(const StepReport& report) {
+        constexpr const char* tag = "MEM_PROFILE";
+        long long delta_free =
+            static_cast<long long>(report.after.free_internal) -
+            static_cast<long long>(report.before.free_internal);
+        long long delta_largest =
+            static_cast<long long>(report.after.largest_internal) -
+            static_cast<long long>(report.before.largest_internal);
+        long long delta_psram =
+            static_cast<long long>(report.after.free_psram) -
+            static_cast<long long>(report.before.free_psram);
+        long long delta_psram_largest =
+            static_cast<long long>(report.after.largest_psram) -
+            static_cast<long long>(report.before.largest_psram);
+        double usage_before = usage_percent(report.before);
+        double usage_after = usage_percent(report.after);
+        ESP_LOGI(
+            tag,
+            "[%s] used=%.2f%% (%+.2f%%) free=%zu (%+lld) largest=%zu (%+lld) "
+            "psram_free=%zu (%+lld) psram_largest=%zu (%+lld)",
+            report.name.c_str(), usage_after, usage_after - usage_before,
+            report.after.free_internal, delta_free,
+            report.after.largest_internal, delta_largest,
+            report.after.free_psram, delta_psram, report.after.largest_psram,
+            delta_psram_largest);
+    }
+
+    bool enabled_ = false;
+    std::vector<StepReport> reports_;
+};
+
+}  // namespace
 
 static const char* TAG = "Mobus v3.14";
 
@@ -540,7 +675,7 @@ void check_notification() {
     HapticMotor& haptic = HapticMotor::instance();
 
     printf("通知チェック中...");
-    HttpClient &http_client = HttpClient::shared();
+    HttpClient& http_client = HttpClient::shared();
     // 通知の取得
     http_client.start_notifications();
 
@@ -580,6 +715,13 @@ void check_notification() {
 
 void app_main(void) {
     printf("Hello world!!!!\n");
+
+    bool mem_profile_enabled = kMemoryProfilerEnabled;
+    if (mem_profile_enabled) {
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
+        ESP_LOGI("MEM_PROFILE", "Memory profiling enabled");
+    }
+    MemoryProfiler profiler(mem_profile_enabled);
 
     // Defer OTA validation (only if rollback is enabled): mark app valid after
     // system stabilizes
@@ -623,7 +765,8 @@ void app_main(void) {
 #endif
     };
 
-    start_deferred_ota_validation();
+    profiler.run_step("Deferred OTA validation setup",
+                      start_deferred_ota_validation);
 
     auto& speaker = audio::speaker();
     // Helper to choose boot sound: cute (default) or majestic. NVS key:
@@ -658,10 +801,10 @@ void app_main(void) {
     ProfileSetting profile_setting;
 
     WiFi wifi;
-    wifi.main();
+    profiler.run_step("Wi-Fi init", [&]() { wifi.main(); });
 
-    initialize_sntp();
-    start_rtc_task();
+    profiler.run_step("Initialize SNTP", []() { initialize_sntp(); });
+    profiler.run_step("Start RTC task", []() { start_rtc_task(); });
 
     // Deep Sleep Config
     const gpio_num_t ext_wakeup_pin_0 = GPIO_NUM_3;
@@ -677,12 +820,7 @@ void app_main(void) {
     esp_sleep_enable_timer_wakeup(sleep_time_sec * uS_TO_S_FACTOR);
 
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-    if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
-        // 起動音（選択式）
-        play_boot_sound();
-        // 起動時のロゴを表示
-        oled.BootDisplay();
-        // LEDを光らす
+    auto boot_led_animation = [&]() {
         for (int i = 0; i < 50; i++) {
             neopixel.set_color(i, i, i);
             vTaskDelay(20 / portTICK_PERIOD_MS);
@@ -691,6 +829,12 @@ void app_main(void) {
             neopixel.set_color(i, i, i);
             vTaskDelay(20 / portTICK_PERIOD_MS);
         }
+    };
+
+    if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
+        profiler.run_step("Boot sound", [&]() { play_boot_sound(); });
+        profiler.run_step("Boot display", [&]() { oled.BootDisplay(); });
+        profiler.run_step("Boot LED animation", boot_led_animation);
 
     } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
         std::string notif_flag = get_nvs("notif_flag");
@@ -708,28 +852,20 @@ void app_main(void) {
         }
         esp_deep_sleep_start();
     } else {
-        // 起動音（選択式）
-        play_boot_sound();
-        // 起動時のロゴを表示
-        oled.BootDisplay();
-        // LEDを光らす
-        for (int i = 0; i < 50; i++) {
-            neopixel.set_color(i, i, i);
-            vTaskDelay(20 / portTICK_PERIOD_MS);
-        }
-        for (int i = 50; i > 0; i--) {
-            neopixel.set_color(i, i, i);
-            vTaskDelay(20 / portTICK_PERIOD_MS);
-        }
+        profiler.run_step("Boot sound", [&]() { play_boot_sound(); });
+        profiler.run_step("Boot display", [&]() { oled.BootDisplay(); });
+        profiler.run_step("Boot LED animation", boot_led_animation);
     }
 
     // Provisioning provisioning;
     // provisioning.main();
 
     std::string user_name = get_nvs("user_name");
-    if (user_name == "") {
-        profile_setting.profile_setting_task();
-    }
+    profiler.run_step("Ensure user profile", [&]() {
+        if (user_name == "") {
+            profile_setting.profile_setting_task();
+        }
+    });
 
     // Start OTA auto-update background if enabled
     {
@@ -740,7 +876,9 @@ void app_main(void) {
     }
     // TODO:menuから各機能の画面に遷移するように実装する
     save_nvs("notif_flag", "false");
-    menu.start_menu_task();
+    profiler.run_step("Start menu task", [&]() { menu.start_menu_task(); });
+
+    profiler.report_summary();
 
     // HttpClient http_client;
     // std::string chat_to = "hazuki";

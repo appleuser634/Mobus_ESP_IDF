@@ -16,6 +16,7 @@
 #include <string>
 #include <utility>
 #include <atomic>
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_event.h"
@@ -174,7 +175,7 @@ esp_err_t _http_client_event_handler(esp_http_client_event_t *evt) {
 }
 
 static constexpr uint32_t kHttpGetTaskStackWords = 6192;
-static StackType_t http_get_task_stack[kHttpGetTaskStackWords];
+static EXT_RAM_ATTR StackType_t http_get_task_stack[kHttpGetTaskStackWords];
 static StaticTask_t http_get_task_buffer;
 static TaskHandle_t http_get_task_handle = nullptr;
 

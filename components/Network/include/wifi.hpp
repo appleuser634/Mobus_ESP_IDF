@@ -1,3 +1,5 @@
+#pragma once
+
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -51,10 +53,22 @@ class WiFi {
         ESP_LOGI(TAG, "===== START WIFI EVENT HADLER =====");
         if (event_base == WIFI_EVENT &&
             event_id == WIFI_EVENT_STA_DISCONNECTED) {
+            if (s_wifi_event_group) {
+                xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+            }
+            std::string ble_pair = get_nvs((char *)"ble_pair");
+            std::string ble_rst = get_nvs((char *)"ble_wifi_rst");
+            bool forced_off = (ble_pair == "true") || (ble_rst == "1");
             if (s_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
-                esp_wifi_connect();
-                s_retry_num++;
-                ESP_LOGI(TAG, "retry to connect to the AP");
+                if (forced_off) {
+                    ESP_LOGI(TAG,
+                             "Wi-Fi disconnect requested for BLE pairing; "
+                             "skip auto-reconnect");
+                } else {
+                    esp_wifi_connect();
+                    s_retry_num++;
+                    ESP_LOGI(TAG, "retry to connect to the AP");
+                }
             } else {
                 if (s_wifi_event_group) {
                     xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
