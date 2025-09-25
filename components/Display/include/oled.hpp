@@ -129,14 +129,13 @@ bool g_oled_ready = false;
 SpriteState g_sprite_state;
 
 inline void log_memory_state(const char *reason, const char *context) {
-    ESP_LOGE(TAG,
-             "%s (%s free=%u, largest=%u, psram=%u)", reason, context,
-             static_cast<unsigned>(heap_caps_get_free_size(
-                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+    ESP_LOGE(TAG, "%s (%s free=%u, largest=%u, psram=%u)", reason, context,
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                                           MALLOC_CAP_8BIT)),
              static_cast<unsigned>(heap_caps_get_largest_free_block(
                  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
-             static_cast<unsigned>(heap_caps_get_free_size(
-                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
+             static_cast<unsigned>(
+                 heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
 }
 
 bool ensure_lcd_ready(const char *context) {
@@ -169,13 +168,12 @@ bool ensure_sprite_surface(int width, int height, int depth,
     sprite.setColorDepth(depth);
     if (!sprite.createSprite(width, height)) {
         g_sprite_state.ready = false;
-        ESP_LOGE(TAG,
-                 "[OLED] sprite.createSprite failed (%s, free=%u, largest=%u)",
-                 context,
-                 static_cast<unsigned>(heap_caps_get_free_size(
-                     MALLOC_CAP_DEFAULT)),
-                 static_cast<unsigned>(heap_caps_get_largest_free_block(
-                     MALLOC_CAP_DEFAULT)));
+        ESP_LOGE(
+            TAG, "[OLED] sprite.createSprite failed (%s, free=%u, largest=%u)",
+            context,
+            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_DEFAULT)),
+            static_cast<unsigned>(
+                heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT)));
         return false;
     }
     g_sprite_state.ready = true;
@@ -195,16 +193,16 @@ StackType_t *allocate_internal_stack(StackType_t *&slot, size_t words,
                                      const char *label) {
     if (slot) return slot;
     size_t bytes = words * sizeof(StackType_t);
-    slot = static_cast<StackType_t *>(heap_caps_malloc(
-        bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    slot = static_cast<StackType_t *>(
+        heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     if (!slot) {
-        ESP_LOGE(TAG,
-                 "[OLED] stack alloc failed (%s, bytes=%u free=%u largest=%u)",
-                 label, static_cast<unsigned>(bytes),
-                 static_cast<unsigned>(heap_caps_get_free_size(
-                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
-                 static_cast<unsigned>(heap_caps_get_largest_free_block(
-                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        ESP_LOGE(
+            TAG, "[OLED] stack alloc failed (%s, bytes=%u free=%u largest=%u)",
+            label, static_cast<unsigned>(bytes),
+            static_cast<unsigned>(
+                heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+            static_cast<unsigned>(heap_caps_get_largest_free_block(
+                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
     }
     return slot;
 }
@@ -317,7 +315,7 @@ class TalkDisplay {
         lcd.init();
         lcd.setRotation(0);
 
-        auto& buzzer = audio::speaker();
+        auto &buzzer = audio::speaker();
         buzzer.init();
 
         Joystick joystick;
@@ -351,23 +349,21 @@ class TalkDisplay {
                 sprite.setFont(&fonts::Font2);
                 sprite.setTextWrap(true);
                 if (sprite.createSprite(width, height)) {
-                    ESP_LOGI(
-                        TAG,
-                        "[UI] talk sprite %dx%d depth=%u psram=%s created",
-                        width, height, attempt.depth,
-                        attempt.use_psram ? "true" : "false");
+                    ESP_LOGI(TAG,
+                             "[UI] talk sprite %dx%d depth=%u psram=%s created",
+                             width, height, attempt.depth,
+                             attempt.use_psram ? "true" : "false");
                     return true;
                 }
-                ESP_LOGW(
-                    TAG,
-                    "[UI] talk sprite alloc fail %dx%d depth=%u psram=%s"
-                    " (free=%u largest=%u)",
-                    width, height, attempt.depth,
-                    attempt.use_psram ? "true" : "false",
-                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
-                                                      MALLOC_CAP_8BIT),
-                    (unsigned)heap_caps_get_largest_free_block(
-                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+                ESP_LOGW(TAG,
+                         "[UI] talk sprite alloc fail %dx%d depth=%u psram=%s"
+                         " (free=%u largest=%u)",
+                         width, height, attempt.depth,
+                         attempt.use_psram ? "true" : "false",
+                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                                           MALLOC_CAP_8BIT),
+                         (unsigned)heap_caps_get_largest_free_block(
+                             MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
             }
             return false;
         };
@@ -913,7 +909,7 @@ class MessageBox {
             return;
         }
         if (!allocate_internal_stack(task_stack_, kTaskStackWords,
-                                   "MessageBox")) {
+                                     "MessageBox")) {
             delete arg;
             running_flag = false;
             return;
@@ -1014,7 +1010,8 @@ class MessageBox {
             if ((!mid || mid[0] == '\0') && msg.containsKey("message_id")) {
                 mid = msg["message_id"].as<const char *>();
             }
-            const char *created = msg["created_at"] | static_cast<const char *>(nullptr);
+            const char *created =
+                msg["created_at"] | static_cast<const char *>(nullptr);
             const char *content = msg["message"].as<const char *>();
             if (mid && mid[0] != '\0') {
                 key.append(mid);
@@ -1237,7 +1234,8 @@ class MessageBox {
             if (source.size() <= 12) return source;
             return source.substr(source.size() - 12);
         };
-        std::string key_suffix = server_chat_id.empty() ? chat_to : server_chat_id;
+        std::string key_suffix =
+            server_chat_id.empty() ? chat_to : server_chat_id;
         key_suffix = make_suffix(key_suffix);
         std::string last_played_time_key = "lt_" + key_suffix;
         std::string last_played_id_key = "li_" + key_suffix;
@@ -1289,11 +1287,13 @@ class MessageBox {
                 play_morse_message(content, morse_header);
                 played_any = true;
                 if (!created_str.empty() &&
-                    (newest_played_time.empty() || created_str > newest_played_time)) {
+                    (newest_played_time.empty() ||
+                     created_str > newest_played_time)) {
                     newest_played_time = created_str;
                 }
                 if (created_str.empty() && !message_id_str.empty() &&
-                    (newest_played_id.empty() || message_id_str > newest_played_id)) {
+                    (newest_played_id.empty() ||
+                     message_id_str > newest_played_id)) {
                     newest_played_id = message_id_str;
                 }
                 if (!playback_key.empty()) {
@@ -1319,10 +1319,12 @@ class MessageBox {
         }
 
         if (played_any) {
-            if (!newest_played_time.empty() && newest_played_time != last_played_time) {
+            if (!newest_played_time.empty() &&
+                newest_played_time != last_played_time) {
                 save_nvs(last_played_time_key.c_str(), newest_played_time);
             }
-            if (!newest_played_id.empty() && newest_played_id != last_played_id) {
+            if (!newest_played_id.empty() &&
+                newest_played_id != last_played_id) {
                 save_nvs(last_played_id_key.c_str(), newest_played_id);
             }
         }
@@ -1341,27 +1343,23 @@ class MessageBox {
                 for (JsonObject msg : res["messages"].as<JsonArray>()) {
                     message_views.push_back({msg});
                 }
-                std::stable_sort(message_views.begin(), message_views.end(),
-                                 [](const MessageViewEntry &a,
-                                    const MessageViewEntry &b) {
-                                     const char *created_a =
-                                         a.obj["created_at"] |
-                                         static_cast<const char *>("");
-                                     const char *created_b =
-                                         b.obj["created_at"] |
-                                         static_cast<const char *>("");
-                                     int cmp = strcmp(created_a, created_b);
-                                     if (cmp == 0) {
-                                         const char *id_a =
-                                             a.obj["id"] |
-                                             static_cast<const char *>("");
-                                         const char *id_b =
-                                             b.obj["id"] |
-                                             static_cast<const char *>("");
-                                         return strcmp(id_a, id_b) < 0;
-                                     }
-                                     return cmp < 0;
-                                 });
+                std::stable_sort(
+                    message_views.begin(), message_views.end(),
+                    [](const MessageViewEntry &a, const MessageViewEntry &b) {
+                        const char *created_a =
+                            a.obj["created_at"] | static_cast<const char *>("");
+                        const char *created_b =
+                            b.obj["created_at"] | static_cast<const char *>("");
+                        int cmp = strcmp(created_a, created_b);
+                        if (cmp == 0) {
+                            const char *id_a =
+                                a.obj["id"] | static_cast<const char *>("");
+                            const char *id_b =
+                                b.obj["id"] | static_cast<const char *>("");
+                            return strcmp(id_a, id_b) < 0;
+                        }
+                        return cmp < 0;
+                    });
             }
             min_offset_y = (int)((int)font_height * 2 -
                                  (int)message_views.size() * font_height);
@@ -1537,7 +1535,7 @@ class ContactBook {
             return;
         }
         if (!allocate_internal_stack(task_stack_, kTaskStackWords,
-                                   "ContactBook")) {
+                                     "ContactBook")) {
             ESP_LOGE("CONTACT", "Stack alloc failed");
             running_flag = false;
             return;
@@ -1551,6 +1549,10 @@ class ContactBook {
                      kTaskStackWords);
             running_flag = false;
         }
+    }
+    static void free_stack_pend_cb(void *arg1, uint32_t /*arg2*/) {
+        StackType_t *stack = (StackType_t *)arg1;
+        if (stack) heap_caps_free(stack);
     }
 
     static void message_menue_task(void *pvParameters) {
@@ -1577,11 +1579,14 @@ class ContactBook {
         auto finish_task = [&]() {
             running_flag = false;
             task_handle_ = nullptr;
+
+            StackType_t *stack = ContactBook::task_stack_;
+
             UBaseType_t watermark_words = uxTaskGetStackHighWaterMark(nullptr);
-            ESP_LOGI("CONTACT",
-                     "stack high watermark: %u words (%u bytes)",
-                     static_cast<unsigned>(watermark_words),
-                     static_cast<unsigned>(watermark_words * sizeof(StackType_t)));
+            ESP_LOGI(
+                "CONTACT", "stack high watermark: %u words (%u bytes)",
+                static_cast<unsigned>(watermark_words),
+                static_cast<unsigned>(watermark_words * sizeof(StackType_t)));
             if (wdt_registered) {
                 esp_err_t del_err = esp_task_wdt_delete(NULL);
                 if (del_err != ESP_OK) {
@@ -1589,6 +1594,8 @@ class ContactBook {
                              esp_err_to_name(del_err));
                 }
             }
+            // xTimerPendFunctionCall(free_stack_pend_cb, stack, 0,
+            // portMAX_DELAY);
             vTaskDelete(NULL);
         };
 
@@ -1806,8 +1813,7 @@ class ContactBook {
                     ESP_LOGD("CONTACT", "JSON parse failed: %s", derr.c_str());
                 }
             } else {
-                ESP_LOGW("CONTACT",
-                         "Friends fetch failed (err=%s status=%d)",
+                ESP_LOGW("CONTACT", "Friends fetch failed (err=%s status=%d)",
                          esp_err_to_name(friends_resp.err),
                          friends_resp.status);
             }
@@ -2041,13 +2047,13 @@ class ContactBook {
                                             : "";
                                     if (!rid.empty())
                                         pending.push_back({rid, uname});
+                                }
+                            }
                         }
                     }
-                }
-        }
 
-        int psel = 0;
-        while (1) {
+                    int psel = 0;
+                    while (1) {
                         sprite.fillRect(0, 0, 128, 64, 0);
                         sprite.setFont(&fonts::Font2);
                         sprite.setTextColor(0xFFFFFFu, 0x000000u);
@@ -2217,7 +2223,8 @@ class ContactBook {
                                                 std::string js = get_nvs(
                                                     (char *)"ble_pending");
                                                 if (!js.empty()) {
-                                                    DynamicJsonDocument pdoc2(2048);
+                                                    DynamicJsonDocument pdoc2(
+                                                        2048);
                                                     if (deserializeJson(pdoc2,
                                                                         js) ==
                                                         DeserializationError::
@@ -2334,7 +2341,7 @@ class ContactBook {
     };
 
    private:
-   static TaskHandle_t task_handle_;
+    static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
     static StackType_t *task_stack_;
 };
@@ -2605,7 +2612,8 @@ void OpenChat::open_chat_task(void *pvParameters) {
 
         if (exit_all || !running_flag) break;
 
-        std::string topic = std::string("chat/open/") + rooms[selected].topic_suffix;
+        std::string topic =
+            std::string("chat/open/") + rooms[selected].topic_suffix;
         int listener_id = mqtt_rt_add_listener(topic.c_str());
         if (listener_id < 0) {
             recreate_room_sprite();
@@ -2631,10 +2639,10 @@ void OpenChat::open_chat_task(void *pvParameters) {
             }
         };
 
-    auto draw_room = [&]() {
-        if (!recreate_room_sprite()) return;
-        sprite.fillRect(0, 0, lcd.width(), lcd.height(), 0);
-        sprite.setFont(&fonts::Font2);
+        auto draw_room = [&]() {
+            if (!recreate_room_sprite()) return;
+            sprite.fillRect(0, 0, lcd.width(), lcd.height(), 0);
+            sprite.setFont(&fonts::Font2);
             sprite.setTextColor(0xFFFFFFu, 0x000000u);
             sprite.drawCenterString(rooms[selected].label, 64, 0);
             sprite.drawFastHLine(0, 12, 128, 0xFFFF);
@@ -2647,9 +2655,10 @@ void OpenChat::open_chat_task(void *pvParameters) {
             int y = 16;
             for (size_t i = start; i < messages.size(); ++i) {
                 const auto &msg = messages[i];
-                std::string sender = msg.user.empty() ?
-                    (msg.short_id.empty() ? std::string("?") : msg.short_id)
-                    : msg.user;
+                std::string sender =
+                    msg.user.empty() ? (msg.short_id.empty() ? std::string("?")
+                                                             : msg.short_id)
+                                     : msg.user;
                 if (msg.mine) {
                     sprite.setTextColor(0x000000u, 0xFFFFu);
                     sprite.fillRect(0, y - 2, 128, 12, 0xFFFF);
@@ -2696,11 +2705,11 @@ void OpenChat::open_chat_task(void *pvParameters) {
                                          : std::string();
                 msg.mine = (!short_id.empty() && msg.short_id == short_id);
                 if (!msg.mine && !msg.text.empty()) {
-                    std::string header = msg.user.empty()
-                                             ? (msg.short_id.empty()
-                                                    ? std::string("Open")
+                    std::string header =
+                        msg.user.empty()
+                            ? (msg.short_id.empty() ? std::string("Open")
                                                     : msg.short_id)
-                                             : msg.user;
+                            : msg.user;
                     play_morse_message(msg.text, header);
                 }
                 add_message(std::move(msg), msg_id);
@@ -2731,7 +2740,8 @@ void OpenChat::open_chat_task(void *pvParameters) {
             if (trigger_compose) {
                 std::string message;
                 std::string header = std::string("TX ") + rooms[selected].label;
-                if (compose_morse_message(message, header) && !message.empty()) {
+                if (compose_morse_message(message, header) &&
+                    !message.empty()) {
                     DynamicJsonDocument payload(256);
                     payload["room"] = rooms[selected].topic_suffix;
                     payload["user"] = username;
@@ -2739,15 +2749,14 @@ void OpenChat::open_chat_task(void *pvParameters) {
                     payload["message"] = message;
                     uint64_t ts = esp_timer_get_time();
                     payload["ts"] = ts;
-                    std::string msg_id = short_id.empty()
-                                             ? std::to_string(ts)
-                                             : short_id + "_" +
-                                                   std::to_string(ts);
+                    std::string msg_id =
+                        short_id.empty() ? std::to_string(ts)
+                                         : short_id + "_" + std::to_string(ts);
                     payload["id"] = msg_id;
                     std::string json;
                     serializeJson(payload, json);
-                    int mid = mqtt_rt_publish(topic.c_str(), json.c_str(), 1,
-                                               false);
+                    int mid =
+                        mqtt_rt_publish(topic.c_str(), json.c_str(), 1, false);
                     if (mid < 0) {
                         ESP_LOGW("OPEN_CHAT",
                                  "Publish failed (topic=%s err=%d)",
@@ -2812,7 +2821,7 @@ class WiFiSetting {
             return;
         }
         if (!allocate_internal_stack(task_stack_, kTaskStackWords,
-                                   "WiFiSetting")) {
+                                     "WiFiSetting")) {
             ESP_LOGE(TAG, "Failed to alloc wifi setting stack");
             running_flag = false;
             return;
@@ -3615,7 +3624,7 @@ class Composer {
             return;
         }
         if (!allocate_internal_stack(s_task_stack_, kTaskStackWords,
-                                   "Composer")) {
+                                     "Composer")) {
             ESP_LOGE(TAG, "Failed to alloc composer stack");
             return;
         }
@@ -4351,7 +4360,7 @@ class SettingMenu {
     static bool running_flag;
     static bool sound_dirty;
 
-    static constexpr uint32_t kTaskStackWords = 16192;
+    static constexpr uint32_t kTaskStackWords = 6192;
 
     void start_message_menue_task() {
         printf("Start MessageMenue Task...");
@@ -4361,7 +4370,7 @@ class SettingMenu {
         }
 
         if (!allocate_internal_stack(task_stack_, kTaskStackWords,
-                                   "SettingMenu")) {
+                                     "SettingMenu")) {
             ESP_LOGE("SETTING_MENU", "Stack alloc failed");
             running_flag = false;
             return;
@@ -4432,10 +4441,10 @@ class SettingMenu {
 
         // Settings list
         setting_t settings[14] = {
-            {"Profile"},      {"Wi-Fi"},         {"Bluetooth"},
-            {"Sound"},        {"Boot Sound"},    {"Real Time Chat"},
-            {"Open Chat"},    {"Composer"},      {"Auto Update"},
-            {"OTA Manifest"}, {"Update Now"},    {"Firmware Info"},
+            {"Profile"},      {"Wi-Fi"},        {"Bluetooth"},
+            {"Sound"},        {"Boot Sound"},   {"Real Time Chat"},
+            {"Open Chat"},    {"Composer"},     {"Auto Update"},
+            {"OTA Manifest"}, {"Update Now"},   {"Firmware Info"},
             {"Develop"},      {"Factory Reset"}};
 
         int select_index = 0;
@@ -4883,13 +4892,12 @@ class SettingMenu {
                                 esp_err_t serr = esp_wifi_stop();
                                 if (serr != ESP_OK &&
                                     serr != ESP_ERR_WIFI_NOT_STARTED) {
-                                    ESP_LOGW(TAG,
-                                             "esp_wifi_stop returned %s",
+                                    ESP_LOGW(TAG, "esp_wifi_stop returned %s",
                                              esp_err_to_name(serr));
                                 }
                                 if (s_wifi_event_group) {
                                     xEventGroupClearBits(s_wifi_event_group,
-                                                        WIFI_CONNECTED_BIT);
+                                                         WIFI_CONNECTED_BIT);
                                 }
                                 constexpr int kMaxWaitIters = 40;
                                 int wait = 0;
@@ -4899,8 +4907,10 @@ class SettingMenu {
                                     ++wait;
                                 }
                                 if (wifi_is_connected()) {
-                                    ESP_LOGW(TAG,
-                                             "[BLE] Wi-Fi still marked connected after stop; continuing");
+                                    ESP_LOGW(
+                                        TAG,
+                                        "[BLE] Wi-Fi still marked connected "
+                                        "after stop; continuing");
                                 }
                             } else {
                                 set_wifi_restore_flag(false);
@@ -5933,7 +5943,7 @@ class MenuDisplay {
             return;
         }
         if (!allocate_internal_stack(task_stack_, kTaskStackWords,
-                                   "MenuDisplay")) {
+                                     "MenuDisplay")) {
             ESP_LOGE(TAG, "Failed to alloc menu stack");
             return;
         }
@@ -6288,7 +6298,7 @@ class MenuDisplay {
     };
 
    private:
-   static TaskHandle_t task_handle_;
+    static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
     static StackType_t *task_stack_;
 };
@@ -6498,8 +6508,7 @@ class Oled {
 
         constexpr int kBootWidth = 128;
         constexpr int kBootHeight = 64;
-        if (!ensure_sprite_surface(kBootWidth, kBootHeight, 8,
-                                   "BootDisplay")) {
+        if (!ensure_sprite_surface(kBootWidth, kBootHeight, 8, "BootDisplay")) {
             return;
         }
 
