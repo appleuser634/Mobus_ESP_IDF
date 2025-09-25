@@ -20,6 +20,7 @@
 #include <images.hpp>
 #include <haptic_motor.hpp>
 #include <http_client.hpp>
+#include <nvs_rw.hpp>
 #include "esp_attr.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
@@ -1231,6 +1232,25 @@ class MessageBox {
 
         const std::string my_name = get_nvs((char *)"user_name");
         std::string morse_header = !chat_title.empty() ? chat_title : chat_to;
+
+        auto make_suffix = [&](const std::string &source) {
+            if (source.size() <= 12) return source;
+            return source.substr(source.size() - 12);
+        };
+        std::string key_suffix = server_chat_id.empty() ? chat_to : server_chat_id;
+        key_suffix = make_suffix(key_suffix);
+        std::string last_played_time_key = "lt_" + key_suffix;
+        std::string last_played_id_key = "li_" + key_suffix;
+        auto strip_null = [](std::string &s) {
+            if (!s.empty() && s.back() == '\0') s.pop_back();
+        };
+        std::string last_played_time = get_nvs(last_played_time_key.c_str());
+        strip_null(last_played_time);
+        std::string last_played_id = get_nvs(last_played_id_key.c_str());
+        strip_null(last_played_id);
+        std::string newest_played_time = last_played_time;
+        std::string newest_played_id = last_played_id;
+        bool played_any = false;
         if (res["messages"].is<JsonArray>()) {
             for (JsonObject msg : res["messages"].as<JsonArray>()) {
                 bool unread = true;
@@ -1249,6 +1269,14 @@ class MessageBox {
                     played_message_ids_.count(playback_key)) {
                     unread = false;
                 }
+                const char *created = msg["created_at"].as<const char *>();
+                std::string created_str =
+                    (created && created[0] != '\0') ? created : std::string();
+                if (!created_str.empty() && !last_played_time.empty()) {
+                    if (!(created_str > last_played_time)) unread = false;
+                } else if (!message_id_str.empty() && !last_played_id.empty()) {
+                    if (!(message_id_str > last_played_id)) unread = false;
+                }
                 if (!unread) continue;
                 const char *from = msg["from"].as<const char *>();
                 if (from && !my_name.empty() && my_name == from) {
@@ -1259,6 +1287,15 @@ class MessageBox {
                     continue;
                 }
                 play_morse_message(content, morse_header);
+                played_any = true;
+                if (!created_str.empty() &&
+                    (newest_played_time.empty() || created_str > newest_played_time)) {
+                    newest_played_time = created_str;
+                }
+                if (created_str.empty() && !message_id_str.empty() &&
+                    (newest_played_id.empty() || message_id_str > newest_played_id)) {
+                    newest_played_id = message_id_str;
+                }
                 if (!playback_key.empty()) {
                     played_message_ids_.insert(playback_key);
                     if (played_message_ids_.size() > 1024) {
@@ -1278,6 +1315,15 @@ class MessageBox {
                     msg["is_read"] = true;
                 }
                 vTaskDelay(pdMS_TO_TICKS(200));
+            }
+        }
+
+        if (played_any) {
+            if (!newest_played_time.empty() && newest_played_time != last_played_time) {
+                save_nvs(last_played_time_key.c_str(), newest_played_time);
+            }
+            if (!newest_played_id.empty() && newest_played_id != last_played_id) {
+                save_nvs(last_played_id_key.c_str(), newest_played_id);
             }
         }
 
