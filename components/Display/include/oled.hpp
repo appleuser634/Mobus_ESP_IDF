@@ -110,6 +110,104 @@ static LGFX lcd;
 static LGFX_Sprite sprite(
     &lcd);  // スプライトを使う場合はLGFX_Spriteのインスタンスを作成。
 
+namespace {
+struct SpriteInit {
+    SpriteInit() { sprite.setPsram(true); }
+};
+static SpriteInit sprite_init;
+
+struct SpriteState {
+    bool ready = false;
+    int width = 0;
+    int height = 0;
+    int depth = 0;
+};
+
+bool g_oled_ready = false;
+SpriteState g_sprite_state;
+
+inline void log_memory_state(const char *reason, const char *context) {
+    ESP_LOGE(TAG,
+             "%s (%s free=%u, largest=%u, psram=%u)", reason, context,
+             static_cast<unsigned>(heap_caps_get_free_size(
+                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(
+                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_free_size(
+                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
+}
+
+bool ensure_lcd_ready(const char *context) {
+    if (g_oled_ready) return true;
+    sprite.deleteSprite();
+    g_sprite_state.ready = false;
+    if (!lcd.init()) {
+        g_oled_ready = false;
+        log_memory_state("[OLED] lcd.init failed", context);
+        return false;
+    }
+    lcd.clearDisplay();
+    lcd.setRotation(2);
+    lcd.fillScreen(0x000000u);
+    g_oled_ready = true;
+    return true;
+}
+
+bool ensure_sprite_surface(int width, int height, int depth,
+                           const char *context) {
+    if (!ensure_lcd_ready(context)) return false;
+    if (g_sprite_state.ready && sprite.getBuffer() != nullptr &&
+        g_sprite_state.width == width && g_sprite_state.height == height &&
+        g_sprite_state.depth == depth) {
+        return true;
+    }
+
+    sprite.deleteSprite();
+    sprite.setPsram(true);
+    sprite.setColorDepth(depth);
+    if (!sprite.createSprite(width, height)) {
+        g_sprite_state.ready = false;
+        ESP_LOGE(TAG,
+                 "[OLED] sprite.createSprite failed (%s, free=%u, largest=%u)",
+                 context,
+                 static_cast<unsigned>(heap_caps_get_free_size(
+                     MALLOC_CAP_DEFAULT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(
+                     MALLOC_CAP_DEFAULT)));
+        return false;
+    }
+    g_sprite_state.ready = true;
+    g_sprite_state.width = width;
+    g_sprite_state.height = height;
+    g_sprite_state.depth = depth;
+    return true;
+}
+
+inline void push_sprite_safe(int32_t x, int32_t y) {
+    if (!g_oled_ready) return;
+    if (sprite.getBuffer() == nullptr) return;
+    sprite.pushSprite(&lcd, x, y);
+}
+
+StackType_t *allocate_internal_stack(StackType_t *&slot, size_t words,
+                                     const char *label) {
+    if (slot) return slot;
+    size_t bytes = words * sizeof(StackType_t);
+    slot = static_cast<StackType_t *>(heap_caps_malloc(
+        bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (!slot) {
+        ESP_LOGE(TAG,
+                 "[OLED] stack alloc failed (%s, bytes=%u free=%u largest=%u)",
+                 label, static_cast<unsigned>(bytes),
+                 static_cast<unsigned>(heap_caps_get_free_size(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+    }
+    return slot;
+}
+}  // namespace
+
 #include "mopping.h"
 #include <chat_api.hpp>
 #include <ota_client.hpp>
@@ -170,17 +268,17 @@ class TalkDisplay {
         sprite.fillRect(0, 0, 128, 64, 0);
         sprite.drawBitmap(55, 27, small_elekey_1, 18, 10, TFT_WHITE, TFT_BLACK);
         sprite.fillRect(73, 36, 55, 1, 0xFFFF);
-        sprite.pushSprite(&lcd, 0, 0);
+        push_sprite_safe(0, 0);
         vTaskDelay(250 / portTICK_PERIOD_MS);
         sprite.fillRect(0, 0, 128, 64, 0);
         sprite.drawBitmap(55, 27, small_elekey_2, 18, 10, TFT_WHITE, TFT_BLACK);
         sprite.fillRect(73, 36, 55, 1, 0xFFFF);
-        sprite.pushSprite(&lcd, 0, 0);
+        push_sprite_safe(0, 0);
         vTaskDelay(250 / portTICK_PERIOD_MS);
         sprite.fillRect(0, 0, 128, 64, 0);
         sprite.drawBitmap(55, 27, small_elekey_1, 18, 10, TFT_WHITE, TFT_BLACK);
         sprite.fillRect(73, 36, 55, 1, 0xFFFF);
-        sprite.pushSprite(&lcd, 0, 0);
+        push_sprite_safe(0, 0);
 
         for (int i = 0; i < 48; i++) {
             sprite.fillRect(0, 0, 128, 64, 0);
@@ -188,7 +286,7 @@ class TalkDisplay {
                               TFT_BLACK);
             sprite.fillRect(73, 36, 55, 1, 0xFFFF);
             sprite.fillRect(80 + i, 34, 2, 2, 0xFFFF);
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
             vTaskDelay(15 / portTICK_PERIOD_MS);
         }
         vTaskDelay(250 / portTICK_PERIOD_MS);
@@ -372,7 +470,7 @@ class TalkDisplay {
                 } else {
                     sprite.drawCenterString("EN", 64, 25);
                 }
-                sprite.pushSprite(&lcd, 0, 0);
+                push_sprite_safe(0, 0);
                 vTaskDelay(300 / portTICK_PERIOD_MS);
 
                 input_switch_pos = message_text.size();
@@ -469,7 +567,7 @@ class TalkDisplay {
                 }
             }
 
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
 
             message_text += alphabet_text;
             if (alphabet_text != "" && input_lang == 1) {
@@ -785,7 +883,7 @@ class MessageBox {
     static constexpr uint32_t kTaskStackWords = 9216;
     static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
-    static StackType_t task_stack_[kTaskStackWords];
+    static StackType_t *task_stack_;
     static std::unordered_set<std::string> played_message_ids_;
 
     static void set_active_contact(const std::string &short_id,
@@ -810,6 +908,12 @@ class MessageBox {
         if (task_handle_) {
             ESP_LOGW(TAG, "box_task already running");
             delete arg;
+            return;
+        }
+        if (!allocate_internal_stack(task_stack_, kTaskStackWords,
+                                   "MessageBox")) {
+            delete arg;
+            running_flag = false;
             return;
         }
         task_handle_ = xTaskCreateStaticPinnedToCore(
@@ -840,7 +944,7 @@ class MessageBox {
         sprite.setFont(&fonts::Font4);
         sprite.setCursor(10, 20);
         sprite.print("Loading...");
-        sprite.pushSprite(&lcd, 0, 0);
+        push_sprite_safe(0, 0);
 
         auto recreate_message_sprite = [&](int width, int height) -> bool {
             struct Attempt {
@@ -1343,7 +1447,7 @@ class MessageBox {
             sprite.drawFastHLine(0, 14, 128, 0xFFFF);
             sprite.drawFastHLine(0, 15, 128, 0);
 
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
 
             // チャタリング防止用に100msのsleep2
             vTaskDelay(10 / portTICK_PERIOD_MS);
@@ -1362,8 +1466,7 @@ std::string MessageBox::active_short_id = "";
 std::string MessageBox::active_friend_id = "";
 TaskHandle_t MessageBox::task_handle_ = nullptr;
 StaticTask_t MessageBox::task_buffer_;
-EXT_RAM_ATTR StackType_t
-    MessageBox::task_stack_[MessageBox::kTaskStackWords];
+StackType_t *MessageBox::task_stack_ = nullptr;
 std::unordered_set<std::string> MessageBox::played_message_ids_;
 
 inline std::string resolve_chat_backend_id(const std::string &fallback) {
@@ -1384,6 +1487,12 @@ class ContactBook {
         printf("Start ContactBook Task...");
         if (task_handle_) {
             ESP_LOGW("CONTACT", "Task already running");
+            return;
+        }
+        if (!allocate_internal_stack(task_stack_, kTaskStackWords,
+                                   "ContactBook")) {
+            ESP_LOGE("CONTACT", "Stack alloc failed");
+            running_flag = false;
             return;
         }
         running_flag = true;
@@ -1547,7 +1656,7 @@ class ContactBook {
                 sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 sprite.drawCenterString("Waiting phone...", 64, 22);
                 sprite.drawCenterString("Back to exit", 64, 40);
-                sprite.pushSprite(&lcd, 0, 0);
+                push_sprite_safe(0, 0);
                 // Allow exit during wait
                 if (back_button.get_button_state().pushed) {
                     finish_task();
@@ -1585,7 +1694,7 @@ class ContactBook {
                 sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 sprite.drawCenterString("Connecting Wi-Fi...", 64, 22);
                 sprite.drawCenterString("Press Back to exit", 64, 40);
-                sprite.pushSprite(&lcd, 0, 0);
+                push_sprite_safe(0, 0);
                 if (back_button.get_button_state().pushed) {
                     finish_task();
                     return;
@@ -1607,7 +1716,7 @@ class ContactBook {
                 sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 sprite.drawCenterString("Loading contacts...", 64, 24);
                 sprite.drawCenterString("via Wi-Fi", 64, 40);
-                sprite.pushSprite(&lcd, 0, 0);
+                push_sprite_safe(0, 0);
             }
             ESP_LOGI(TAG,
                      "[HTTP] Contact list fetch start (free=%u largest=%u)",
@@ -1742,7 +1851,7 @@ class ContactBook {
                 select_index = last_index;
             }
 
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
 
             // ジョイスティック左を押されたらメニューへ戻る
             // 戻るボタンを押されたらメニューへ戻る
@@ -1762,7 +1871,7 @@ class ContactBook {
                         sprite.setFont(&fonts::Font2);
                         sprite.setTextColor(0xFFFFFFu, 0x000000u);
                         sprite.drawCenterString("Sending request...", 64, 22);
-                        sprite.pushSprite(&lcd, 0, 0);
+                        push_sprite_safe(0, 0);
 
                         bool ok = false;
                         const char *emsg = nullptr;
@@ -1830,7 +1939,7 @@ class ContactBook {
                             sprite.drawCenterString(emsg ? emsg : "Failed", 64,
                                                     34);
                         }
-                        sprite.pushSprite(&lcd, 0, 0);
+                        push_sprite_safe(0, 0);
                         vTaskDelay(1200 / portTICK_PERIOD_MS);
                     }
                 } else if (select_index == base_count + 1) {
@@ -1915,7 +2024,7 @@ class ContactBook {
                         if (pending.empty()) {
                             sprite.drawCenterString("No pending requests", 64,
                                                     22);
-                            sprite.pushSprite(&lcd, 0, 0);
+                            push_sprite_safe(0, 0);
                         } else {
                             const int row_h = 20;
                             int start = (psel / 3) * 3;
@@ -1936,7 +2045,7 @@ class ContactBook {
                                 std::string line = pending[idx].second;
                                 sprite.print(line.c_str());
                             }
-                            sprite.pushSprite(&lcd, 0, 0);
+                            push_sprite_safe(0, 0);
                         }
 
                         // Input
@@ -1985,7 +2094,7 @@ class ContactBook {
                                 sprite.drawRoundRect(76, 34, 40, 18, 3, 0xFFFF);
                                 sprite.setTextColor(ysFg, ysBg);
                                 sprite.drawCenterString("Yes", 96, 36);
-                                sprite.pushSprite(&lcd, 0, 0);
+                                push_sprite_safe(0, 0);
 
                                 auto t2 = type_button.get_button_state();
                                 auto e2 = enter_button.get_button_state();
@@ -2054,7 +2163,7 @@ class ContactBook {
                                         else
                                             sprite.drawCenterString("Failed",
                                                                     64, 22);
-                                        sprite.pushSprite(&lcd, 0, 0);
+                                        push_sprite_safe(0, 0);
                                         vTaskDelay(800 / portTICK_PERIOD_MS);
                                         // Refresh pending list
                                         pending.clear();
@@ -2196,15 +2305,14 @@ class ContactBook {
     };
 
    private:
-    static TaskHandle_t task_handle_;
+   static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
-    static StackType_t task_stack_[kTaskStackWords];
+    static StackType_t *task_stack_;
 };
 bool ContactBook::running_flag = false;
 TaskHandle_t ContactBook::task_handle_ = nullptr;
 StaticTask_t ContactBook::task_buffer_;
-EXT_RAM_ATTR StackType_t
-    ContactBook::task_stack_[ContactBook::kTaskStackWords];
+StackType_t *ContactBook::task_stack_ = nullptr;
 
 class WiFiSetting {
    public:
@@ -2215,6 +2323,12 @@ class WiFiSetting {
         printf("Start WiFi Setting Task...");
         if (task_handle_) {
             ESP_LOGW(TAG, "wifi_setting_task already running");
+            return;
+        }
+        if (!allocate_internal_stack(task_stack_, kTaskStackWords,
+                                   "WiFiSetting")) {
+            ESP_LOGE(TAG, "Failed to alloc wifi setting stack");
+            running_flag = false;
             return;
         }
         task_handle_ = xTaskCreateStaticPinnedToCore(
@@ -2352,7 +2466,7 @@ class WiFiSetting {
             sprite.setCursor(0, 15);
             sprite.print(type_text.c_str());
 
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
             // Avoid starving the watchdog while waiting for input
             vTaskDelay(10 / portTICK_PERIOD_MS);
         }
@@ -2429,7 +2543,7 @@ class WiFiSetting {
             }
             sprite.print("CONNECT");
 
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
 
             // 個別の情報入力画面へ遷移
             if (type_button_state.pushed) {
@@ -2450,7 +2564,7 @@ class WiFiSetting {
                     sprite.setFont(&fonts::Font2);
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
                     sprite.drawCenterString("Connecting...", 64, 22);
-                    sprite.pushSprite(&lcd, 0, 0);
+                    push_sprite_safe(0, 0);
 
                     EventBits_t bits = xEventGroupWaitBits(
                         s_wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdTRUE,
@@ -2462,14 +2576,14 @@ class WiFiSetting {
                         sprite.fillRect(0, 0, 128, 64, 0);
                         sprite.setFont(&fonts::Font2);
                         sprite.drawCenterString("Connected!", 64, 22);
-                        sprite.pushSprite(&lcd, 0, 0);
+                        push_sprite_safe(0, 0);
                         vTaskDelay(2000 / portTICK_PERIOD_MS);
                         return;
                     } else {
                         sprite.fillRect(0, 0, 128, 64, 0);
                         sprite.setFont(&fonts::Font2);
                         sprite.drawCenterString("Connection Failed!", 64, 22);
-                        sprite.pushSprite(&lcd, 0, 0);
+                        push_sprite_safe(0, 0);
                         vTaskDelay(2000 / portTICK_PERIOD_MS);
                         ESP_LOGW(TAG, "Wi-Fi Connection Timeout");
                     }
@@ -2499,7 +2613,7 @@ class WiFiSetting {
         sprite.fillRect(0, 0, 128, 64, 0);
         sprite.setCursor(30, 20);
         sprite.print("Scanning...");
-        sprite.pushSprite(&lcd, 0, 0);
+        push_sprite_safe(0, 0);
 
         WiFi wifi;
 
@@ -2577,7 +2691,7 @@ class WiFiSetting {
                 }
             }
 
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
 
             // 個別のWiFi設定画面へ遷移
             if (type_button_state.pushed) {
@@ -2605,13 +2719,12 @@ class WiFiSetting {
    private:
     static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
-    static StackType_t task_stack_[kTaskStackWords];
+    static StackType_t *task_stack_;
 };
 bool WiFiSetting::running_flag = false;
 TaskHandle_t WiFiSetting::task_handle_ = nullptr;
 StaticTask_t WiFiSetting::task_buffer_;
-EXT_RAM_ATTR StackType_t
-    WiFiSetting::task_stack_[WiFiSetting::kTaskStackWords];
+StackType_t *WiFiSetting::task_stack_ = nullptr;
 
 // Define proxy after WiFiSetting is fully defined
 inline std::string wifi_input_info_proxy(std::string input_type,
@@ -2648,7 +2761,7 @@ class P2P_Display {
         sprite.setFont(&fonts::Font4);
         sprite.print("Send!");
         sprite.setFont(&fonts::Font2);
-        sprite.pushSprite(&lcd, 0, 0);
+        push_sprite_safe(0, 0);
 
         vTaskDelay(2000 / portTICK_PERIOD_MS);
     };
@@ -2806,7 +2919,7 @@ class P2P_Display {
                 } else {
                     sprite.drawCenterString("EN", 64, 25);
                 }
-                sprite.pushSprite(&lcd, 0, 0);
+                push_sprite_safe(0, 0);
                 vTaskDelay(300 / portTICK_PERIOD_MS);
 
                 input_switch_pos = pos;
@@ -2868,7 +2981,7 @@ class P2P_Display {
             sprite.setCursor(0, 35);
             sprite.print(received_text.c_str());
 
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
 
             message_text += alphabet_text;
             if (alphabet_text != "" && input_lang == 1) {
@@ -2956,7 +3069,7 @@ void Profile() {
             sprite.print(val.c_str());
             y += block_h;
         }
-        sprite.pushSprite(&lcd, 0, 0);
+        push_sprite_safe(0, 0);
     };
     draw(offset_y);
     while (1) {
@@ -3013,6 +3126,11 @@ class Composer {
     void start_composer_task() {
         if (s_task_handle) {
             ESP_LOGW(TAG, "composer_task already running");
+            return;
+        }
+        if (!allocate_internal_stack(s_task_stack_, kTaskStackWords,
+                                   "Composer")) {
+            ESP_LOGE(TAG, "Failed to alloc composer stack");
             return;
         }
         s_task_handle = xTaskCreateStaticPinnedToCore(
@@ -3309,7 +3427,7 @@ class Composer {
                 sprite.setTextColor(0xFFFFFFu, 0x000000u);
             }
 
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
         };
 
         draw();
@@ -3524,7 +3642,7 @@ class Composer {
                         snprintf(lab, sizeof(lab), "S%d", i);
                         sprite.drawCenterString(lab, x + w / 2, y + 2);
                     }
-                    sprite.pushSprite(&lcd, 0, 0);
+                    push_sprite_safe(0, 0);
 
                     // input
                     auto js2 = joystick.get_joystick_state();
@@ -3572,7 +3690,7 @@ class Composer {
                             char m[20];
                             snprintf(m, sizeof(m), "Saved S%d", slot);
                             sprite.drawCenterString(m, 64, 22);
-                            sprite.pushSprite(&lcd, 0, 0);
+                            push_sprite_safe(0, 0);
                             vTaskDelay(600 / portTICK_PERIOD_MS);
                             break;
                         } else {
@@ -3609,7 +3727,7 @@ class Composer {
                                 char m[20];
                                 snprintf(m, sizeof(m), "Loaded S%d", slot);
                                 sprite.drawCenterString(m, 64, 22);
-                                sprite.pushSprite(&lcd, 0, 0);
+                                push_sprite_safe(0, 0);
                                 vTaskDelay(600 / portTICK_PERIOD_MS);
                                 draw();
                                 break;
@@ -3619,7 +3737,7 @@ class Composer {
                                 sprite.setFont(&fonts::Font2);
                                 sprite.setTextColor(0xFFFFFFu, 0x000000u);
                                 sprite.drawCenterString("No Data", 64, 22);
-                                sprite.pushSprite(&lcd, 0, 0);
+                                push_sprite_safe(0, 0);
                                 vTaskDelay(600 / portTICK_PERIOD_MS);
                             }
                         }
@@ -3727,7 +3845,7 @@ class Composer {
    private:
     static TaskHandle_t s_task_handle;
     static StaticTask_t s_task_buffer_;
-    static StackType_t s_task_stack_[kTaskStackWords];
+    static StackType_t *s_task_stack_;
 };
 
 bool Composer::running_flag = false;
@@ -3740,8 +3858,7 @@ volatile int Composer::s_popup_kind = 0;
 volatile int Composer::s_popup_val = 60;
 TaskHandle_t Composer::s_task_handle = nullptr;
 StaticTask_t Composer::s_task_buffer_;
-EXT_RAM_ATTR StackType_t
-    Composer::s_task_stack_[Composer::kTaskStackWords];
+StackType_t *Composer::s_task_stack_ = nullptr;
 
 class SettingMenu {
    public:
@@ -3754,6 +3871,13 @@ class SettingMenu {
         printf("Start MessageMenue Task...");
         if (task_handle_) {
             ESP_LOGW("SETTING_MENU", "Task already running");
+            return;
+        }
+
+        if (!allocate_internal_stack(task_stack_, kTaskStackWords,
+                                   "SettingMenu")) {
+            ESP_LOGE("SETTING_MENU", "Stack alloc failed");
+            running_flag = false;
             return;
         }
 
@@ -3939,7 +4063,7 @@ class SettingMenu {
                 select_index = last_index;
             }
 
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
 
             // ジョイスティック左を押されたらメニューへ戻る
             // 戻るボタンを押されたらメニューへ戻る
@@ -3989,7 +4113,7 @@ class SettingMenu {
                     sprite.setFont(&fonts::Font2);
                     sprite.drawCenterString("Type:Toggle  Up/Down:Vol", 64, 50);
                     sprite.drawCenterString("Back/Enter:Exit", 64, 58);
-                    sprite.pushSprite(&lcd, 0, 0);
+                    push_sprite_safe(0, 0);
 
                     auto tbs = type_button.get_button_state();
                     auto ebs = enter_button.get_button_state();
@@ -4081,7 +4205,7 @@ class SettingMenu {
                     sprite.drawCenterString(name.c_str(), 64, 24);
                     sprite.drawCenterString("Type:Next  Enter:Preview", 64, 40);
                     sprite.drawCenterString("Back:Save", 64, 52);
-                    sprite.pushSprite(&lcd, 0, 0);
+                    push_sprite_safe(0, 0);
 
                     auto tbs = type_button.get_button_state();
                     auto ebs = enter_button.get_button_state();
@@ -4246,7 +4370,7 @@ class SettingMenu {
                     // Hint about same account login
                     // (kept brief due to screen size)
                     // Example: "Login same account on phone"
-                    sprite.pushSprite(&lcd, 0, 0);
+                    push_sprite_safe(0, 0);
 
                     // Input handling
                     if (bbs.pushed || jst.left) {
@@ -4309,7 +4433,7 @@ class SettingMenu {
                             sprite.setFont(&fonts::Font2);
                             sprite.setTextColor(0xFFFFFFu, 0x000000u);
                             sprite.drawCenterString("Enabling BLE...", 64, 26);
-                            sprite.pushSprite(&lcd, 0, 0);
+                            push_sprite_safe(0, 0);
                             // Pause MQTT to free memory before BLE init
                             mqtt_rt_pause();
                             // Free sprite buffer (~8KB) to increase largest
@@ -4330,7 +4454,7 @@ class SettingMenu {
                                                         22);
                                 sprite.drawCenterString("Check memory/CFG", 64,
                                                         40);
-                                sprite.pushSprite(&lcd, 0, 0);
+                                push_sprite_safe(0, 0);
                                 vTaskDelay(1200 / portTICK_PERIOD_MS);
                                 mqtt_rt_resume();
                                 break;
@@ -4390,7 +4514,7 @@ class SettingMenu {
                         sprite.drawCenterString(l.c_str(), 64, y);
                         y += 14;
                     }
-                    sprite.pushSprite(&lcd, 0, 0);
+                    push_sprite_safe(0, 0);
                     if (bb.pushed || js.left || tb.pushed) {
                         break;
                     }
@@ -4409,7 +4533,7 @@ class SettingMenu {
                 sprite.setFont(&fonts::Font2);
                 sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 sprite.drawCenterString("Checking update...", 64, 26);
-                sprite.pushSprite(&lcd, 0, 0);
+                push_sprite_safe(0, 0);
                 esp_err_t r = ota_client::check_and_update_once();
                 // If update was available, device will reboot inside OTA
                 sprite.fillRect(0, 0, 128, 64, 0);
@@ -4418,7 +4542,7 @@ class SettingMenu {
                 } else {
                     sprite.drawCenterString("Update failed", 64, 26);
                 }
-                sprite.pushSprite(&lcd, 0, 0);
+                push_sprite_safe(0, 0);
                 vTaskDelay(1000 / portTICK_PERIOD_MS);
                 mqtt_rt_resume();
                 type_button.clear_button_state();
@@ -4438,7 +4562,7 @@ class SettingMenu {
                 sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 sprite.drawCenterString(
                     on ? "Auto Update: ON" : "Auto Update: OFF", 64, 22);
-                sprite.pushSprite(&lcd, 0, 0);
+                push_sprite_safe(0, 0);
                 vTaskDelay(800 / portTICK_PERIOD_MS);
                 // Start/stop background task accordingly (best-effort)
                 if (on) {
@@ -4492,7 +4616,7 @@ class SettingMenu {
 
                     // Show short hint
                     sprite.drawString("Back=Exit", 2, 54);
-                    sprite.pushSprite(&lcd, 0, 0);
+                    push_sprite_safe(0, 0);
 
                     // Exit when back or type pressed
                     Button::button_state_t tbs = type_button.get_button_state();
@@ -4537,7 +4661,7 @@ class SettingMenu {
                                         22);
                 sprite.drawCenterString(
                     on ? "http://192.168.2.184" : "https://mimoc.jp", 64, 40);
-                sprite.pushSprite(&lcd, 0, 0);
+                push_sprite_safe(0, 0);
                 vTaskDelay(1200 / portTICK_PERIOD_MS);
                 type_button.clear_button_state();
                 type_button.reset_timer();
@@ -4607,7 +4731,7 @@ class SettingMenu {
                     sprite.setTextColor(ysFg, ysBg);
                     sprite.drawCenterString("Yes", 76 + 20, 36);
 
-                    sprite.pushSprite(&lcd, 0, 0);
+                    push_sprite_safe(0, 0);
 
                     if (bbs.pushed) {
                         // Cancel and return to settings list
@@ -4620,7 +4744,7 @@ class SettingMenu {
                             sprite.setTextColor(0xFFFFFFu, 0x000000u);
                             sprite.drawCenterString("Resetting...", 64, 22);
                             sprite.drawCenterString("Erasing NVS", 64, 40);
-                            sprite.pushSprite(&lcd, 0, 0);
+                            push_sprite_safe(0, 0);
 
                             esp_err_t err = nvs_flash_erase();
                             if (err == ESP_OK) {
@@ -4628,14 +4752,14 @@ class SettingMenu {
                                 sprite.fillRect(0, 0, 128, 64, 0);
                                 sprite.drawCenterString("Reset Done", 64, 22);
                                 sprite.drawCenterString("Rebooting...", 64, 40);
-                                sprite.pushSprite(&lcd, 0, 0);
+                                push_sprite_safe(0, 0);
                                 vTaskDelay(1000 / portTICK_PERIOD_MS);
                                 esp_restart();
                             } else {
                                 sprite.fillRect(0, 0, 128, 64, 0);
                                 sprite.drawCenterString("Reset Failed", 64, 22);
                                 sprite.drawCenterString("Check logs", 64, 40);
-                                sprite.pushSprite(&lcd, 0, 0);
+                                push_sprite_safe(0, 0);
                                 vTaskDelay(2000 / portTICK_PERIOD_MS);
                             }
                         }
@@ -4663,14 +4787,13 @@ class SettingMenu {
    private:
     static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
-    static StackType_t task_stack_[kTaskStackWords];
+    static StackType_t *task_stack_;
 };
 bool SettingMenu::running_flag = false;
 bool SettingMenu::sound_dirty = false;
 TaskHandle_t SettingMenu::task_handle_ = nullptr;
 StaticTask_t SettingMenu::task_buffer_;
-EXT_RAM_ATTR StackType_t
-    SettingMenu::task_stack_[SettingMenu::kTaskStackWords];
+StackType_t *SettingMenu::task_stack_ = nullptr;
 
 class Game {
    public:
@@ -4679,13 +4802,18 @@ class Game {
 
     static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
-    static StackType_t task_stack_[kTaskStackWords];
+    static StackType_t *task_stack_;
     static bool wdt_registered_;
 
     void start_game_task() {
         printf("Start Game Task...");
         if (task_handle_) {
             ESP_LOGW("GAME", "Task already running");
+            return;
+        }
+        if (!allocate_internal_stack(task_stack_, kTaskStackWords, "Game")) {
+            ESP_LOGE("GAME", "Stack alloc failed");
+            running_flag = false;
             return;
         }
         running_flag = true;
@@ -4804,7 +4932,7 @@ class Game {
             }
 
             sprite.setTextColor(0xFFFF, 0x0000);
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
 
             Joystick::joystick_state_t joy = joystick.get_joystick_state();
             Button::button_state_t type_state = type_button.get_button_state();
@@ -4836,7 +4964,7 @@ class Game {
         sprite.setFont(&fonts::Font2);
         sprite.setTextColor(0xFFFF, 0x0000);
         sprite.drawCenterString("Launching...", 64, 28);
-        sprite.pushSprite(&lcd, 0, 0);
+        push_sprite_safe(0, 0);
 
         return wasm_runtime::run_game("/spiffs/games/mopping.wasm");
     }
@@ -5010,7 +5138,7 @@ class Game {
                 sprite.drawFastHLine(78, 16, 128, 0xFFFF);
                 sprite.drawRect(50, 2, 26, 26, 0xFFFF);
 
-                sprite.pushSprite(&lcd, 0, 0);
+                push_sprite_safe(0, 0);
 
                 message_text += alphabet_text;
                 alphabet_text = "";
@@ -5073,7 +5201,7 @@ class Game {
                 sprite.drawCenterString(t_text.c_str(), 64, 22);
             }
             // Play時間を表示
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
 
             while (1) {
                 Joystick::joystick_state_t joystick_state =
@@ -5133,7 +5261,7 @@ class Game {
 bool Game::running_flag = false;
 TaskHandle_t Game::task_handle_ = nullptr;
 StaticTask_t Game::task_buffer_;
-EXT_RAM_ATTR StackType_t Game::task_stack_[Game::kTaskStackWords];
+StackType_t *Game::task_stack_ = nullptr;
 bool Game::wdt_registered_ = false;
 
 void Game::feed_wdt() {
@@ -5206,7 +5334,7 @@ static void play_morse_message(const std::string &text,
             sprite.drawCenterString(header.c_str(), cx, 15);
         }
         sprite.drawCenterString((display + morse_part).c_str(), cx, cy);
-        sprite.pushSprite(&lcd, 0, 0);
+        push_sprite_safe(0, 0);
     };
 
     std::string display_accum;
@@ -5303,6 +5431,11 @@ class MenuDisplay {
             ESP_LOGW(TAG, "menu_task already running");
             return;
         }
+        if (!allocate_internal_stack(task_stack_, kTaskStackWords,
+                                   "MenuDisplay")) {
+            ESP_LOGE(TAG, "Failed to alloc menu stack");
+            return;
+        }
         // Increase stack to avoid rare overflows during heavy UI & networking
         task_handle_ = xTaskCreateStaticPinnedToCore(
             &menu_task, "menu_task", kTaskStackWords, NULL, 6, task_stack_,
@@ -5348,10 +5481,20 @@ class MenuDisplay {
 
         lcd.setRotation(2);
 
-        sprite.setColorDepth(8);
-        sprite.setFont(&fonts::Font4);
-        sprite.setTextWrap(false);  // 右端到達時のカーソル折り返しを禁止
-        sprite.createSprite(lcd.width(), lcd.height());
+        auto ensure_menu_sprite = [&]() -> bool {
+            if (!ensure_sprite_surface(lcd.width(), lcd.height(), 8,
+                                       "MenuDisplay")) {
+                return false;
+            }
+            sprite.setFont(&fonts::Font4);
+            sprite.setTextWrap(false);  // disable wrap at right edge
+            return true;
+        };
+
+        if (!ensure_menu_sprite()) {
+            ESP_LOGW(TAG,
+                     "[OLED] MenuDisplay sprite unavailable; running headless");
+        }
 
         // 開始時間を取得 st=start_time
         long long int st = esp_timer_get_time();
@@ -5391,7 +5534,7 @@ class MenuDisplay {
             }
 
             sprite.fillRect(0, 0, 128, 64, 0);
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
 
             const gpio_num_t wake_pins[] = {
                 type_button.gpio_num,
@@ -5429,13 +5572,20 @@ class MenuDisplay {
             enter_button.reset_timer();
             joystick.reset_timer();
             st = esp_timer_get_time();
-            lcd.init();
-            lcd.setRotation(2);
-            sprite.pushSprite(&lcd, 0, 0);
+            g_oled_ready = false;
+            if (ensure_menu_sprite()) {
+                push_sprite_safe(0, 0);
+            }
             return true;
         };
 
         while (1) {
+            if (sprite.getBuffer() == nullptr) {
+                if (!ensure_menu_sprite()) {
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                    continue;
+                }
+            }
             // 画面上部のステータス表示
             sprite.drawFastHLine(0, 12, 128, 0xFFFF);
 
@@ -5613,7 +5763,7 @@ class MenuDisplay {
                 }
             }
 
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
             sprite.fillRect(0, 0, 128, 64, 0);
 
             // esp_task_wdt_reset();
@@ -5642,15 +5792,14 @@ class MenuDisplay {
     };
 
    private:
-    static TaskHandle_t task_handle_;
+   static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
-    static StackType_t task_stack_[kTaskStackWords];
+    static StackType_t *task_stack_;
 };
 
 TaskHandle_t MenuDisplay::task_handle_ = nullptr;
 StaticTask_t MenuDisplay::task_buffer_;
-EXT_RAM_ATTR StackType_t
-    MenuDisplay::task_stack_[MenuDisplay::kTaskStackWords];
+StackType_t *MenuDisplay::task_stack_ = nullptr;
 
 class ProfileSetting {
    public:
@@ -5751,7 +5900,7 @@ class ProfileSetting {
             sprite.print(("Name: " + type_text).c_str());
             sprite.drawFastHLine(0, 45, 128, 0xFFFF);
 
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
             // Feed watchdog / yield to scheduler
             vTaskDelay(10 / portTICK_PERIOD_MS);
         }
@@ -5806,7 +5955,7 @@ class ProfileSetting {
             sprite.fillRect(0, 0, 128, 64, 0);
             sprite.drawCenterString("HI, DE Mimoc.", cx, cy);
             sprite.drawCenterString("YOU ARE?", cx, cy + 17);
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
             cy--;
             vTaskDelay(20 / portTICK_PERIOD_MS);
         }
@@ -5840,7 +5989,7 @@ class ProfileSetting {
             sprite.setTextColor(0xFFFFFFu, 0x000000u);
             sprite.drawCenterString("Register/Login Failed", 64, 18);
             sprite.drawCenterString("Check creds & network", 64, 34);
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
             vTaskDelay(1200 / portTICK_PERIOD_MS);
         }
     };
@@ -5851,15 +6000,15 @@ class Oled {
     void BootDisplay() {
         printf("Booting!!!\n");
 
-        lcd.init();
-        lcd.clearDisplay();
-        lcd.setRotation(2);
-        lcd.fillScreen(0x000000u);
-
-        sprite.createSprite(lcd.width(), lcd.height());
+        constexpr int kBootWidth = 128;
+        constexpr int kBootHeight = 64;
+        if (!ensure_sprite_surface(kBootWidth, kBootHeight, 8,
+                                   "BootDisplay")) {
+            return;
+        }
 
         sprite.drawBitmap(32, 0, mimocLogo, 64, 64, TFT_WHITE, TFT_BLACK);
-        sprite.pushSprite(&lcd, 0, 0);
+        push_sprite_safe(0, 0);
 
         // mopping_main();
     }
@@ -5920,7 +6069,7 @@ class Oled {
                     timeinfo.tm_sec);
             sprite.drawCenterString(char_time, 64, 25);
 
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
         }
     }
 
@@ -5935,7 +6084,7 @@ class Oled {
             sprite.print(notif_text);  // 1バイトずつ出力
             // sprite.scroll(0, 0);  //
             // キャンバスの内容を1ドット上にスクロール
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
         }
 
         for (int i = 20; i >= -50; i--) {
@@ -5943,7 +6092,7 @@ class Oled {
             sprite.print(notif_text);  // 1バイトずつ出力
             // sprite.scroll(0, 0);  //
             // キャンバスの内容を1ドット上にスクロール
-            sprite.pushSprite(&lcd, 0, 0);
+            push_sprite_safe(0, 0);
         }
     }
 
@@ -5961,6 +6110,6 @@ class Oled {
         // sprite.drawBitmap(32, 0, mimocLogo, 64, 64, TFT_WHITE,
         // TFT_BLACK);
 
-        sprite.pushSprite(&lcd, 0, 0);
+        push_sprite_safe(0, 0);
     }
 };

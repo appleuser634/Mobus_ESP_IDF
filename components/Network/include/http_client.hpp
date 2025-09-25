@@ -175,9 +175,26 @@ esp_err_t _http_client_event_handler(esp_http_client_event_t *evt) {
 }
 
 static constexpr uint32_t kHttpGetTaskStackWords = 6192;
-static EXT_RAM_ATTR StackType_t http_get_task_stack[kHttpGetTaskStackWords];
+static StackType_t *http_get_task_stack = nullptr;
 static StaticTask_t http_get_task_buffer;
 static TaskHandle_t http_get_task_handle = nullptr;
+
+static StackType_t *ensure_http_get_stack() {
+    if (http_get_task_stack) return http_get_task_stack;
+    size_t bytes = kHttpGetTaskStackWords * sizeof(StackType_t);
+    http_get_task_stack = static_cast<StackType_t *>(heap_caps_malloc(
+        bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (!http_get_task_stack) {
+        ESP_LOGE(TAG,
+                 "Failed to alloc http_get stack (bytes=%u free=%u largest=%u)",
+                 static_cast<unsigned>(bytes),
+                 static_cast<unsigned>(heap_caps_get_free_size(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+    }
+    return http_get_task_stack;
+}
 
 JsonDocument res;
 volatile int res_flag = 0;
@@ -494,6 +511,16 @@ class HttpClient {
             return res;
         }
         res_flag = 0;
+        if (!ensure_http_get_stack()) {
+            ESP_LOGE(TAG, "http_get_message_task: stack alloc failed");
+            delete arg;
+            StaticJsonDocument<128> emptyDoc;
+            emptyDoc.createNestedArray("messages");
+            std::string outBuf;
+            serializeJson(emptyDoc, outBuf);
+            deserializeJson(res, outBuf);
+            return res;
+        }
         http_get_task_handle = xTaskCreateStaticPinnedToCore(
             &http_get_message_task, "http_get_message_task",
             kHttpGetTaskStackWords, arg, 5, http_get_task_stack,

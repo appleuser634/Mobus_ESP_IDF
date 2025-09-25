@@ -1,3 +1,8 @@
+#include "esp_attr.h"
+#include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 // SNTP初期化とNTPからの時刻同期
 static void initialize_sntp(void) {
     ESP_LOGI(TAG, "Initializing SNTP");
@@ -28,6 +33,29 @@ static void wait_for_time_sync(void) {
     }
 }
 
+namespace {
+
+constexpr uint32_t kSetRtcTaskStackWords = 4048;
+StaticTask_t set_rtc_task_buffer;
+TaskHandle_t set_rtc_task_handle = nullptr;
+StackType_t *set_rtc_task_stack = nullptr;
+
+StackType_t *ensure_set_rtc_stack() {
+    if (set_rtc_task_stack) return set_rtc_task_stack;
+    size_t bytes = kSetRtcTaskStackWords * sizeof(StackType_t);
+    set_rtc_task_stack = static_cast<StackType_t *>(heap_caps_malloc(
+        bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (!set_rtc_task_stack) {
+        ESP_LOGE(TAG, "set_rtc stack alloc failed (bytes=%u free=%u)",
+                 static_cast<unsigned>(bytes),
+                 static_cast<unsigned>(heap_caps_get_free_size(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+    }
+    return set_rtc_task_stack;
+}
+
+}  // namespace
+
 void set_rtc(void *pvParameters) {
     // Set RTC
     while (1) {
@@ -49,5 +77,19 @@ void set_rtc(void *pvParameters) {
 
 void start_rtc_task() {
     printf("Start Rtc Task...");
-    xTaskCreatePinnedToCore(set_rtc, "set_rtc", 4048, NULL, 6, NULL, 0);
+    if (set_rtc_task_handle) {
+        ESP_LOGW(TAG, "set_rtc task already running");
+        return;
+    }
+    if (!ensure_set_rtc_stack()) {
+        return;
+    }
+    set_rtc_task_handle = xTaskCreateStaticPinnedToCore(
+        set_rtc, "set_rtc", kSetRtcTaskStackWords, nullptr, 6,
+        set_rtc_task_stack, &set_rtc_task_buffer, 0);
+    if (!set_rtc_task_handle) {
+        ESP_LOGE(TAG, "Failed to start set_rtc task (free_heap=%u)",
+                 static_cast<unsigned>(heap_caps_get_free_size(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+    }
 }
