@@ -11,6 +11,7 @@
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
+#include <ArduinoJson.h>
 #include <button.h>
 #include <max98357a.h>
 #include <gb_synth.hpp>
@@ -1086,7 +1087,7 @@ class MessageBox {
                 if (!js.empty()) {
                     ESP_LOGI(TAG, "[BLE] Received cached response (%zu bytes)",
                              js.size());
-                    StaticJsonDocument<4096> in;
+                    DynamicJsonDocument in(4096);
                     DeserializationError err = deserializeJson(in, js);
                     if (err == DeserializationError::Ok) {
                         int count = 0;
@@ -1113,7 +1114,7 @@ class MessageBox {
                         } else if (in["messages"].is<JsonArray>()) {
                             // Transform {content,sender_id,receiver_id} ->
                             // {message,from}
-                            StaticJsonDocument<4096> out;
+                            DynamicJsonDocument out(4096);
                             auto arr = out.createNestedArray("messages");
                             std::string my_id = get_nvs((char *)"user_id");
                             std::string my_name = get_nvs((char *)"user_name");
@@ -1152,7 +1153,7 @@ class MessageBox {
                             deserializeJson(res, outBuf);
                         } else if (in["payload"]["messages"].is<JsonArray>()) {
                             // Handle { type:..., payload: { messages:[...] } }
-                            StaticJsonDocument<4096> out;
+                            DynamicJsonDocument out(4096);
                             auto arr = out.createNestedArray("messages");
                             std::string my_id = get_nvs((char *)"user_id");
                             std::string my_name = get_nvs((char *)"user_name");
@@ -1481,12 +1482,12 @@ std::string wifi_input_info_proxy(std::string input_type,
 class ContactBook {
    public:
     static bool running_flag;
-    static constexpr uint32_t kTaskStackWords = 12288;
+    static constexpr uint32_t kTaskStackWords = 4096;
 
     void start_message_menue_task() {
         printf("Start ContactBook Task...");
         if (task_handle_) {
-            ESP_LOGW("CONTACT", "Task already running");
+            ESP_LOGD("CONTACT", "Task already running");
             return;
         }
         if (!allocate_internal_stack(task_stack_, kTaskStackWords,
@@ -1517,28 +1518,35 @@ class ContactBook {
         if (esp_task_wdt_add(NULL) == ESP_OK) {
             wdt_registered = true;
         } else {
-            ESP_LOGW("CONTACT", "esp_task_wdt_add failed");
+            ESP_LOGD("CONTACT", "esp_task_wdt_add failed");
         }
         auto feed_wdt = [&]() {
             if (!wdt_registered) return;
             esp_err_t err = esp_task_wdt_reset();
             if (err != ESP_OK) {
-                ESP_LOGW("CONTACT", "esp_task_wdt_reset failed: %s",
+                ESP_LOGD("CONTACT", "esp_task_wdt_reset failed: %s",
                          esp_err_to_name(err));
             }
         };
         auto finish_task = [&]() {
             running_flag = false;
             task_handle_ = nullptr;
+            UBaseType_t watermark_words = uxTaskGetStackHighWaterMark(nullptr);
+            ESP_LOGI("CONTACT",
+                     "stack high watermark: %u words (%u bytes)",
+                     static_cast<unsigned>(watermark_words),
+                     static_cast<unsigned>(watermark_words * sizeof(StackType_t)));
             if (wdt_registered) {
                 esp_err_t del_err = esp_task_wdt_delete(NULL);
                 if (del_err != ESP_OK) {
-                    ESP_LOGW("CONTACT", "esp_task_wdt_delete failed: %s",
+                    ESP_LOGD("CONTACT", "esp_task_wdt_delete failed: %s",
                              esp_err_to_name(del_err));
                 }
             }
             vTaskDelete(NULL);
         };
+
+        HttpClient &http_client = HttpClient::shared();
 
         auto recreate_contact_sprite = [&](int width, int height) -> bool {
             struct Attempt {
@@ -1557,7 +1565,7 @@ class ContactBook {
                 sprite.setFont(&fonts::Font2);
                 sprite.setTextWrap(true);
                 if (sprite.createSprite(width, height)) {
-                    ESP_LOGI("CONTACT",
+                    ESP_LOGD("CONTACT",
                              "Sprite created %dx%d depth=%u psram=%s (free=%u "
                              "largest=%u)",
                              width, height, attempt.depth,
@@ -1568,7 +1576,7 @@ class ContactBook {
                                  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
                     return true;
                 }
-                ESP_LOGW("CONTACT",
+                ESP_LOGD("CONTACT",
                          "createSprite(%d,%d) depth=%u psram=%s failed "
                          "(free=%u largest=%u)",
                          width, height, attempt.depth,
@@ -1615,7 +1623,7 @@ class ContactBook {
             while (waited < timeout_ms) {
                 std::string js = get_nvs((char *)"ble_contacts");
                 if (!js.empty()) {
-                    StaticJsonDocument<6144> doc;
+                    DynamicJsonDocument doc(6144);
                     if (deserializeJson(doc, js) == DeserializationError::Ok) {
                         JsonArray arr = doc["friends"].as<JsonArray>();
                         if (!arr.isNull()) {
@@ -1702,14 +1710,8 @@ class ContactBook {
                 vTaskDelay(100 / portTICK_PERIOD_MS);
             }
 
-            auto &api =
-                chatapi::shared_client(true);  // uses NVS server_host/port
-            api.set_scheme("https");
             const auto creds = chatapi::load_credentials_from_nvs();
-            (void)chatapi::ensure_authenticated(api, creds, false);
             std::string username = creds.username;
-            std::string resp;
-            int friends_status = 0;
             if (recreate_contact_sprite(lcd.width(), lcd.height())) {
                 sprite.fillRect(0, 0, 128, 64, 0);
                 sprite.setFont(&fonts::Font2);
@@ -1718,38 +1720,19 @@ class ContactBook {
                 sprite.drawCenterString("via Wi-Fi", 64, 40);
                 push_sprite_safe(0, 0);
             }
-            ESP_LOGI(TAG,
-                     "[HTTP] Contact list fetch start (free=%u largest=%u)",
-                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
-                                                       MALLOC_CAP_8BIT),
-                     (unsigned)heap_caps_get_largest_free_block(
-                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
             feed_wdt();
-            esp_err_t friends_err = api.get_friends(resp, &friends_status);
-            if (friends_err == ESP_OK && friends_status == 401) {
-                ESP_LOGW(TAG,
-                         "Friends list request unauthorized; refreshing token");
-                if (chatapi::ensure_authenticated(api, creds, false,
-                                                  /*force_refresh=*/true) ==
-                    ESP_OK) {
-                    resp.clear();
-                    friends_status = 0;
-                    friends_err = api.get_friends(resp, &friends_status);
-                }
-            }
+            auto friends_resp = http_client.fetch_friends_blocking(15000);
             feed_wdt();
             if (!recreate_contact_sprite(lcd.width(), lcd.height())) {
                 ESP_LOGE("CONTACT", "Sprite recreate failed after HTTP");
                 finish_task();
                 return;
             }
-            ESP_LOGI(TAG, "[HTTP] friends status=%d err=%s len=%u",
-                     friends_status, esp_err_to_name(friends_err),
-                     (unsigned)resp.size());
-            if (friends_err == ESP_OK && friends_status >= 200 &&
-                friends_status < 300) {
-                StaticJsonDocument<4096> doc;
-                DeserializationError derr = deserializeJson(doc, resp);
+            if (friends_resp.err == ESP_OK && friends_resp.status >= 200 &&
+                friends_resp.status < 300) {
+                DynamicJsonDocument doc(4096);
+                DeserializationError derr =
+                    deserializeJson(doc, friends_resp.payload);
                 if (derr == DeserializationError::Ok) {
                     for (JsonObject f : doc["friends"].as<JsonArray>()) {
                         contact_t c;
@@ -1774,11 +1757,13 @@ class ContactBook {
                         }
                     }
                 } else {
-                    ESP_LOGW("CONTACT", "JSON parse failed: %s", derr.c_str());
+                    ESP_LOGD("CONTACT", "JSON parse failed: %s", derr.c_str());
                 }
             } else {
-                ESP_LOGW(TAG, "Friend list fetch failed (err=%s status=%d)",
-                         esp_err_to_name(friends_err), friends_status);
+                ESP_LOGW("CONTACT",
+                         "Friends fetch failed (err=%s status=%d)",
+                         esp_err_to_name(friends_resp.err),
+                         friends_resp.status);
             }
         }
 
@@ -1787,7 +1772,6 @@ class ContactBook {
         int margin = 3;
         int noti_circle_margin = 13;
 
-        HttpClient &http_client = HttpClient::shared();
         // 通知の取得
         JsonDocument notif_res = http_client.get_notifications();
 
@@ -1968,7 +1952,7 @@ class ContactBook {
                             feed_wdt();
                             std::string js = get_nvs((char *)"ble_pending");
                             if (!js.empty()) {
-                                StaticJsonDocument<4096> pdoc;
+                                DynamicJsonDocument pdoc(4096);
                                 if (deserializeJson(pdoc, js) ==
                                     DeserializationError::Ok) {
                                     for (JsonObject r :
@@ -1996,7 +1980,7 @@ class ContactBook {
                     if (pending.empty()) {
                         std::string presp;
                         if (api.get_pending_requests(presp) == ESP_OK) {
-                            StaticJsonDocument<2048> pdoc;
+                            DynamicJsonDocument pdoc(2048);
                             if (deserializeJson(pdoc, presp) ==
                                 DeserializationError::Ok) {
                                 for (JsonObject r :
@@ -2011,13 +1995,13 @@ class ContactBook {
                                             : "";
                                     if (!rid.empty())
                                         pending.push_back({rid, uname});
-                                }
-                            }
                         }
                     }
+                }
+        }
 
-                    int psel = 0;
-                    while (1) {
+        int psel = 0;
+        while (1) {
                         sprite.fillRect(0, 0, 128, 64, 0);
                         sprite.setFont(&fonts::Font2);
                         sprite.setTextColor(0xFFFFFFu, 0x000000u);
@@ -2187,8 +2171,7 @@ class ContactBook {
                                                 std::string js = get_nvs(
                                                     (char *)"ble_pending");
                                                 if (!js.empty()) {
-                                                    StaticJsonDocument<2048>
-                                                        pdoc2;
+                                                    DynamicJsonDocument pdoc2(2048);
                                                     if (deserializeJson(pdoc2,
                                                                         js) ==
                                                         DeserializationError::
@@ -5787,6 +5770,10 @@ class MenuDisplay {
             vTaskDelay(50 / portTICK_PERIOD_MS);
         }
 
+        UBaseType_t watermark_words = uxTaskGetStackHighWaterMark(nullptr);
+        ESP_LOGI(TAG, "menu_task stack high watermark: %u words (%u bytes)",
+                 static_cast<unsigned>(watermark_words),
+                 static_cast<unsigned>(watermark_words * sizeof(StackType_t)));
         task_handle_ = nullptr;
         vTaskDelete(NULL);
     };

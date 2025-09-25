@@ -179,6 +179,20 @@ static StackType_t *http_get_task_stack = nullptr;
 static StaticTask_t http_get_task_buffer;
 static TaskHandle_t http_get_task_handle = nullptr;
 
+static constexpr uint32_t kHttpFriendsTaskStackWords = 6144;
+static StackType_t *http_get_friends_task_stack = nullptr;
+static StaticTask_t http_get_friends_task_buffer;
+static TaskHandle_t http_get_friends_task_handle = nullptr;
+static TaskHandle_t http_get_friends_waiter = nullptr;
+
+struct HttpFriendsTaskResult {
+    esp_err_t err = ESP_FAIL;
+    int status = 0;
+    std::string payload;
+};
+
+static HttpFriendsTaskResult *http_get_friends_result = nullptr;
+
 static StackType_t *ensure_http_get_stack() {
     if (http_get_task_stack) return http_get_task_stack;
     size_t bytes = kHttpGetTaskStackWords * sizeof(StackType_t);
@@ -194,6 +208,23 @@ static StackType_t *ensure_http_get_stack() {
                      MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
     }
     return http_get_task_stack;
+}
+
+static StackType_t *ensure_http_friends_stack() {
+    if (http_get_friends_task_stack) return http_get_friends_task_stack;
+    size_t bytes = kHttpFriendsTaskStackWords * sizeof(StackType_t);
+    http_get_friends_task_stack = static_cast<StackType_t *>(heap_caps_malloc(
+        bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (!http_get_friends_task_stack) {
+        ESP_LOGE(TAG,
+                 "Failed to alloc http_get_friends stack (bytes=%u free=%u largest=%u)",
+                 static_cast<unsigned>(bytes),
+                 static_cast<unsigned>(heap_caps_get_free_size(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+    }
+    return http_get_friends_task_stack;
 }
 
 JsonDocument res;
@@ -307,6 +338,35 @@ void http_get_message_task(void *pvParameters) {
     deserializeJson(res, outBuf);
     res_flag = 1;
     http_get_task_handle = nullptr;
+    vTaskDelete(NULL);
+}
+
+static void http_get_friends_task(void *pvParameters) {
+    (void)pvParameters;
+    HttpFriendsTaskResult res;
+
+    auto &api = dev_chat_api();
+    api.set_scheme("https");
+    const auto creds = chatapi::load_credentials_from_nvs();
+    if (chatapi::ensure_authenticated(api, creds) != ESP_OK) {
+        ESP_LOGW(TAG, "Friends fetch auth failed; attempting cached token");
+    }
+
+    res.err = api.get_friends(res.payload, &res.status);
+    if (res.err == ESP_OK && res.status == 401) {
+        if (chatapi::ensure_authenticated(api, creds, false,
+                                          /*force_refresh=*/true) == ESP_OK) {
+            res.payload.clear();
+            res.status = 0;
+            res.err = api.get_friends(res.payload, &res.status);
+        }
+    }
+
+    http_get_friends_result = new HttpFriendsTaskResult(std::move(res));
+    if (http_get_friends_waiter) {
+        xTaskNotifyGive(http_get_friends_waiter);
+    }
+    http_get_friends_task_handle = nullptr;
     vTaskDelete(NULL);
 }
 
@@ -439,6 +499,12 @@ class HttpClient {
         return instance;
     }
 
+    struct FriendsResponse {
+        esp_err_t err = ESP_FAIL;
+        int status = 0;
+        std::string payload;
+    };
+
     bool notif_flag = false;
 
     HttpClient(void) {
@@ -558,6 +624,56 @@ class HttpClient {
     bool mark_message_read(const std::string &message_id) {
         (void)message_id;
         return false;
+    }
+
+    FriendsResponse fetch_friends_blocking(uint32_t timeout_ms = 12000) {
+        FriendsResponse out;
+        if (http_get_friends_task_handle) {
+            out.err = ESP_ERR_INVALID_STATE;
+            return out;
+        }
+        if (!ensure_http_friends_stack()) {
+            out.err = ESP_ERR_NO_MEM;
+            return out;
+        }
+        http_get_friends_result = nullptr;
+        http_get_friends_waiter = xTaskGetCurrentTaskHandle();
+        http_get_friends_task_handle = xTaskCreateStaticPinnedToCore(
+            &http_get_friends_task, "http_get_friends_task",
+            kHttpFriendsTaskStackWords, nullptr, 5, http_get_friends_task_stack,
+            &http_get_friends_task_buffer, tskNO_AFFINITY);
+        if (!http_get_friends_task_handle) {
+            http_get_friends_waiter = nullptr;
+            out.err = ESP_ERR_NO_MEM;
+            return out;
+        }
+
+        uint32_t wait_ticks =
+            timeout_ms ? pdMS_TO_TICKS(timeout_ms) : portMAX_DELAY;
+        if (ulTaskNotifyTake(pdTRUE, wait_ticks) == 0) {
+            http_get_friends_waiter = nullptr;
+            if (http_get_friends_result) {
+                out.err = http_get_friends_result->err;
+                out.status = http_get_friends_result->status;
+                out.payload = std::move(http_get_friends_result->payload);
+                delete http_get_friends_result;
+                http_get_friends_result = nullptr;
+            } else {
+                out.err = ESP_ERR_TIMEOUT;
+            }
+            return out;
+        }
+        http_get_friends_waiter = nullptr;
+        if (http_get_friends_result) {
+            out.err = http_get_friends_result->err;
+            out.status = http_get_friends_result->status;
+            out.payload = std::move(http_get_friends_result->payload);
+            delete http_get_friends_result;
+            http_get_friends_result = nullptr;
+        } else {
+            out.err = ESP_FAIL;
+        }
+        return out;
     }
 
     void start_notifications() {
