@@ -2,6 +2,7 @@
 #include <iterator>
 #include <string>
 #include <cstdlib>
+#include <cstring>
 #include <algorithm>
 #include <vector>
 #include <cctype>
@@ -894,7 +895,33 @@ class MessageBox {
             "[BLE] Opening message box (identifier=%s short=%s friend_id=%s)",
             chat_to.c_str(), active_short_id.c_str(), active_friend_id.c_str());
         JsonDocument res;
+        struct MessageViewEntry {
+            JsonObject obj;
+        };
+        std::vector<MessageViewEntry> message_views;
         const std::string server_chat_id = resolve_chat_backend_id(chat_to);
+        auto message_playback_key = [&](const JsonObject &msg) -> std::string {
+            std::string key = server_chat_id;
+            key.push_back('|');
+            const char *mid = msg["id"] | static_cast<const char *>(nullptr);
+            if ((!mid || mid[0] == '\0') && msg.containsKey("message_id")) {
+                mid = msg["message_id"].as<const char *>();
+            }
+            const char *created = msg["created_at"] | static_cast<const char *>(nullptr);
+            const char *content = msg["message"].as<const char *>();
+            if (mid && mid[0] != '\0') {
+                key.append(mid);
+            } else if (created && created[0] != '\0') {
+                key.append("ts:");
+                key.append(created);
+            } else if (content && content[0] != '\0') {
+                key.append("msg:");
+                key.append(content);
+            } else {
+                key.append("unknown");
+            }
+            return key;
+        };
         auto fetch_messages_via_ble = [&](const std::string &fid,
                                           int timeout_ms) -> bool {
             if (wifi_is_connected()) {
@@ -1111,8 +1138,9 @@ class MessageBox {
                 std::string message_id_str =
                     (message_id && message_id[0] != '\0') ? message_id
                                                           : std::string();
-                if (!message_id_str.empty() &&
-                    played_message_ids_.count(message_id_str)) {
+                std::string playback_key = message_playback_key(msg);
+                if (!playback_key.empty() &&
+                    played_message_ids_.count(playback_key)) {
                     unread = false;
                 }
                 if (!unread) continue;
@@ -1125,11 +1153,11 @@ class MessageBox {
                     continue;
                 }
                 play_morse_message(content, morse_header);
-                if (!message_id_str.empty()) {
-                    played_message_ids_.insert(message_id_str);
-                    if (played_message_ids_.size() > 512) {
+                if (!playback_key.empty()) {
+                    played_message_ids_.insert(playback_key);
+                    if (played_message_ids_.size() > 1024) {
                         played_message_ids_.clear();
-                        played_message_ids_.insert(message_id_str);
+                        played_message_ids_.insert(playback_key);
                     }
                     if (!http_client.mark_message_read(message_id_str)) {
                         ESP_LOGW(TAG,
@@ -1150,13 +1178,49 @@ class MessageBox {
         // http.notif_flag = false;
 
         int font_height = 16;
-        // When message count is small, avoid positive min_offset which causes
-        // jitter.
         int max_offset_y = 0;
-        int min_offset_y = (int)((int)font_height * 2 -
-                                 (int)res["messages"].size() * font_height);
-        if (min_offset_y > 0) min_offset_y = 0;
+        int min_offset_y = 0;
         int offset_y = 0;
+
+        auto rebuild_message_view = [&](bool jump_to_bottom) {
+            message_views.clear();
+            if (res["messages"].is<JsonArray>()) {
+                for (JsonObject msg : res["messages"].as<JsonArray>()) {
+                    message_views.push_back({msg});
+                }
+                std::stable_sort(message_views.begin(), message_views.end(),
+                                 [](const MessageViewEntry &a,
+                                    const MessageViewEntry &b) {
+                                     const char *created_a =
+                                         a.obj["created_at"] |
+                                         static_cast<const char *>("");
+                                     const char *created_b =
+                                         b.obj["created_at"] |
+                                         static_cast<const char *>("");
+                                     int cmp = strcmp(created_a, created_b);
+                                     if (cmp == 0) {
+                                         const char *id_a =
+                                             a.obj["id"] |
+                                             static_cast<const char *>("");
+                                         const char *id_b =
+                                             b.obj["id"] |
+                                             static_cast<const char *>("");
+                                         return strcmp(id_a, id_b) < 0;
+                                     }
+                                     return cmp < 0;
+                                 });
+            }
+            min_offset_y = (int)((int)font_height * 2 -
+                                 (int)message_views.size() * font_height);
+            if (min_offset_y > 0) min_offset_y = 0;
+            if (jump_to_bottom || offset_y < min_offset_y) {
+                offset_y = min_offset_y;
+            } else if (offset_y > max_offset_y) {
+                offset_y = max_offset_y;
+            }
+        };
+
+        rebuild_message_view(/*jump_to_bottom=*/true);
 
         while (true) {
             sprite.fillRect(0, 0, 128, 64, 0);
@@ -1204,6 +1268,7 @@ class MessageBox {
                     res = http_client.get_message(server_chat_id);
                     (void)recreate_message_sprite(lcd.width(), lcd.height());
                 }
+                rebuild_message_view(/*jump_to_bottom=*/true);
             }
 
             if (offset_y > max_offset_y) offset_y = max_offset_y;
@@ -1211,13 +1276,13 @@ class MessageBox {
 
             // 描画処理
             int cursor_y = 0;
-            for (int i = 0; i < res["messages"].size(); i++) {
-                std::string message(res["messages"][i]["message"]);
-                std::string message_from(res["messages"][i]["from"]);
+            for (size_t i = 0; i < message_views.size(); i++) {
+                JsonObject msg = message_views[i].obj;
+                std::string message = msg["message"].as<std::string>();
+                std::string message_from = msg["from"].as<std::string>();
 
                 // cursor_y = offset_y + sprite.getCursorY() + 20;
                 cursor_y = offset_y + (font_height * (i + 1));
-                int next_cursor_y = offset_y + (font_height * (i + 2));
 
                 if (message_from != my_name) {
                     // Incoming from friend
