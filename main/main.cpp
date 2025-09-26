@@ -196,6 +196,7 @@ static const char* TAG = "Mobus v3.14";
 #include <nvs_rw.hpp>
 #include <wifi.hpp>
 #include <http_client.hpp>
+#include <notification_effects.hpp>
 #include "wasm_game_runtime.hpp"
 
 extern "C" {
@@ -203,7 +204,6 @@ extern "C" {
 #include "m3_exception.h"
 }
 #include <neopixel.hpp>
-Neopixel neopixel;
 #include <oled.hpp>
 #include <ntp.hpp>
 #include <max98357a.h>
@@ -722,6 +722,8 @@ void app_main(void) {
         ESP_LOGI("MEM_PROFILE", "Memory profiling enabled");
     }
     MemoryProfiler profiler(mem_profile_enabled);
+
+    notification_effects::init();
 
     // Defer OTA validation (only if rollback is enabled): mark app valid after
     // system stabilizes

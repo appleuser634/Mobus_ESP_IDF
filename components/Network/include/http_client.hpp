@@ -37,6 +37,7 @@
 
 #include "chat_api.hpp"
 #include "mqtt_runtime.h"
+#include <notification_effects.hpp>
 
 #define MAX_HTTP_RECV_BUFFER 512
 #define MAX_HTTP_OUTPUT_BUFFER 2048
@@ -442,6 +443,7 @@ void http_get_notifications_task(void *pvParameters) {
             serializeJson(out, outBuf);
             deserializeJson(notif_res, outBuf);
             notif_res_flag = 1;
+            notification_effects::signal_new_message();
         }
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
