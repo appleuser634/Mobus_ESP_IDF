@@ -5934,7 +5934,7 @@ static void play_morse_message(const std::string &text,
 class MenuDisplay {
 #define NAME_LENGTH_MAX 8
    public:
-    static constexpr uint32_t kTaskStackWords = 12288;
+    static constexpr uint32_t kTaskStackWords = 4288;
 
     void start_menu_task() {
         printf("Start Menu Task...");
