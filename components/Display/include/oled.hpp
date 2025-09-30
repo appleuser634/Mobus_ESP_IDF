@@ -3608,7 +3608,7 @@ void Profile() {
 // Simple Game Boy-like step composer UI (2x Pulse + Noise)
 class Composer {
    public:
-    static constexpr uint32_t kTaskStackWords = 16384;
+    static constexpr uint32_t kTaskStackWords = 8384;
     static bool running_flag;
     static TaskHandle_t s_play_task;
     static volatile bool s_abort;
@@ -5308,7 +5308,7 @@ StackType_t *SettingMenu::task_stack_ = nullptr;
 
 class Game {
    public:
-    static constexpr uint32_t kTaskStackWords = 22288;  // 48 KB task stack
+    static constexpr uint32_t kTaskStackWords = 14288;  // 48 KB task stack
     static bool running_flag;
 
     static TaskHandle_t task_handle_;

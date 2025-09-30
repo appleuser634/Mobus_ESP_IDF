@@ -28,7 +28,7 @@
 | `Composer::composer_task` | 同:3631 | `Composer::start_composer_task()` | 16384 words ≒ 64KB / prio6 / core1 | 作曲UI→再生サブタスク管理→終了時`vTaskDelete` |
 | `compose_play` | 同:4314 | `Composer::composer_task()`内で再生要求時 | 4096 words ≒ 16KB / prio5 / core1 | PCM生成し再生→完了後`Composer::s_play_task=nullptr`→`vTaskDelete` |
 | `SettingMenu::message_menue_task` | 同:4380 | `SettingMenu::start_message_menue_task()` | 6192 words ≒ 25KB / prio6 / core1 | 設定UI→選択に応じ他タスク起動→終了で`vTaskDelete` |
-| `Game::game_task` | 同:5331 | `Game::start_game_task()` | 22288 words ≒ 87KB / prio6 / core1 | ゲーム選択/実行→WDT監視→終了で`vTaskDelete` |
+| `Game::game_task` | 同:5331 | `Game::start_game_task()` | 14288 words ≒ 87KB / prio6 / core1 | ゲーム選択/実行→WDT監視→終了で`vTaskDelete` |
 | `MenuDisplay::menu_task` | 同:5951 | `MenuDisplay::start_menu_task()` | 4288 words ≒ 48KB / prio6 / core0 | メインメニュー常駐→各UIタスク起動 |
 
 ## 状態遷移概要
