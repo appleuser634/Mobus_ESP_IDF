@@ -5715,6 +5715,7 @@ class Game {
             push_sprite_safe(0, 0);
 
             while (1) {
+                feed_wdt();
                 Joystick::joystick_state_t joystick_state =
                     joystick.get_joystick_state();
                 Button::button_state_t type_button_state =
@@ -5735,15 +5736,14 @@ class Game {
                     type_button.clear_button_state();
                     break;
                 }
+
+                vTaskDelay(10 / portTICK_PERIOD_MS);
             }
 
             if (break_flag) {
                 break;
             }
         }
-
-        running_flag = false;
-        vTaskDelete(NULL);
 
         buzzer.stop_tone();
         buzzer.deinit();
