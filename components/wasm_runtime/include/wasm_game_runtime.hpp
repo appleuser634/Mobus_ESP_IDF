@@ -13,8 +13,12 @@ constexpr uint32_t INPUT_JOY_RIGHT = 1u << 4;  // Joystick right edge
 constexpr uint32_t INPUT_JOY_UP = 1u << 5;     // Joystick up edge
 constexpr uint32_t INPUT_JOY_DOWN = 1u << 6;   // Joystick down edge
 
+struct GameOptions {
+    float sleep_scale = 1.0f;  // 1.0 keeps original pacing
+};
+
 // Runs a Wasm mini-game from the provided binary blob stored in SPIFFS or other
 // filesystem. Returns true when the game exits normally.
-bool run_game(const char* path);
+bool run_game(const char* path, const GameOptions& options = GameOptions{});
 
 }  // namespace wasm_runtime

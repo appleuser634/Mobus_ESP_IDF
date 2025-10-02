@@ -263,12 +263,20 @@ struct HostContext {
     Button type_button;
     Button back_button;
     Button enter_button;
+    float sleep_scale;
 
-    HostContext()
+    explicit HostContext(const GameOptions& options)
         : joystick(),
           type_button(GPIO_NUM_46),
           back_button(GPIO_NUM_3),
-          enter_button(GPIO_NUM_5) {
+          enter_button(GPIO_NUM_5),
+          sleep_scale(options.sleep_scale) {
+        if (sleep_scale < 0.1f) {
+            sleep_scale = 0.1f;
+        } else if (sleep_scale > 4.0f) {
+            sleep_scale = 4.0f;
+        }
+
         type_button.reset_timer();
         back_button.reset_timer();
         enter_button.reset_timer();
@@ -417,8 +425,22 @@ m3ApiRawFunction(host_random) {
 
 m3ApiRawFunction(host_sleep) {
     m3ApiGetArg(int32_t, ms);
+    float scale = 1.0f;
+    if (auto* ctx = get_context(runtime)) {
+        scale = ctx->sleep_scale;
+    }
+
     if (ms > 0) {
-        vTaskDelay(pdMS_TO_TICKS(ms));
+        float scaled = static_cast<float>(ms) * scale;
+        if (scaled < 1.0f) {
+            scaled = 1.0f;
+        }
+        int32_t delay_ms = static_cast<int32_t>(scaled + 0.5f);
+        if (delay_ms > 0) {
+            vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        } else {
+            taskYIELD();
+        }
     } else {
         taskYIELD();
     }
@@ -461,7 +483,7 @@ M3Result link_host_functions(IM3Module module) {
 
 }  // namespace
 
-bool run_game(const char* path) {
+bool run_game(const char* path, const GameOptions& options) {
     if (!ensure_spiffs_mounted()) {
         return false;
     }
@@ -525,7 +547,7 @@ bool run_game(const char* path) {
         return false;
     }
 
-    HostContext context;
+    HostContext context(options);
 
     IM3Environment env = m3_NewEnvironment();
     if (!env) {

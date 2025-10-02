@@ -18,6 +18,7 @@
 #include <boot_sounds.hpp>
 #include <sound_settings.hpp>
 #include <images.hpp>
+#include <wasm_game_runtime.hpp>
 #include <haptic_motor.hpp>
 #include <http_client.hpp>
 #include <nvs_rw.hpp>
@@ -5477,7 +5478,9 @@ class Game {
         sprite.drawCenterString("Launching...", 64, 28);
         push_sprite_safe(0, 0);
 
-        return wasm_runtime::run_game("/spiffs/games/mopping.wasm");
+        wasm_runtime::GameOptions options;
+        options.sleep_scale = 0.5f;
+        return wasm_runtime::run_game("/spiffs/games/mopping.wasm", options);
     }
 
     static bool run_morse_trainer(Joystick &joystick, Button &type_button,
