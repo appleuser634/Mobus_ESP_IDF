@@ -21,6 +21,7 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "http_client.hpp"
+#include "notification_bridge.hpp"
 
 #pragma once
 
@@ -71,13 +72,24 @@ void check_notification_task(void *pvParameters){
   Notification notif;
 
   while (1) {
-    if(http_client.notif_flag) {
-      notif.recv_notification();
-      http_client.notif_flag = false;
-    } 
-    else {
-      vTaskDelay(3000 / portTICK_PERIOD_MS);
+    if (notification_bridge::consume_external_hint()) {
+      if (http_client.refresh_unread_count() != ESP_OK) {
+        http_client.force_unread_hint();
+      }
     }
+
+    if (http_client.consume_unread_hint()) {
+      notif.recv_notification();
+      continue;
+    }
+
+    if (http_client.refresh_unread_count() == ESP_OK &&
+        http_client.consume_unread_hint()) {
+      notif.recv_notification();
+      continue;
+    }
+
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
   }
 }
 

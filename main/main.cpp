@@ -701,32 +701,54 @@ void check_notification() {
     // 通知の取得
     http_client.start_notifications();
 
+    auto trigger_notification = [&]() {
+        printf("got notification!\n");
+        for (int n = 0; n < 2; n++) {
+            buzzer.start_tone(2600.0f, 0.6f);
+            neopixel.set_color(0, 10, 100);
+            haptic.pulse(HapticMotor::kDefaultFrequencyHz, 50);
+            buzzer.stop_tone();
+            neopixel.set_color(0, 0, 0);
+            vTaskDelay(50 / portTICK_PERIOD_MS);
+        }
+        neopixel.set_color(0, 10, 10);
+    };
+
+    if (http_client.consume_unread_hint()) {
+        trigger_notification();
+        buzzer.stop_tone();
+        buzzer.disable();
+        return;
+    }
+
+    if (http_client.refresh_unread_count() == ESP_OK &&
+        http_client.consume_unread_hint()) {
+        trigger_notification();
+        buzzer.stop_tone();
+        buzzer.disable();
+        return;
+    }
+
     int timeout = 3;
     for (int i = 0; i < timeout; i++) {
         JsonDocument notif_res = http_client.get_notifications();
 
-        for (int i = 0; i < notif_res["notifications"].size(); i++) {
-            std::string notification_flag(
-                notif_res["notifications"][i]["notification_flag"]);
-            if (notification_flag == "true") {
-                printf("got notification!");
+        if (http_client.consume_unread_hint()) {
+            trigger_notification();
+            buzzer.stop_tone();
+            buzzer.disable();
+            return;
+        }
 
-                for (int n = 0; n < 2; n++) {
-                    buzzer.start_tone(2600.0f, 0.6f);
-                    neopixel.set_color(0, 10, 100);
-                    haptic.pulse(HapticMotor::kDefaultFrequencyHz, 50);
-                    buzzer.stop_tone();
-                    neopixel.set_color(0, 0, 0);
-                    vTaskDelay(50 / portTICK_PERIOD_MS);
-                }
-                neopixel.set_color(0, 10, 10);
-                save_nvs("notif_flag", "true");
+        for (int idx = 0; idx < notif_res["notifications"].size(); idx++) {
+            std::string notification_flag(
+                notif_res["notifications"][idx]["notification_flag"]);
+            if (notification_flag == "true") {
+                http_client.refresh_unread_count();
+                trigger_notification();
                 buzzer.stop_tone();
                 buzzer.disable();
                 return;
-            } else {
-                printf("notofication not found");
-                save_nvs("notif_flag", "false");
             }
         }
         vTaskDelay(500 / portTICK_PERIOD_MS);
@@ -861,8 +883,14 @@ void app_main(void) {
         profiler.run_step("Boot LED animation", boot_led_animation);
 
     } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
-        std::string notif_flag = get_nvs("notif_flag");
-        if (notif_flag == "false") {
+        HttpClient& http_client = HttpClient::shared();
+        esp_err_t unread_err = http_client.refresh_unread_count();
+        if (unread_err != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to refresh unread count: %s",
+                     esp_err_to_name(unread_err));
+        }
+
+        if (!http_client.has_unread_messages()) {
             printf("wake up from timer");
             EventBits_t bits =
                 xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT,
@@ -873,6 +901,8 @@ void app_main(void) {
             } else {
                 ESP_LOGW(TAG, "Wi-Fi Connection Timeout");
             }
+        } else {
+            http_client.force_unread_hint();
         }
         esp_deep_sleep_start();
     } else {
@@ -899,7 +929,6 @@ void app_main(void) {
         }
     }
     // TODO:menuから各機能の画面に遷移するように実装する
-    save_nvs("notif_flag", "false");
     profiler.run_step("Start menu task", [&]() { menu.start_menu_task(); });
 
     profiler.report_summary();

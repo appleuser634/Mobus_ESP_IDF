@@ -32,6 +32,8 @@
 // Use shared NVS helpers
 #include <nvs_rw.hpp>
 
+#include <notification_bridge.hpp>
+
 #include "include/ble_uart.hpp"
 
 // Forward declaration
@@ -66,7 +68,7 @@ static bool wifi_has_link() {
 static void handle_frame_from_phone(const std::string& frame) {
     ESP_LOGI(GATTS_TAG, "RXFrame: %s", frame.c_str());
     if (frame.find("\"type\":\"new_message\"") != std::string::npos) {
-        save_nvs((char*)"notif_flag", std::string("true"));
+        notification_bridge::handle_external_message();
     }
     // Cache friends/contacts list sent from phone app
     if (frame.find("\"type\":\"friends\"") != std::string::npos ||

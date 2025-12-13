@@ -374,83 +374,7 @@ static void http_get_friends_task(void *pvParameters) {
 static JsonDocument notif_res;
 int notif_res_flag = 0;
 
-void http_get_notifications_task(void *pvParameters) {
-    // Ensure Wi‑Fi is connected before starting MQTT
-    {
-        wifi_ap_record_t ap;
-        const int max_wait_ms = 20000;
-        int waited = 0;
-        while (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
-            vTaskDelay(100 / portTICK_PERIOD_MS);
-            waited += 100;
-            if (waited >= max_wait_ms) break;
-        }
-        if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
-            ESP_LOGW(TAG, "Wi-Fi not connected; postponing MQTT start");
-            // keep waiting a bit more to avoid tight loop
-            while (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
-                vTaskDelay(500 / portTICK_PERIOD_MS);
-            }
-        }
-    }
-    // Initialize MQTT and subscribe to user topic (via runtime)
-    auto &api = chatapi::shared_client(true);  // use NVS-configured endpoint
-    api.set_scheme("https");
-    const auto creds = chatapi::load_credentials_from_nvs();
-    if (chatapi::ensure_authenticated(api, creds) != ESP_OK) {
-        ESP_LOGW(TAG,
-                 "Chat API auth failed; continuing with cached token state");
-    }
-
-    auto api_user_id = api.user_id();
-    auto api_host = api.host();
-
-    // Choose MQTT host/port
-    std::string mqtt_host = get_nvs("mqtt_host");
-    if (mqtt_host.empty()) mqtt_host = api_host;
-    std::string mqtt_port_str = get_nvs((char *)"mqtt_port");
-    int mqtt_port = 1883;
-    if (!mqtt_port_str.empty()) {
-        int p = atoi(mqtt_port_str.c_str());
-        if (p > 0) mqtt_port = p;
-    }
-    mqtt_rt_configure(mqtt_host.c_str(), mqtt_port, api_user_id.c_str());
-    if (mqtt_rt_start() != 0) {
-        ESP_LOGE(TAG, "MQTT connect failed");
-        notifications_task_running_flag().store(false);
-        vTaskDelete(NULL);
-        return;
-    }
-    if (api_user_id.empty()) {
-        ESP_LOGE(TAG, "No user_id for MQTT subscribe");
-        notifications_task_running_flag().store(false);
-        vTaskDelete(NULL);
-        return;
-    }
-    mqtt_rt_update_user(api_user_id.c_str());
-
-    // Pump incoming messages into legacy notif_res format
-    while (1) {
-        char buf[1024];
-        if (mqtt_rt_pop_message(buf, sizeof(buf))) {
-            StaticJsonDocument<1024> out;
-            auto arr = out.createNestedArray("notifications");
-            JsonObject o = arr.createNestedObject();
-            o["notification_flag"] = "true";
-            o["raw"] = buf;
-
-            std::string outBuf;
-            serializeJson(out, outBuf);
-            deserializeJson(notif_res, outBuf);
-            notif_res_flag = 1;
-            notification_effects::signal_new_message();
-        }
-        vTaskDelay(10 / portTICK_PERIOD_MS);
-    }
-
-    notifications_task_running_flag().store(false);
-    vTaskDelete(NULL);
-}
+void http_get_notifications_task(void *pvParameters);
 
 struct HttpPostMessageArgs {
     std::string chat_to;
@@ -538,6 +462,57 @@ class HttpClient {
          */
         // ESP_ERROR_CHECK(example_connect());
         ESP_LOGI(TAG, "Connected to AP, begin http example");
+    }
+
+    esp_err_t refresh_unread_count() {
+        auto &api = dev_chat_api();
+        api.set_scheme("https");
+        const auto creds = chatapi::load_credentials_from_nvs();
+        if (chatapi::ensure_authenticated(api, creds) != ESP_OK) {
+            ESP_LOGW(TAG,
+                     "Chat API auth failed while refreshing unread count");
+        }
+
+        std::string response;
+        esp_err_t err = api.get_unread_count(response);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "get_unread_count failed: %s",
+                     esp_err_to_name(err));
+            unread_count_known_.store(false);
+            return err;
+        }
+
+        DynamicJsonDocument doc(response.size() + 128);
+        auto jerr = deserializeJson(doc, response);
+        if (jerr != DeserializationError::Ok) {
+            ESP_LOGE(TAG, "unread_count JSON parse error: %s", jerr.c_str());
+            unread_count_known_.store(false);
+            return ESP_FAIL;
+        }
+
+        int count = 0;
+        if (doc.containsKey("unread_count")) {
+            count = doc["unread_count"].as<int>();
+        } else if (doc.containsKey("count")) {
+            count = doc["count"].as<int>();
+        }
+        if (count < 0) count = 0;
+        apply_unread_count(count);
+        return ESP_OK;
+    }
+
+    bool has_unread_messages() const { return unread_count_.load() > 0; }
+    int unread_count() const { return unread_count_.load(); }
+    bool unread_count_known() const { return unread_count_known_.load(); }
+
+    bool consume_unread_hint() {
+        bool expected = true;
+        return unread_hint_.compare_exchange_strong(expected, false);
+    }
+
+    void force_unread_hint() {
+        unread_hint_.store(true);
+        notif_flag = true;
     }
 
     void post_message(const std::string &chat_to,
@@ -706,4 +681,112 @@ class HttpClient {
         notif_res_flag = 0;
         return notif_res;
     }
+
+   private:
+    void apply_unread_count(int count) {
+        if (count < 0) count = 0;
+        int previous = unread_count_.load();
+        bool was_known = unread_count_known_.load();
+        unread_count_.store(count);
+        unread_count_known_.store(true);
+        notif_flag = count > 0;
+
+        if (!was_known) {
+            if (count > 0) unread_hint_.store(true);
+            else unread_hint_.store(false);
+            return;
+        }
+
+        if (count > previous) {
+            unread_hint_.store(true);
+        } else if (count == 0) {
+            unread_hint_.store(false);
+        }
+    }
+
+    std::atomic<int> unread_count_{0};
+    std::atomic<bool> unread_count_known_{false};
+    std::atomic<bool> unread_hint_{false};
 };
+
+inline void http_get_notifications_task(void *pvParameters) {
+    (void)pvParameters;
+    {
+        wifi_ap_record_t ap;
+        const int max_wait_ms = 20000;
+        int waited = 0;
+        while (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+            waited += 100;
+            if (waited >= max_wait_ms) break;
+        }
+        if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
+            ESP_LOGW(TAG, "Wi-Fi not connected; postponing MQTT start");
+            while (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
+                vTaskDelay(500 / portTICK_PERIOD_MS);
+            }
+        }
+    }
+
+    auto &api = chatapi::shared_client(true);
+    api.set_scheme("https");
+    const auto creds = chatapi::load_credentials_from_nvs();
+    if (chatapi::ensure_authenticated(api, creds) != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "Chat API auth failed; continuing with cached token state");
+    }
+
+    auto api_user_id = api.user_id();
+    auto api_host = api.host();
+
+    std::string mqtt_host = get_nvs("mqtt_host");
+    if (mqtt_host.empty()) mqtt_host = api_host;
+    std::string mqtt_port_str = get_nvs((char *)"mqtt_port");
+    int mqtt_port = 1883;
+    if (!mqtt_port_str.empty()) {
+        int p = atoi(mqtt_port_str.c_str());
+        if (p > 0) mqtt_port = p;
+    }
+    mqtt_rt_configure(mqtt_host.c_str(), mqtt_port, api_user_id.c_str());
+    if (mqtt_rt_start() != 0) {
+        ESP_LOGE(TAG, "MQTT connect failed");
+        notifications_task_running_flag().store(false);
+        vTaskDelete(NULL);
+        return;
+    }
+    if (api_user_id.empty()) {
+        ESP_LOGE(TAG, "No user_id for MQTT subscribe");
+        notifications_task_running_flag().store(false);
+        vTaskDelete(NULL);
+        return;
+    }
+    mqtt_rt_update_user(api_user_id.c_str());
+
+    while (1) {
+        char buf[1024];
+        if (mqtt_rt_pop_message(buf, sizeof(buf))) {
+            StaticJsonDocument<1024> out;
+            auto arr = out.createNestedArray("notifications");
+            JsonObject o = arr.createNestedObject();
+            o["notification_flag"] = "true";
+            o["raw"] = buf;
+
+            std::string outBuf;
+            serializeJson(out, outBuf);
+            deserializeJson(notif_res, outBuf);
+            notif_res_flag = 1;
+
+            auto &client = HttpClient::shared();
+            if (client.refresh_unread_count() != ESP_OK) {
+                client.force_unread_hint();
+                notification_effects::signal_new_message();
+            } else if (client.has_unread_messages()) {
+                notification_effects::signal_new_message();
+            }
+        }
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+
+    notifications_task_running_flag().store(false);
+    vTaskDelete(NULL);
+}
