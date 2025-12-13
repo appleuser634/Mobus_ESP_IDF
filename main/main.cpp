@@ -192,6 +192,7 @@ static const char* TAG = "Mobus v3.14";
 #include <power_monitor.h>
 #include <button.h>
 #include <haptic_motor.hpp>
+#include <joystick_haptics.hpp>
 
 #include <nvs_rw.hpp>
 #include <wifi.hpp>
@@ -768,6 +769,7 @@ void app_main(void) {
     MemoryProfiler profiler(mem_profile_enabled);
 
     notification_effects::init();
+    joystick_haptics_init();
 
     // Defer OTA validation (only if rollback is enabled): mark app valid after
     // system stabilizes

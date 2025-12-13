@@ -4,10 +4,15 @@
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 #define EXAMPLE_ADC_ATTEN ADC_ATTEN_DB_11
 #define EXAMPLE_ADC1_CHAN0 ADC_CHANNEL_5
 #define EXAMPLE_ADC1_CHAN1 ADC_CHANNEL_6
+
+namespace {
+static constexpr const char *kJoystickTag = "JOYSTICK";
+}
 
 class Joystick {
    public:
@@ -30,6 +35,10 @@ class Joystick {
         long long int release_sec;        // release second
     } joystick_state_t;
 
+    using edge_callback_t = void (*)(const joystick_state_t &state);
+
+    static void set_edge_callback(edge_callback_t cb) { edge_callback_ = cb; }
+
     /*---------------------------------------------------------------
             ADC Calibration
     ---------------------------------------------------------------*/
@@ -43,7 +52,8 @@ class Joystick {
 
 #if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
         if (!calibrated) {
-            ESP_LOGI(TAG, "calibration scheme version is %s", "Curve Fitting");
+            ESP_LOGI(kJoystickTag, "calibration scheme version is %s",
+                     "Curve Fitting");
             adc_cali_curve_fitting_config_t cali_config = {
                 .unit_id = unit,
                 .chan = channel,
@@ -59,7 +69,8 @@ class Joystick {
 
 #if ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
         if (!calibrated) {
-            ESP_LOGI(TAG, "calibration scheme version is %s", "Line Fitting");
+            ESP_LOGI(kJoystickTag, "calibration scheme version is %s",
+                     "Line Fitting");
             adc_cali_line_fitting_config_t cali_config = {
                 .unit_id = unit,
                 .atten = atten,
@@ -74,11 +85,11 @@ class Joystick {
 
         *out_handle = handle;
         if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "Calibration Success");
+            ESP_LOGI(kJoystickTag, "Calibration Success");
         } else if (ret == ESP_ERR_NOT_SUPPORTED || !calibrated) {
-            ESP_LOGW(TAG, "eFuse not burnt, skip software calibration");
+            ESP_LOGW(kJoystickTag, "eFuse not burnt, skip software calibration");
         } else {
-            ESP_LOGE(TAG, "Invalid arg or no memory");
+            ESP_LOGE(kJoystickTag, "Invalid arg or no memory");
         }
 
         return calibrated;
@@ -220,23 +231,34 @@ class Joystick {
                 esp_timer_get_time() - joystick_state.release_start_sec;
         }
 
+        const bool any_edge = joystick_state.pushed_up_edge ||
+                              joystick_state.pushed_down_edge ||
+                              joystick_state.pushed_left_edge ||
+                              joystick_state.pushed_right_edge;
+        if (any_edge && edge_callback_) {
+            edge_callback_(joystick_state);
+        }
+
         return joystick_state;
     }
 
     void reset_timer() {
         joystick_state.release_start_sec = esp_timer_get_time();
     }
+
+   private:
+    static inline edge_callback_t edge_callback_ = nullptr;
 };
 
-adc_oneshot_unit_init_cfg_t Joystick::init_config1 = {
+inline adc_oneshot_unit_init_cfg_t Joystick::init_config1 = {
     .unit_id = ADC_UNIT_1,
     .ulp_mode = ADC_ULP_MODE_DISABLE,
 };
 
-adc_oneshot_unit_handle_t Joystick::adc1_handle = 0;
+inline adc_oneshot_unit_handle_t Joystick::adc1_handle = 0;
 
-bool Joystick::do_calibration1_chan0 = false;
-bool Joystick::do_calibration1_chan1 = false;
-adc_cali_handle_t Joystick::adc1_cali_chan0_handle = NULL;
-adc_cali_handle_t Joystick::adc1_cali_chan1_handle = NULL;
-bool Joystick::channels_configured = false;
+inline bool Joystick::do_calibration1_chan0 = false;
+inline bool Joystick::do_calibration1_chan1 = false;
+inline adc_cali_handle_t Joystick::adc1_cali_chan0_handle = NULL;
+inline adc_cali_handle_t Joystick::adc1_cali_chan1_handle = NULL;
+inline bool Joystick::channels_configured = false;

@@ -20,6 +20,7 @@
 #include <images.hpp>
 #include <wasm_game_runtime.hpp>
 #include <haptic_motor.hpp>
+#include <joystick_haptics.hpp>
 #include <http_client.hpp>
 #include <nvs_rw.hpp>
 #include <headupdaisy_font.hpp>
@@ -4551,12 +4552,12 @@ class SettingMenu {
         } setting_t;
 
         // Settings list
-        setting_t settings[14] = {
+        setting_t settings[15] = {
             {"Profile"},      {"Wi-Fi"},        {"Bluetooth"},
-            {"Sound"},        {"Boot Sound"},   {"Real Time Chat"},
-            {"Open Chat"},    {"Composer"},     {"Auto Update"},
-            {"OTA Manifest"}, {"Update Now"},   {"Firmware Info"},
-            {"Develop"},      {"Factory Reset"}};
+            {"Sound"},        {"Vibration"},    {"Boot Sound"},
+            {"Real Time Chat"},{"Open Chat"},   {"Composer"},
+            {"Auto Update"},  {"OTA Manifest"}, {"Update Now"},
+            {"Firmware Info"},{"Develop"},      {"Factory Reset"}};
 
         int select_index = 0;
         int font_height = 13;
@@ -4617,6 +4618,11 @@ class SettingMenu {
                 } else if (settings[i].setting_name == "Auto Update") {
                     std::string au = get_nvs((char *)"ota_auto");
                     bool on = (au == "true");
+                    std::string label =
+                        settings[i].setting_name + (on ? " [ON]" : " [OFF]");
+                    sprite.print(label.c_str());
+                } else if (settings[i].setting_name == "Vibration") {
+                    bool on = joystick_haptics_enabled();
                     std::string label =
                         settings[i].setting_name + (on ? " [ON]" : " [OFF]");
                     sprite.print(label.c_str());
@@ -4766,6 +4772,23 @@ class SettingMenu {
                 if (SettingMenu::sound_dirty) {
                     vTaskDelay(10 / portTICK_PERIOD_MS);
                 }
+            } else if (type_button_state.pushed &&
+                       settings[select_index].setting_name == "Vibration") {
+                type_button.clear_button_state();
+                type_button.reset_timer();
+                joystick.reset_timer();
+
+                bool on = joystick_haptics_enabled();
+                on = !on;
+                joystick_haptics_set_enabled(on, true);
+
+                sprite.fillRect(0, 0, 128, 64, 0);
+                sprite.setFont(&fonts::Font2);
+                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                sprite.drawCenterString(on ? "Vibration: ON" : "Vibration: OFF",
+                                        64, 28);
+                push_sprite_safe(0, 0);
+                vTaskDelay(900 / portTICK_PERIOD_MS);
             } else if (type_button_state.pushed &&
                        settings[select_index].setting_name == "Boot Sound") {
                 // Simple boot sound selector: Type=cycle, Enter=preview,
