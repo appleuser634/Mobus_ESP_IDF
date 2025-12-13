@@ -22,6 +22,8 @@
 #include <haptic_motor.hpp>
 #include <http_client.hpp>
 #include <nvs_rw.hpp>
+#include <headupdaisy_font.hpp>
+#include <misaki_font.hpp>
 #include "esp_attr.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
@@ -118,6 +120,71 @@ struct SpriteInit {
     SpriteInit() { sprite.setPsram(true); }
 };
 static SpriteInit sprite_init;
+
+inline uint16_t utf8_to_u16_codepoint(const std::string &utf8) {
+    if (utf8.empty()) return 0;
+    const uint8_t b0 = static_cast<uint8_t>(utf8[0]);
+    if ((b0 & 0x80u) == 0) return b0;
+    if ((b0 & 0xE0u) == 0xC0u && utf8.size() >= 2) {
+        const uint8_t b1 = static_cast<uint8_t>(utf8[1]);
+        return static_cast<uint16_t>(((b0 & 0x1Fu) << 6) | (b1 & 0x3Fu));
+    }
+    if ((b0 & 0xF0u) == 0xE0u && utf8.size() >= 3) {
+        const uint8_t b1 = static_cast<uint8_t>(utf8[1]);
+        const uint8_t b2 = static_cast<uint8_t>(utf8[2]);
+        return static_cast<uint16_t>(((b0 & 0x0Fu) << 12) |
+                                     ((b1 & 0x3Fu) << 6) | (b2 & 0x3Fu));
+    }
+    return 0;
+}
+
+inline const lgfx::IFont *select_display_font(const lgfx::IFont *base_font,
+                                              const std::string &utf8_char) {
+    if (!base_font) base_font = &fonts::Font0;
+    const uint16_t cp = utf8_to_u16_codepoint(utf8_char);
+    if (cp == 0) return base_font;
+
+    // Only switch fonts for Japanese blocks (keep ASCII on the base font).
+    const bool is_japanese_block = (cp >= 0x3000u && cp <= 0x30FFu);
+    if (!is_japanese_block) return base_font;
+
+    lgfx::FontMetrics base_metrics = {};
+    base_font->getDefaultMetric(&base_metrics);
+    const bool prefer_8px = base_metrics.height <= 8;
+    const bool prefer_16px = base_metrics.height >= 15;
+
+    const bool is_katakana = (cp >= 0x30A0u && cp <= 0x30FFu);
+    if (prefer_8px && is_katakana) {
+        lgfx::FontMetrics metrics = {};
+        const auto &misaki = mobus_fonts::MisakiGothic8();
+        if (misaki.updateFontMetric(&metrics, cp)) return &misaki;
+    }
+    if (prefer_16px && is_katakana) {
+        lgfx::FontMetrics metrics = {};
+        const auto &misaki = mobus_fonts::MisakiGothic16();
+        if (misaki.updateFontMetric(&metrics, cp)) return &misaki;
+    }
+
+    const lgfx::IFont *fallback =
+        prefer_8px ? static_cast<const lgfx::IFont *>(&fonts::lgfxJapanGothic_8)
+                   : static_cast<const lgfx::IFont *>(
+                         &fonts::lgfxJapanGothic_16);
+
+    lgfx::FontMetrics metrics = {};
+    const auto &headup =
+        prefer_8px ? mobus_fonts::HeadUpDaisy14x8() : mobus_fonts::HeadUpDaisy14x16();
+    if (headup.updateFontMetric(&metrics, cp)) return &headup;
+
+    return fallback;
+}
+
+inline const lgfx::IFont *select_ime_font(int input_lang,
+                                         const lgfx::IFont *base_font,
+                                         const std::string &utf8_char) {
+    if (!base_font) base_font = &fonts::Font0;
+    if (input_lang != 1) return base_font;
+    return select_display_font(base_font, utf8_char);
+}
 
 struct SpriteState {
     bool ready = false;
@@ -552,12 +619,7 @@ class TalkDisplay {
                 if (pos + char_len <= display_text.length()) {
                     std::string ch = display_text.substr(pos, char_len);
 
-                    if ((uint8_t)ch[0] == 0xE3 &&
-                        ((uint8_t)ch[1] == 0x82 || (uint8_t)ch[1] == 0x83)) {
-                        sprite.setFont(&fonts::lgfxJapanGothic_12);
-                    } else {
-                        sprite.setFont(&fonts::Font2);
-                    }
+                    sprite.setFont(select_display_font(&fonts::Font2, ch));
 
                     sprite.print(ch.c_str());
                     pos += char_len;
@@ -1527,7 +1589,7 @@ std::string wifi_input_info_proxy(std::string input_type,
 class ContactBook {
    public:
     static bool running_flag;
-    static constexpr uint32_t kTaskStackWords = 4096;
+    static constexpr uint32_t kTaskStackWords = 6192;
 
     void start_message_menue_task() {
         printf("Start ContactBook Task...");
@@ -3268,13 +3330,18 @@ class P2P_Display {
                  status == ESP_NOW_SEND_SUCCESS ? "成功" : "失敗");
     }
 
-    void p2p_init() {
+	    void p2p_init() {
         // esp_err_t result = esp_now_init();
         // ESP_LOGE(TAG, "esp_now_send result: %s", esp_err_to_name(result));
         // ESP_ERROR_CHECK(result);
 
-        ESP_ERROR_CHECK(esp_now_init());
-        ESP_ERROR_CHECK(esp_now_register_send_cb(espnow_send_cb));
+	        {
+	            esp_err_t err = esp_now_init();
+	            if (err != ESP_OK && err != ESP_ERR_ESPNOW_EXIST) {
+	                ESP_ERROR_CHECK(err);
+	            }
+	        }
+	        ESP_ERROR_CHECK(esp_now_register_send_cb(espnow_send_cb));
 
         esp_now_peer_info_t peerInfo = {
             .channel = 0,
@@ -3282,14 +3349,27 @@ class P2P_Display {
             .encrypt = false,
         };
 
-        memset(peerInfo.lmk, 0, ESP_NOW_KEY_LEN);  // ← これを追加
-        memcpy(peerInfo.peer_addr, peer_mac, 6);
-        ESP_ERROR_CHECK(esp_now_add_peer(&peerInfo));
+	        memset(peerInfo.lmk, 0, ESP_NOW_KEY_LEN);  // ← これを追加
+	        memcpy(peerInfo.peer_addr, peer_mac, 6);
+	        {
+	            esp_err_t err = esp_now_add_peer(&peerInfo);
+	            if (err == ESP_ERR_ESPNOW_EXIST) {
+	                // Re-entering the realtime chat: peer may already exist.
+	                // Prefer modify; fall back to delete+add.
+	                esp_err_t m = esp_now_mod_peer(&peerInfo);
+	                if (m != ESP_OK) {
+	                    (void)esp_now_del_peer(peerInfo.peer_addr);
+	                    ESP_ERROR_CHECK(esp_now_add_peer(&peerInfo));
+	                }
+	            } else {
+	                ESP_ERROR_CHECK(err);
+	            }
+	        }
 
-        esp_wifi_set_max_tx_power(84);
+	        esp_wifi_set_max_tx_power(84);
 
-        espnow_recv();
-    }
+	        espnow_recv();
+	    }
 
     void espnow_send(std::string message) {
         if (message == "") {
@@ -3313,10 +3393,13 @@ class P2P_Display {
         }
     }
 
-    void espnow_recv(void) {
-        ESP_ERROR_CHECK(esp_now_init());
-        ESP_ERROR_CHECK(esp_now_register_recv_cb(espnow_recv_cb));
-    }
+	    void espnow_recv(void) {
+	        esp_err_t err = esp_now_register_recv_cb(espnow_recv_cb);
+	        if (err != ESP_OK) {
+	            ESP_LOGW(TAG, "esp_now_register_recv_cb failed: %s",
+	                     esp_err_to_name(err));
+	        }
+	    }
 
     void morse_p2p() {
         p2p_init();
@@ -3327,6 +3410,16 @@ class P2P_Display {
         Button type_button(GPIO_NUM_46);
         Button back_button(GPIO_NUM_3);
         Button enter_button(GPIO_NUM_5);
+
+        auto clear_inputs = [&]() {
+            type_button.clear_button_state();
+            type_button.reset_timer();
+            back_button.clear_button_state();
+            back_button.reset_timer();
+            enter_button.clear_button_state();
+            enter_button.reset_timer();
+            joystick.reset_timer();
+        };
 
         sprite.setColorDepth(8);
         sprite.setFont(&fonts::Font2);
@@ -3394,14 +3487,16 @@ class P2P_Display {
                 if (message_text != "") {
                     remove_last_utf8_char(message_text);
                 }
-                input_switch_pos = pos;
+                input_switch_pos = message_text.size();
                 back_button.pushed_same_time();
                 type_button.clear_button_state();
             } else if (back_button_state.pushed and
                        !back_button_state.pushed_same_time and
                        !type_button_state.pushing) {
+                clear_inputs();
                 return;
             } else if (joystick_state.left) {
+                clear_inputs();
                 return;
             } else if (joystick_state.pushed_right_edge) {
                 input_lang = input_lang * -1;
@@ -3418,7 +3513,7 @@ class P2P_Display {
                 push_sprite_safe(0, 0);
                 vTaskDelay(300 / portTICK_PERIOD_MS);
 
-                input_switch_pos = pos;
+                input_switch_pos = message_text.size();
             } else if (back_button_state.pushed) {
                 back_button.clear_button_state();
             }
@@ -3427,7 +3522,7 @@ class P2P_Display {
             if (enter_button_state.pushed and message_text != "") {
                 message_text = "";
                 pos = 0;
-                input_switch_pos = 9;
+                input_switch_pos = 0;
                 enter_button.clear_button_state();
             }
 
@@ -3458,12 +3553,7 @@ class P2P_Display {
                 if (pos + char_len <= display_text.length()) {
                     std::string ch = display_text.substr(pos, char_len);
 
-                    if ((uint8_t)ch[0] == 0xE3 &&
-                        ((uint8_t)ch[1] == 0x82 || (uint8_t)ch[1] == 0x83)) {
-                        sprite.setFont(&fonts::lgfxJapanGothic_12);
-                    } else {
-                        sprite.setFont(&fonts::Font2);
-                    }
+                    sprite.setFont(select_display_font(&fonts::Font2, ch));
 
                     sprite.print(ch.c_str());
                     pos += char_len;
@@ -3475,14 +3565,34 @@ class P2P_Display {
             // 受信したメッセージを描画
             sprite.drawFastHLine(0, 32, 128, 0xFFFF);
             sprite.setCursor(0, 35);
-            sprite.print(received_text.c_str());
+            {
+                size_t rpos = 0;
+                while (rpos < received_text.length()) {
+                    uint8_t c = received_text[rpos];
+                    int char_len = 1;
+                    if ((c & 0xE0) == 0xC0)
+                        char_len = 2;
+                    else if ((c & 0xF0) == 0xE0)
+                        char_len = 3;
+                    if (rpos + char_len <= received_text.length()) {
+                        std::string ch = received_text.substr(rpos, char_len);
+                        sprite.setFont(select_display_font(&fonts::Font2, ch));
+                        sprite.print(ch.c_str());
+                        rpos += char_len;
+                    } else {
+                        break;
+                    }
+                }
+            }
 
             push_sprite_safe(0, 0);
 
             message_text += alphabet_text;
             if (alphabet_text != "" && input_lang == 1) {
+                size_t safe_pos = input_switch_pos;
+                if (safe_pos > message_text.size()) safe_pos = message_text.size();
                 std::string translate_targt =
-                    message_text.substr(input_switch_pos);
+                    message_text.substr(safe_pos);
                 for (const auto &pair : TalkDisplay::romaji_kana) {
                     std::cout << "Key: " << pair.first << std::endl;
                     size_t pos = translate_targt.find(pair.first);
@@ -3492,7 +3602,7 @@ class P2P_Display {
                     }
                 }
                 message_text =
-                    message_text.substr(0, input_switch_pos) + translate_targt;
+                    message_text.substr(0, safe_pos) + translate_targt;
             }
             alphabet_text = "";
 
@@ -5174,8 +5284,24 @@ class SettingMenu {
             } else if (type_button_state.pushed &&
                        settings[select_index].setting_name ==
                            "Real Time Chat") {
+                type_button.clear_button_state();
+                type_button.reset_timer();
+                back_button.clear_button_state();
+                back_button.reset_timer();
+                enter_button.clear_button_state();
+                enter_button.reset_timer();
+                joystick.reset_timer();
+
                 P2P_Display p2p;
                 p2p.morse_p2p();
+
+                type_button.clear_button_state();
+                type_button.reset_timer();
+                back_button.clear_button_state();
+                back_button.reset_timer();
+                enter_button.clear_button_state();
+                enter_button.reset_timer();
+                joystick.reset_timer();
             } else if (type_button_state.pushed &&
                        settings[select_index].setting_name == "Open Chat") {
                 type_button.clear_button_state();
