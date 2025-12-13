@@ -208,6 +208,39 @@ extern "C" {
 #include <oled.hpp>
 #include <ntp.hpp>
 #include <max98357a.h>
+#include "esp_attr.h"
+
+extern "C" void mobus_request_factory_reset();
+
+namespace {
+static constexpr uint32_t kFactoryResetMagic = 0x46525354u;  // 'FRST'
+// Must survive esp_restart(); do not initialize at startup.
+RTC_NOINIT_ATTR uint32_t s_factory_reset_magic;
+
+static void handle_factory_reset_if_requested() {
+    if (s_factory_reset_magic != kFactoryResetMagic) return;
+    s_factory_reset_magic = 0;
+
+    ESP_LOGW(TAG, "[FactoryReset] requested; erasing NVS and rebooting");
+
+    (void)nvs_flash_deinit();
+    (void)nvs_flash_init();
+    const esp_err_t erase_default = nvs_flash_erase();
+    const esp_err_t erase_labeled = nvs_flash_erase_partition("nvs");
+    if (erase_default != ESP_OK && erase_labeled != ESP_OK) {
+        ESP_LOGE(TAG, "[FactoryReset] erase failed: default=%s labeled=%s",
+                 esp_err_to_name(erase_default), esp_err_to_name(erase_labeled));
+    }
+    (void)nvs_flash_init();
+    vTaskDelay(pdMS_TO_TICKS(200));
+    esp_restart();
+}
+}  // namespace
+
+extern "C" void mobus_request_factory_reset() {
+    s_factory_reset_magic = kFactoryResetMagic;
+    esp_restart();
+}
 
 namespace wasm_runtime {
 namespace {
@@ -760,6 +793,7 @@ void check_notification() {
 
 void app_main(void) {
     printf("Hello world!!!!\n");
+    handle_factory_reset_if_requested();
 
     bool mem_profile_enabled = kMemoryProfilerEnabled;
     if (mem_profile_enabled) {

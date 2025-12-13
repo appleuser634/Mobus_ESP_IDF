@@ -40,6 +40,8 @@
 
 #pragma once
 
+extern "C" void mobus_request_factory_reset();
+
 inline std::string resolve_chat_backend_id(const std::string &fallback);
 
 inline bool wifi_is_connected() {
@@ -5403,30 +5405,18 @@ class SettingMenu {
                             // Proceed with reset
                             sprite.fillRect(0, 0, 128, 64, 0);
                             sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                            sprite.drawCenterString("Resetting...", 64, 22);
-                            sprite.drawCenterString("Erasing NVS", 64, 40);
-                            push_sprite_safe(0, 0);
-
-                            esp_err_t err = nvs_flash_erase();
-                            if (err == ESP_OK) {
-                                nvs_flash_init();
-                                sprite.fillRect(0, 0, 128, 64, 0);
-                                sprite.drawCenterString("Reset Done", 64, 22);
-                                sprite.drawCenterString("Rebooting...", 64, 40);
+                                sprite.drawCenterString("Resetting...", 64, 22);
+                                sprite.drawCenterString("Erasing NVS", 64, 40);
                                 push_sprite_safe(0, 0);
-                                vTaskDelay(1000 / portTICK_PERIOD_MS);
-                                esp_restart();
-                            } else {
                                 sprite.fillRect(0, 0, 128, 64, 0);
-                                sprite.drawCenterString("Reset Failed", 64, 22);
-                                sprite.drawCenterString("Check logs", 64, 40);
+                                sprite.drawCenterString("Rebooting...", 64, 30);
                                 push_sprite_safe(0, 0);
-                                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                                vTaskDelay(200 / portTICK_PERIOD_MS);
+                                mobus_request_factory_reset();
                             }
+                            // If No selected or after failure, exit dialog
+                            break;
                         }
-                        // If No selected or after failure, exit dialog
-                        break;
-                    }
 
                     // debounce
                     vTaskDelay(10 / portTICK_PERIOD_MS);
