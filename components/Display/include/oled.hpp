@@ -33,6 +33,8 @@
 #include "esp_random.h"
 #include "esp_task_wdt.h"
 #include "esp_wifi.h"
+#include "esp_netif.h"
+#include "ui_strings.hpp"
 #include "freertos/event_groups.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -4550,16 +4552,28 @@ class SettingMenu {
         sprite.createSprite(lcd.width(), lcd.height());
 
         typedef struct {
-            std::string setting_name;
+            ui::Key key;
         } setting_t;
 
         // Settings list
-        setting_t settings[15] = {
-            {"Profile"},      {"Wi-Fi"},        {"Bluetooth"},
-            {"Sound"},        {"Vibration"},    {"Boot Sound"},
-            {"Real Time Chat"},{"Open Chat"},   {"Composer"},
-            {"Auto Update"},  {"OTA Manifest"}, {"Update Now"},
-            {"Firmware Info"},{"Develop"},      {"Factory Reset"}};
+        setting_t settings[16] = {
+            {ui::Key::SettingsProfile},
+            {ui::Key::SettingsWifi},
+            {ui::Key::SettingsBluetooth},
+            {ui::Key::SettingsLanguage},
+            {ui::Key::SettingsSound},
+            {ui::Key::SettingsVibration},
+            {ui::Key::SettingsBootSound},
+            {ui::Key::SettingsRtc},
+            {ui::Key::SettingsOpenChat},
+            {ui::Key::SettingsComposer},
+            {ui::Key::SettingsAutoUpdate},
+            {ui::Key::SettingsOtaManifest},
+            {ui::Key::SettingsUpdateNow},
+            {ui::Key::SettingsFirmwareInfo},
+            {ui::Key::SettingsDevelop},
+            {ui::Key::SettingsFactoryReset},
+        };
 
         int select_index = 0;
         int font_height = 13;
@@ -4567,6 +4581,7 @@ class SettingMenu {
 
         while (1) {
             feed_wdt();
+            ui::Lang lang = ui::current_lang();
             // Joystickの状態を取得
             Joystick::joystick_state_t joystick_state =
                 joystick.get_joystick_state();
@@ -4581,7 +4596,12 @@ class SettingMenu {
 
             sprite.fillScreen(0);
 
-            sprite.setFont(&fonts::Font2);
+            const lgfx::IFont *menu_font =
+                (lang == ui::Lang::Ja)
+                    ? static_cast<const lgfx::IFont *>(
+                          &mobus_fonts::MisakiGothic8())
+                    : static_cast<const lgfx::IFont *>(&fonts::Font2);
+            sprite.setFont(menu_font);
 
             int last_index = (int)(sizeof(settings) / sizeof(setting_t)) -
                              1;  // 0-based last index
@@ -4603,53 +4623,75 @@ class SettingMenu {
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 }
                 // Render name (Develop/Auto Update show ON/OFF)
-                if (settings[i].setting_name == "Develop") {
+                if (settings[i].key == ui::Key::SettingsDevelop) {
                     std::string dev = get_nvs((char *)"develop_mode");
                     bool on = (dev == "true");
                     std::string label =
-                        settings[i].setting_name + (on ? " [ON]" : " [OFF]");
+                        std::string(ui::text(ui::Key::SettingsDevelop, lang)) +
+                        " [" +
+                        ui::text(on ? ui::Key::LabelOn : ui::Key::LabelOff,
+                                 lang) +
+                        "]";
                     sprite.print(label.c_str());
-                } else if (settings[i].setting_name == "Sound") {
+                } else if (settings[i].key == ui::Key::SettingsSound) {
                     bool on = sound_settings::enabled();
                     int vol_pct = static_cast<int>(
                         sound_settings::volume() * 100.0f + 0.5f);
-                    char label[40];
-                    std::snprintf(label, sizeof(label), "Sound [%s, %d%%]",
-                                  on ? "ON" : "OFF", vol_pct);
+                    char label[48];
+                    std::snprintf(label, sizeof(label), "%s [%s, %d%%]",
+                                  ui::text(ui::Key::SettingsSound, lang),
+                                  ui::text(on ? ui::Key::LabelOn
+                                              : ui::Key::LabelOff,
+                                           lang),
+                                  vol_pct);
                     sprite.print(label);
-                } else if (settings[i].setting_name == "Auto Update") {
+                } else if (settings[i].key == ui::Key::SettingsAutoUpdate) {
                     std::string au = get_nvs((char *)"ota_auto");
                     bool on = (au == "true");
                     std::string label =
-                        settings[i].setting_name + (on ? " [ON]" : " [OFF]");
+                        std::string(ui::text(ui::Key::SettingsAutoUpdate, lang)) +
+                        " [" +
+                        ui::text(on ? ui::Key::LabelOn : ui::Key::LabelOff,
+                                 lang) +
+                        "]";
                     sprite.print(label.c_str());
-                } else if (settings[i].setting_name == "Vibration") {
+                } else if (settings[i].key == ui::Key::SettingsVibration) {
                     bool on = joystick_haptics_enabled();
                     std::string label =
-                        settings[i].setting_name + (on ? " [ON]" : " [OFF]");
+                        std::string(ui::text(ui::Key::SettingsVibration, lang)) +
+                        " [" +
+                        ui::text(on ? ui::Key::LabelOn : ui::Key::LabelOff,
+                                 lang) +
+                        "]";
                     sprite.print(label.c_str());
-                } else if (settings[i].setting_name == "OTA Manifest") {
+                } else if (settings[i].key == ui::Key::SettingsOtaManifest) {
                     // show current (or default) manifest URL
                     std::string mf = get_nvs((char *)"ota_manifest");
                     if (mf.empty()) {
                         mf = "https://mimoc.jp/api/firmware/"
                              "latest?device=esp32s3&channel=stable";
                     }
-                    std::string label = "OTA Manifest";
-                    sprite.print(label.c_str());
-                } else if (settings[i].setting_name == "Update Now") {
-                    sprite.print("Update Now");
-                } else if (settings[i].setting_name == "Bluetooth") {
-                    std::string label = "Bluetooth";
+                    sprite.print(ui::text(ui::Key::SettingsOtaManifest, lang));
+                } else if (settings[i].key == ui::Key::SettingsUpdateNow) {
+                    sprite.print(ui::text(ui::Key::SettingsUpdateNow, lang));
+                } else if (settings[i].key == ui::Key::SettingsBluetooth) {
+                    std::string label =
+                        ui::text(ui::Key::SettingsBluetooth, lang);
                     bool connected =
                         !wifi_is_connected() && ble_uart_is_ready();
                     std::string pairing = get_nvs((char *)"ble_pair");
                     if (connected)
-                        label += " [Connected]";
+                        label += " [" +
+                                 std::string(ui::text(ui::Key::LabelConnected,
+                                                      lang)) +
+                                 "]";
                     else if (pairing == "true")
-                        label += " [PAIRING]";
+                        label += " [" +
+                                 std::string(
+                                     ui::text(ui::Key::LabelPairing, lang)) +
+                                 "]";
                     sprite.print(label.c_str());
-                } else if (settings[i].setting_name == "Boot Sound") {
+                } else if (settings[i].key == ui::Key::SettingsBootSound) {
                     std::string bs = get_nvs((char *)"boot_sound");
                     if (bs.empty()) bs = "cute";
                     std::string shown =
@@ -4657,12 +4699,13 @@ class SettingMenu {
                             ? "Majestic"
                             : (bs == std::string("random") ? "Random" : "Cute");
                     std::string label =
-                        std::string("Boot Sound [") + shown + "]";
+                        std::string(ui::text(ui::Key::SettingsBootSound, lang)) +
+                        " [" + shown + "]";
                     sprite.print(label.c_str());
-                } else if (settings[i].setting_name == "Firmware Info") {
-                    sprite.print("Firmware Info");
+                } else if (settings[i].key == ui::Key::SettingsFirmwareInfo) {
+                    sprite.print(ui::text(ui::Key::SettingsFirmwareInfo, lang));
                 } else {
-                    sprite.print(settings[i].setting_name.c_str());
+                    sprite.print(ui::text(settings[i].key, lang));
                 }
             }
 
@@ -4687,7 +4730,7 @@ class SettingMenu {
             }
 
             if (type_button_state.pushed &&
-                settings[select_index].setting_name == "Wi-Fi") {
+                settings[select_index].key == ui::Key::SettingsWifi) {
                 wifi_setting.running_flag = true;
                 wifi_setting.start_wifi_setting_task();
                 while (wifi_setting.running_flag) {
@@ -4698,7 +4741,66 @@ class SettingMenu {
                 type_button.reset_timer();
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "Sound") {
+                       settings[select_index].key == ui::Key::SettingsLanguage) {
+                int sel = (ui::current_lang() == ui::Lang::Ja) ? 1 : 0;
+                type_button.clear_button_state();
+                enter_button.clear_button_state();
+                back_button.clear_button_state();
+                joystick.reset_timer();
+                while (1) {
+                    feed_wdt();
+                    sprite.fillRect(0, 0, 128, 64, 0);
+                    const lgfx::IFont *lang_font =
+                        (lang == ui::Lang::Ja)
+                            ? static_cast<const lgfx::IFont *>(
+                                  &mobus_fonts::MisakiGothic8())
+                            : static_cast<const lgfx::IFont *>(&fonts::Font2);
+                    sprite.setFont(lang_font);
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                    sprite.drawCenterString(
+                        ui::text(ui::Key::TitleLanguage, lang), 64, 6);
+                    const char *opts[2] = {
+                        ui::text(ui::Key::LangEnglish, lang),
+                        ui::text(ui::Key::LangJapanese, lang),
+                    };
+                    for (int i = 0; i < 2; i++) {
+                        int y = 24 + i * 16;
+                        if (sel == i) {
+                            sprite.fillRect(8, y - 2, 112, 14, 0xFFFF);
+                            sprite.setTextColor(0x000000u, 0xFFFFFFu);
+                        } else {
+                            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                        }
+                        sprite.drawCenterString(opts[i], 64, y);
+                    }
+                    push_sprite_safe(0, 0);
+
+                    auto js = joystick.get_joystick_state();
+                    auto tbs = type_button.get_button_state();
+                    auto ebs = enter_button.get_button_state();
+                    auto bbs = back_button.get_button_state();
+
+                    if (js.pushed_up_edge) sel = (sel + 1) % 2;
+                    if (js.pushed_down_edge) sel = (sel + 1) % 2;
+                    if (tbs.pushed || ebs.pushed) {
+                        save_nvs("ui_lang", sel == 0 ? "en" : "ja");
+                        type_button.clear_button_state();
+                        enter_button.clear_button_state();
+                        back_button.clear_button_state();
+                        joystick.reset_timer();
+                        break;
+                    }
+                    if (bbs.pushed || js.left) {
+                        type_button.clear_button_state();
+                        enter_button.clear_button_state();
+                        back_button.clear_button_state();
+                        joystick.reset_timer();
+                        break;
+                    }
+                    vTaskDelay(50 / portTICK_PERIOD_MS);
+                }
+            } else if (type_button_state.pushed &&
+                       settings[select_index].key == ui::Key::SettingsSound) {
                 type_button.clear_button_state();
                 enter_button.clear_button_state();
                 back_button.clear_button_state();
@@ -4775,7 +4877,7 @@ class SettingMenu {
                     vTaskDelay(10 / portTICK_PERIOD_MS);
                 }
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "Vibration") {
+                       settings[select_index].key == ui::Key::SettingsVibration) {
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 joystick.reset_timer();
@@ -4792,7 +4894,7 @@ class SettingMenu {
                 push_sprite_safe(0, 0);
                 vTaskDelay(900 / portTICK_PERIOD_MS);
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "Boot Sound") {
+                       settings[select_index].key == ui::Key::SettingsBootSound) {
                 // Simple boot sound selector: Type=cycle, Enter=preview,
                 // Back=save
                 type_button.clear_button_state();
@@ -4881,7 +4983,7 @@ class SettingMenu {
                 }
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "Bluetooth") {
+                       settings[select_index].key == ui::Key::SettingsBluetooth) {
                 // Simple Bluetooth pairing UI (UI only, no BLE stack)
                 type_button.clear_button_state();
                 joystick.reset_timer();
@@ -5113,7 +5215,7 @@ class SettingMenu {
                     vTaskDelay(50 / portTICK_PERIOD_MS);
                 }
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "OTA Manifest") {
+                       settings[select_index].key == ui::Key::SettingsOtaManifest) {
                 // Show current manifest URL in a simple modal
                 std::string mf = get_nvs((char *)"ota_manifest");
                 if (mf.empty()) {
@@ -5158,7 +5260,7 @@ class SettingMenu {
                 type_button.reset_timer();
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "Update Now") {
+                       settings[select_index].key == ui::Key::SettingsUpdateNow) {
                 // Manual OTA check and update
                 // Pause MQTT to free resources during TLS/OTA
                 mqtt_rt_pause();
@@ -5182,7 +5284,7 @@ class SettingMenu {
                 type_button.reset_timer();
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "Auto Update") {
+                       settings[select_index].key == ui::Key::SettingsAutoUpdate) {
                 // Toggle auto OTA ON/OFF
                 std::string au = get_nvs((char *)"ota_auto");
                 bool on = (au == "true");
@@ -5205,7 +5307,7 @@ class SettingMenu {
                 type_button.reset_timer();
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "Firmware Info") {
+                       settings[select_index].key == ui::Key::SettingsFirmwareInfo) {
                 // Consume the button press before entering the info loop to
                 // avoid instant exit
                 type_button.clear_button_state();
@@ -5265,7 +5367,7 @@ class SettingMenu {
                 }
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "Develop") {
+                       settings[select_index].key == ui::Key::SettingsDevelop) {
                 // Toggle develop mode ON/OFF
                 std::string dev = get_nvs((char *)"develop_mode");
                 bool on = (dev == "true");
@@ -5300,15 +5402,14 @@ class SettingMenu {
                 type_button.reset_timer();
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "Profile") {
+                       settings[select_index].key == ui::Key::SettingsProfile) {
                 Profile();
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 joystick.reset_timer();
 
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name ==
-                           "Real Time Chat") {
+                       settings[select_index].key == ui::Key::SettingsRtc) {
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 back_button.clear_button_state();
@@ -5328,7 +5429,7 @@ class SettingMenu {
                 enter_button.reset_timer();
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "Open Chat") {
+                       settings[select_index].key == ui::Key::SettingsOpenChat) {
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 enter_button.clear_button_state();
@@ -5342,7 +5443,7 @@ class SettingMenu {
                 }
                 sprite.setFont(&fonts::Font2);
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "Composer") {
+                       settings[select_index].key == ui::Key::SettingsComposer) {
                 Composer comp;
                 comp.running_flag = true;
                 comp.start_composer_task();
@@ -5354,7 +5455,7 @@ class SettingMenu {
                 type_button.reset_timer();
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].setting_name == "Factory Reset") {
+                       settings[select_index].key == ui::Key::SettingsFactoryReset) {
                 // Confirmation dialog
                 type_button.clear_button_state();
                 type_button.reset_timer();
