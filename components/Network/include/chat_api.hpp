@@ -146,149 +146,133 @@ class ChatApiClient {
         ESP_LOGI(CHAT_TAG, "login endpoint: %s://%s:%d",
                  ctx.scheme.c_str(), ctx.host.c_str(), ctx.port);
 
-        struct Variant { const char* user_key; const char* pass_key; };
-        Variant variants[] = {
-            {"Username","Password"},
-            {"username","password"},
-            {"user_name","password"},
-            {"name","password"},
-            {"email","password"},
-        };
-
         std::string user_eff = username;
         if (user_eff.empty()) {
-            user_eff = nvs_get_string("user_name");
+            user_eff = nvs_get_string("login_id");
+            if (user_eff.empty()) user_eff = nvs_get_string("user_name");
             if (user_eff.empty()) user_eff = nvs_get_string("username");
         }
         std::string pass_eff = password;
         if (pass_eff.empty()) pass_eff = nvs_get_string("password");
 
-        for (auto& v : variants) {
-            StaticJsonDocument<256> body;
-            body[v.user_key] = user_eff;
-            body[v.pass_key] = pass_eff;
-            std::string payload; payload.reserve(256); serializeJson(body, payload);
+        StaticJsonDocument<256> body;
+        body["login_id"] = user_eff;
+        body["password"] = pass_eff;
+        std::string payload;
+        payload.reserve(256);
+        serializeJson(body, payload);
 
-            std::string resp;
-            int status = 0;
-            auto err = perform_request("POST", "/api/auth/login", payload, resp,
-                                       /*auth*/ false, &status);
-            if (err != ESP_OK) continue;
-            if (status >= 400) {
-                ESP_LOGE(CHAT_TAG, "HTTP POST /api/auth/login status=%d body_len=%d",
-                         status, (int)resp.size());
-                continue;
-            }
-            DynamicJsonDocument doc(resp.size() + 512);
-            auto jerr = deserializeJson(doc, resp);
-            if (jerr != DeserializationError::Ok) {
-                ESP_LOGE(CHAT_TAG, "login: JSON parse error (len=%d)", (int)resp.size());
-                continue;
-            }
-            const char* tok = doc["token"].as<const char*>();
-            if (!tok) tok = doc["access_token"].as<const char*>();
-            if (!tok) tok = doc["jwt"].as<const char*>();
-            const char* uid = doc["user_id"].as<const char*>();
-            if (!uid && doc["user"].is<JsonObject>()) uid = doc["user"]["id"].as<const char*>();
-            if (!uid) uid = doc["id"].as<const char*>();
-
-            std::string new_token = tok ? std::string(tok) : std::string();
-            std::string new_user_id = uid ? std::string(uid) : std::string();
-            if (new_token.empty() || new_user_id.empty()) {
-                ESP_LOGE(CHAT_TAG, "login: token or user_id missing (variant %s/%s)",
-                         v.user_key, v.pass_key);
-                continue;
-            }
-
-            {
-                std::lock_guard<std::mutex> guard(mutex_);
-                token_ = new_token;
-                user_id_ = new_user_id;
-            }
-
-            nvs_put_string("jwt_token", new_token);
-            nvs_put_string("user_id", new_user_id);
-            nvs_put_string("username", username);
-            nvs_put_string("user_name", username);
-            const char* fc = doc["friend_code"].as<const char*>();
-            if (!fc && doc["user"].is<JsonObject>()) fc = doc["user"]["friend_code"].as<const char*>();
-            if (fc) nvs_put_string("friend_code", std::string(fc));
-            const char* sid = doc["short_id"].as<const char*>();
-            if (!sid && doc["user"].is<JsonObject>()) sid = doc["user"]["short_id"].as<const char*>();
-            if (sid) nvs_put_string("short_id", std::string(sid));
-            ESP_LOGI(CHAT_TAG, "login ok: token_len=%d", (int)new_token.size());
-            return ESP_OK;
+        std::string resp;
+        int status = 0;
+        auto err = perform_request("POST", "/api/auth/login", payload, resp,
+                                   /*auth*/ false, &status);
+        if (err != ESP_OK) return err;
+        if (status >= 400) {
+            ESP_LOGE(CHAT_TAG, "HTTP POST /api/auth/login status=%d body_len=%d",
+                     status, (int)resp.size());
+            return ESP_FAIL;
         }
-        return ESP_FAIL;
+        DynamicJsonDocument doc(resp.size() + 512);
+        auto jerr = deserializeJson(doc, resp);
+        if (jerr != DeserializationError::Ok) {
+            ESP_LOGE(CHAT_TAG, "login: JSON parse error (len=%d)", (int)resp.size());
+            return ESP_FAIL;
+        }
+        const char* tok = doc["token"].as<const char*>();
+        if (!tok) tok = doc["access_token"].as<const char*>();
+        if (!tok) tok = doc["jwt"].as<const char*>();
+        const char* uid = doc["user_id"].as<const char*>();
+        if (!uid && doc["user"].is<JsonObject>()) uid = doc["user"]["id"].as<const char*>();
+        if (!uid) uid = doc["id"].as<const char*>();
+
+        std::string new_token = tok ? std::string(tok) : std::string();
+        std::string new_user_id = uid ? std::string(uid) : std::string();
+        if (new_token.empty() || new_user_id.empty()) {
+            ESP_LOGE(CHAT_TAG, "login: token or user_id missing");
+            return ESP_FAIL;
+        }
+
+        {
+            std::lock_guard<std::mutex> guard(mutex_);
+            token_ = new_token;
+            user_id_ = new_user_id;
+        }
+
+        nvs_put_string("jwt_token", new_token);
+        nvs_put_string("user_id", new_user_id);
+        nvs_put_string("login_id", user_eff);
+        nvs_put_string("username", user_eff);
+        std::string existing_name = nvs_get_string("user_name");
+        if (existing_name.empty()) nvs_put_string("user_name", user_eff);
+        const char* fc = doc["friend_code"].as<const char*>();
+        if (!fc && doc["user"].is<JsonObject>()) fc = doc["user"]["friend_code"].as<const char*>();
+        if (fc) nvs_put_string("friend_code", std::string(fc));
+        const char* sid = doc["short_id"].as<const char*>();
+        if (!sid && doc["user"].is<JsonObject>()) sid = doc["user"]["short_id"].as<const char*>();
+        if (sid) nvs_put_string("short_id", std::string(sid));
+        ESP_LOGI(CHAT_TAG, "login ok: token_len=%d", (int)new_token.size());
+        return ESP_OK;
     }
 
-    esp_err_t register_user(const std::string& username,
+    esp_err_t register_user(const std::string& login_id,
+                            const std::string& nickname,
                             const std::string& password) {
         auto ctx = snapshot();
         ESP_LOGI(CHAT_TAG, "register endpoint: %s://%s:%d",
                  ctx.scheme.c_str(), ctx.host.c_str(), ctx.port);
-
-        struct Variant { const char* user_key; const char* pass_key; };
-        Variant variants[] = {
-            {"Username","Password"},
-            {"username","password"},
-            {"user_name","password"},
-            {"email","password"},
-        };
-        for (auto& v : variants) {
-            StaticJsonDocument<256> body;
-            body[v.user_key] = username;
-            body[v.pass_key] = password;
-            std::string payload; serializeJson(body, payload);
-            std::string resp;
-            int status = 0;
-            auto err = perform_request("POST", "/api/auth/register", payload, resp,
-                                       /*auth*/ false, &status);
-            if (err != ESP_OK) continue;
-            if (status >= 400) {
-                ESP_LOGE(CHAT_TAG, "HTTP POST /api/auth/register status=%d body='%s'",
-                         status, resp.substr(0,160).c_str());
-                continue;
-            }
-            DynamicJsonDocument doc(resp.size() + 512);
-            if (deserializeJson(doc, resp) != DeserializationError::Ok) {
-                ESP_LOGE(CHAT_TAG, "register: JSON parse error");
-                continue;
-            }
-            const char* tok = doc["token"].as<const char*>();
-            if (!tok) tok = doc["access_token"].as<const char*>();
-            if (!tok) tok = doc["jwt"].as<const char*>();
-            const char* uid = doc["user_id"].as<const char*>();
-            if (!uid && doc["user"].is<JsonObject>()) uid = doc["user"]["id"].as<const char*>();
-            if (!uid) uid = doc["id"].as<const char*>();
-            std::string new_token = tok ? std::string(tok) : std::string();
-            std::string new_user_id = uid ? std::string(uid) : std::string();
-            if (new_token.empty() || new_user_id.empty()) {
-                ESP_LOGE(CHAT_TAG, "register: token/user_id missing (variant %s/%s)",
-                         v.user_key, v.pass_key);
-                continue;
-            }
-
-            {
-                std::lock_guard<std::mutex> guard(mutex_);
-                token_ = new_token;
-                user_id_ = new_user_id;
-            }
-
-            nvs_put_string("jwt_token", new_token);
-            nvs_put_string("user_id", new_user_id);
-            nvs_put_string("username", username);
-            nvs_put_string("user_name", username);
-            const char* fc = doc["friend_code"].as<const char*>();
-            if (!fc && doc["user"].is<JsonObject>()) fc = doc["user"]["friend_code"].as<const char*>();
-            if (fc) nvs_put_string("friend_code", std::string(fc));
-            const char* sid = doc["short_id"].as<const char*>();
-            if (!sid && doc["user"].is<JsonObject>()) sid = doc["user"]["short_id"].as<const char*>();
-            if (sid) nvs_put_string("short_id", std::string(sid));
-            ESP_LOGI(CHAT_TAG, "register ok: token_len=%d", (int)new_token.size());
-            return ESP_OK;
+        StaticJsonDocument<256> body;
+        body["login_id"] = login_id;
+        body["nickname"] = nickname.empty() ? login_id : nickname;
+        body["password"] = password;
+        std::string payload;
+        serializeJson(body, payload);
+        std::string resp;
+        int status = 0;
+        auto err = perform_request("POST", "/api/auth/register", payload, resp,
+                                   /*auth*/ false, &status);
+        if (err != ESP_OK) return err;
+        if (status >= 400) {
+            ESP_LOGE(CHAT_TAG, "HTTP POST /api/auth/register status=%d body='%s'",
+                     status, resp.substr(0,160).c_str());
+            return ESP_FAIL;
         }
-        return ESP_FAIL;
+        DynamicJsonDocument doc(resp.size() + 512);
+        if (deserializeJson(doc, resp) != DeserializationError::Ok) {
+            ESP_LOGE(CHAT_TAG, "register: JSON parse error");
+            return ESP_FAIL;
+        }
+        const char* tok = doc["token"].as<const char*>();
+        if (!tok) tok = doc["access_token"].as<const char*>();
+        if (!tok) tok = doc["jwt"].as<const char*>();
+        const char* uid = doc["user_id"].as<const char*>();
+        if (!uid && doc["user"].is<JsonObject>()) uid = doc["user"]["id"].as<const char*>();
+        if (!uid) uid = doc["id"].as<const char*>();
+        std::string new_token = tok ? std::string(tok) : std::string();
+        std::string new_user_id = uid ? std::string(uid) : std::string();
+        if (new_token.empty() || new_user_id.empty()) {
+            ESP_LOGE(CHAT_TAG, "register: token/user_id missing");
+            return ESP_FAIL;
+        }
+
+        {
+            std::lock_guard<std::mutex> guard(mutex_);
+            token_ = new_token;
+            user_id_ = new_user_id;
+        }
+
+        nvs_put_string("jwt_token", new_token);
+        nvs_put_string("user_id", new_user_id);
+        nvs_put_string("login_id", login_id);
+        nvs_put_string("username", login_id);
+        nvs_put_string("user_name", nickname.empty() ? login_id : nickname);
+        const char* fc = doc["friend_code"].as<const char*>();
+        if (!fc && doc["user"].is<JsonObject>()) fc = doc["user"]["friend_code"].as<const char*>();
+        if (fc) nvs_put_string("friend_code", std::string(fc));
+        const char* sid = doc["short_id"].as<const char*>();
+        if (!sid && doc["user"].is<JsonObject>()) sid = doc["user"]["short_id"].as<const char*>();
+        if (sid) nvs_put_string("short_id", std::string(sid));
+        ESP_LOGI(CHAT_TAG, "register ok: token_len=%d", (int)new_token.size());
+        return ESP_OK;
     }
 
     esp_err_t send_message(const std::string& receiver_identifier,
@@ -412,7 +396,18 @@ class ChatApiClient {
         return EndpointSnapshot{host_, port_, scheme_, token_};
     }
 
+    struct ResponseBuffer {
+        std::string* out;
+    };
+
     static esp_err_t _handle_events(esp_http_client_event_t* evt) {
+        if (!evt) return ESP_OK;
+        if (evt->event_id == HTTP_EVENT_ON_DATA && evt->data && evt->data_len > 0) {
+            auto* buf = static_cast<ResponseBuffer*>(evt->user_data);
+            if (buf && buf->out) {
+                buf->out->append(static_cast<const char*>(evt->data), evt->data_len);
+            }
+        }
         return ESP_OK;
     }
 
@@ -458,13 +453,14 @@ class ChatApiClient {
         std::string token = ctx.token;
 
         esp_http_client_config_t cfg = {};
-        cfg.host = host.c_str();
-        cfg.port = port;
-        cfg.path = path;
+        ResponseBuffer resp_buf{&out_resp};
+        std::string url = scheme + "://" + host + ":" + std::to_string(port) + path;
+        cfg.url = url.c_str();
         cfg.event_handler = _handle_events;
+        cfg.user_data = &resp_buf;
         cfg.transport_type = (scheme == "https") ? HTTP_TRANSPORT_OVER_SSL : HTTP_TRANSPORT_OVER_TCP;
         cfg.timeout_ms = request_timeout_ms_;
-        cfg.keep_alive_enable = true;
+        cfg.keep_alive_enable = false;
         if (is_ipv4_literal(host)) {
             cfg.skip_cert_common_name_check = true;
         }
@@ -476,8 +472,7 @@ class ChatApiClient {
         if (scheme == "https") cfg.cert_pem = (const char*)ca_cert_pem_start;
 #endif
 
-        ESP_LOGI(CHAT_TAG, "HTTP %s %s://%s:%d%s", method, scheme.c_str(),
-                 host.c_str(), port, path);
+        ESP_LOGI(CHAT_TAG, "HTTP %s %s", method, url.c_str());
 
         esp_http_client_handle_t client = esp_http_client_init(&cfg);
         if (!client) return ESP_FAIL;
@@ -494,43 +489,30 @@ class ChatApiClient {
         }
         if (!body.empty()) {
             esp_http_client_set_header(client, "Content-Type", "application/json");
+            esp_http_client_set_post_field(client, body.c_str(), body.size());
         }
 
-        esp_err_t err = esp_http_client_open(client, body.empty() ? 0 : body.size());
+        esp_err_t err = esp_http_client_perform(client);
         if (err != ESP_OK) {
-            ESP_LOGE(CHAT_TAG, "HTTP open %s %s failed: %s", method, path, esp_err_to_name(err));
+            ESP_LOGE(CHAT_TAG, "HTTP perform %s %s failed: %s", method, path,
+                     esp_err_to_name(err));
             esp_http_client_cleanup(client);
             return err;
         }
 
-        if (!body.empty()) {
-            int wlen = esp_http_client_write(client, body.c_str(), body.size());
-            if (wlen < 0) {
-                ESP_LOGE(CHAT_TAG, "HTTP write failed");
-                esp_http_client_cleanup(client);
-                return ESP_FAIL;
-            }
-        }
-
-        (void)esp_http_client_fetch_headers(client);
-
-        out_resp.clear();
-        char buf[512];
-        while (1) {
-            int r = esp_http_client_read(client, buf, sizeof(buf));
-            if (r <= 0) break;
-            out_resp.append(buf, buf + r);
-        }
-
         int status = esp_http_client_get_status_code(client);
+        int content_len = esp_http_client_get_content_length(client);
         if (status >= 400) {
             std::string preview = out_resp.substr(0, std::min<size_t>(out_resp.size(), 160));
-            ESP_LOGE(CHAT_TAG, "HTTP %s %s status=%d body='%s'", method, path, status, preview.c_str());
+            ESP_LOGE(CHAT_TAG,
+                     "HTTP %s %s status=%d len=%d body='%s'",
+                     method, path, status, content_len, preview.c_str());
         } else {
-            ESP_LOGD(CHAT_TAG, "HTTP %s %s status=%d body_len=%d", method, path, status, (int)out_resp.size());
+            ESP_LOGD(CHAT_TAG,
+                     "HTTP %s %s status=%d len=%d body_len=%d",
+                     method, path, status, content_len, (int)out_resp.size());
         }
 
-        esp_http_client_close(client);
         esp_http_client_cleanup(client);
         if (out_status) *out_status = status;
         return ESP_OK;
@@ -563,7 +545,8 @@ struct Credentials {
 
 inline Credentials load_credentials_from_nvs() {
     Credentials cred;
-    cred.username = nvs_get_string("user_name");
+    cred.username = nvs_get_string("login_id");
+    if (cred.username.empty()) cred.username = nvs_get_string("user_name");
     if (cred.username.empty()) cred.username = nvs_get_string("username");
     cred.password = nvs_get_string("password");
     if (cred.password.empty()) cred.password = "password123";
@@ -577,7 +560,7 @@ inline esp_err_t ensure_authenticated(ChatApiClient& api, const Credentials& cre
     esp_err_t err = api.login(cred.username, cred.password);
     if (err == ESP_OK) return ESP_OK;
     if (!allow_register) return err;
-    (void)api.register_user(cred.username, cred.password);
+    (void)api.register_user(cred.username, cred.username, cred.password);
     return api.login(cred.username, cred.password);
 }
 

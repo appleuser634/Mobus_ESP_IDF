@@ -6451,7 +6451,22 @@ StackType_t *MenuDisplay::task_stack_ = nullptr;
 
 class ProfileSetting {
    public:
-    static std::string input_info(std::string type_text = "") {
+    static constexpr uint32_t kProfileTaskStackWords = 16384;
+    static constexpr uint32_t kAuthTaskStackWords = 16384;
+    struct AuthTaskArgs {
+        bool signup = false;
+        std::string login_id;
+        std::string password;
+        std::string nickname;
+        TaskHandle_t waiter = nullptr;
+        esp_err_t *out_err = nullptr;
+    };
+
+    static std::string input_field(const std::string &header_top,
+                                   const std::string &header_bottom,
+                                   const std::string &label,
+                                   std::string type_text = "",
+                                   size_t max_len = 32) {
         int select_x_index = 0;
         int select_y_index = 0;
 
@@ -6475,12 +6490,20 @@ class ProfileSetting {
         Button back_button(GPIO_NUM_3);
         Button enter_button(GPIO_NUM_5);
 
+        if (max_len > 0 && type_text.capacity() < max_len) {
+            type_text.reserve(max_len);
+        }
+
         while (1) {
             sprite.fillRect(0, 0, 128, 64, 0);
             sprite.setTextColor(0xFFFFFFu, 0x000000u);
 
-            sprite.drawCenterString("HI, DE Mimoc.", 64, 0);
-            sprite.drawCenterString("YOU ARE?", 64, 15);
+            if (!header_top.empty()) {
+                sprite.drawCenterString(header_top.c_str(), 64, 0);
+            }
+            if (!header_bottom.empty()) {
+                sprite.drawCenterString(header_bottom.c_str(), 64, 15);
+            }
 
             Joystick::joystick_state_t joystick_state =
                 joystick.get_joystick_state();
@@ -6510,8 +6533,10 @@ class ProfileSetting {
                 if (row_len > 0) {
                     if (select_x_index < 0) select_x_index = 0;
                     if (select_x_index >= row_len) select_x_index = row_len - 1;
-                    type_text.push_back(
-                        char_set[select_y_index][select_x_index]);
+                    if (max_len == 0 || type_text.size() < max_len) {
+                        type_text.push_back(
+                            char_set[select_y_index][select_x_index]);
+                    }
                 }
                 type_button.clear_button_state();
                 type_button.reset_timer();
@@ -6529,6 +6554,7 @@ class ProfileSetting {
             if (select_x_index < 0) select_x_index = row_len - 1;
 
             int draw_x = 0;
+            const int kCharSpacing = 8;
             for (int i = 0; char_set[select_y_index][i] != '\0'; i++) {
                 sprite.setCursor(draw_x, 46);
                 if (select_x_index == i) {
@@ -6537,15 +6563,16 @@ class ProfileSetting {
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 }
                 sprite.print(char_set[select_y_index][i]);
-                char c = char_set[select_y_index][i];
-                const char *c_ptr = &c;
-                draw_x += sprite.textWidth(c_ptr);
+                draw_x += kCharSpacing;
             }
 
             // 入力された文字の表示
             sprite.setTextColor(0xFFFFFFu, 0x000000u);
             sprite.setCursor(0, 30);
-            sprite.print(("Name: " + type_text).c_str());
+            if (!label.empty()) {
+                sprite.print(label.c_str());
+            }
+            sprite.print(type_text.c_str());
             sprite.drawFastHLine(0, 45, 128, 0xFFFF);
 
             push_sprite_safe(0, 0);
@@ -6554,6 +6581,10 @@ class ProfileSetting {
         }
 
         return type_text;
+    }
+
+    static std::string input_info(std::string type_text = "") {
+        return input_field("HI, DE Mimoc.", "YOU ARE?", "Name: ", type_text, 20);
     }
 
     static std::string set_profile_info(uint8_t *ssid = 0) {
@@ -6569,7 +6600,93 @@ class ProfileSetting {
         play_morse_message(text, header, cx, cy);
     }
 
+    static bool select_auth_mode(bool &signup) {
+        Joystick joystick;
+        Button type_button(GPIO_NUM_46);
+        Button back_button(GPIO_NUM_3);
+        Button enter_button(GPIO_NUM_5);
+        int select_index = 0;
+        const char *options[2] = {"LOGIN", "SIGN UP"};
+
+        while (1) {
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            sprite.drawCenterString("ACCOUNT", 64, 0);
+            sprite.drawCenterString("Choose", 64, 15);
+
+            for (int i = 0; i < 2; i++) {
+                int y = 32 + i * 14;
+                if (select_index == i) {
+                    sprite.fillRect(10, y - 1, 108, 12, 0xFFFF);
+                    sprite.setTextColor(0x000000u, 0xFFFFFFu);
+                } else {
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                }
+                sprite.drawCenterString(options[i], 64, y);
+            }
+
+            Joystick::joystick_state_t joystick_state =
+                joystick.get_joystick_state();
+            Button::button_state_t type_button_state =
+                type_button.get_button_state();
+            Button::button_state_t back_button_state =
+                back_button.get_button_state();
+            Button::button_state_t enter_button_state =
+                enter_button.get_button_state();
+
+            if (back_button_state.pushed) {
+                return false;
+            } else if (joystick_state.pushed_up_edge) {
+                select_index -= 1;
+            } else if (joystick_state.pushed_down_edge) {
+                select_index += 1;
+            } else if (type_button_state.pushed || enter_button_state.pushed) {
+                signup = (select_index == 1);
+                return true;
+            }
+
+            if (select_index < 0) select_index = 1;
+            if (select_index > 1) select_index = 0;
+
+            vTaskDelay(50 / portTICK_PERIOD_MS);
+        }
+    }
+
     static void profile_setting_task() {
+        if (profile_task_handle_) return;
+        if (!allocate_internal_stack(profile_task_stack_, kProfileTaskStackWords,
+                                     "ProfileSetting")) {
+            return;
+        }
+        TaskHandle_t waiter = xTaskGetCurrentTaskHandle();
+        profile_task_handle_ = xTaskCreateStaticPinnedToCore(
+            &profile_task_entry, "profile_setting_task",
+            kProfileTaskStackWords, waiter, 5, profile_task_stack_,
+            &profile_task_buffer_, 1);
+        if (!profile_task_handle_) {
+            return;
+        }
+        (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    }
+
+   private:
+    static StackType_t *profile_task_stack_;
+    static StaticTask_t profile_task_buffer_;
+    static TaskHandle_t profile_task_handle_;
+
+    static void profile_task_entry(void *pvParameters) {
+        TaskHandle_t waiter = static_cast<TaskHandle_t>(pvParameters);
+        profile_setting_task_impl();
+        UBaseType_t watermark_words = uxTaskGetStackHighWaterMark(nullptr);
+        ESP_LOGI(TAG, "[Profile] stack watermark: %u words (%u bytes)",
+                 static_cast<unsigned>(watermark_words),
+                 static_cast<unsigned>(watermark_words * sizeof(StackType_t)));
+        if (waiter) xTaskNotifyGive(waiter);
+        profile_task_handle_ = nullptr;
+        vTaskDelete(NULL);
+    }
+
+    static void profile_setting_task_impl() {
         // Ensure Wi-Fi is connected before proceeding to initial setup
         while (1) {
             // If event group exists and connected bit is set, continue
@@ -6591,8 +6708,17 @@ class ProfileSetting {
             // Loop again to re-check connectivity; block until online
         }
 
-        // Register user to WebServer after getting profile name
-        // Uses default password if none is set in NVS
+        auto show_message = [&](const char *line1, const char *line2,
+                                int delay_ms) {
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.setFont(&fonts::Font2);
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            if (line1) sprite.drawCenterString(line1, 64, 18);
+            if (line2) sprite.drawCenterString(line2, 64, 34);
+            push_sprite_safe(0, 0);
+            vTaskDelay(delay_ms / portTICK_PERIOD_MS);
+        };
+
         int cx = 64;
         int cy = 15;
         morse_greeting("HI, DE Mimoc.", "", cx, cy);
@@ -6608,40 +6734,138 @@ class ProfileSetting {
             vTaskDelay(20 / portTICK_PERIOD_MS);
         }
 
-        // Ask username, then attempt register/login; only persist on success
+        // Ask login or signup, then attempt auth; only persist on success
         while (true) {
-            std::string user_name = set_profile_info();
+            bool signup = false;
+            if (!select_auth_mode(signup)) {
+                continue;
+            }
 
-            // If password not set, use default for development
-            std::string password = get_nvs("password");
-            if (password == "") {
-                password = "password123";
+            const char *title = signup ? "SIGN UP" : "LOGIN";
+            std::string login_id =
+                input_field(title, "Login ID", "ID: ",
+                            get_nvs((char *)"login_id"), 24);
+            if (login_id.empty()) {
+                show_message("Login ID required", "Try again", 900);
+                continue;
+            }
+
+            std::string password = input_field(title, "Password", "PW: ", "", 32);
+            if (password.empty()) {
+                password = get_nvs("password");
+                if (password.empty()) {
+                    password = "password123";
+                    save_nvs((char *)"password", password);
+                }
+            } else {
                 save_nvs((char *)"password", password);
             }
 
-            auto &api = chatapi::shared_client(true);
-            api.set_scheme("https");
-            esp_err_t err = api.register_user(user_name, password);
-            if (err != ESP_OK) {
-                err = api.login(user_name, password);
+            std::string nickname;
+            if (signup) {
+                nickname = input_field(title, "Nickname", "Name: ", "", 20);
+                if (nickname.empty()) nickname = login_id;
             }
+
+            esp_err_t err = run_auth_request(signup, login_id, password, nickname);
             if (err == ESP_OK) {
-                // ChatApiClient already persisted user_name/jwt/user_id
+                save_nvs("login_id", login_id);
+                if (signup) {
+                    save_nvs("user_name", nickname);
+                } else if (get_nvs("user_name").empty()) {
+                    save_nvs("user_name", login_id);
+                }
                 break;
             }
 
-            // Failed: clear any stale user_name and prompt again
-            save_nvs("user_name", "");
-            sprite.fillRect(0, 0, 128, 64, 0);
-            sprite.setFont(&fonts::Font2);
-            sprite.setTextColor(0xFFFFFFu, 0x000000u);
-            sprite.drawCenterString("Register/Login Failed", 64, 18);
-            sprite.drawCenterString("Check creds & network", 64, 34);
-            push_sprite_safe(0, 0);
-            vTaskDelay(1200 / portTICK_PERIOD_MS);
+            show_message("Auth Failed", "Check creds & net", 1200);
         }
-    };
+    }
+
+    static StackType_t *auth_task_stack_;
+    static StaticTask_t auth_task_buffer_;
+    static TaskHandle_t auth_task_handle_;
+    static esp_err_t auth_task_result_;
+
+    static void auth_task_entry(void *pvParameters) {
+        std::unique_ptr<AuthTaskArgs> args(
+            static_cast<AuthTaskArgs *>(pvParameters));
+        ESP_LOGI(TAG, "[Auth] heap pre login: free=%u largest=%u",
+                 static_cast<unsigned>(heap_caps_get_free_size(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        auto &api = chatapi::shared_client(true);
+        api.set_scheme("https");
+        esp_err_t result = ESP_FAIL;
+        if (args->signup) {
+            result = api.register_user(args->login_id, args->nickname,
+                                       args->password);
+        } else {
+            result = api.login(args->login_id, args->password);
+        }
+        if (args->out_err) {
+            *(args->out_err) = result;
+        }
+        UBaseType_t watermark_words = uxTaskGetStackHighWaterMark(nullptr);
+        ESP_LOGI(TAG, "[Auth] stack watermark: %u words (%u bytes)",
+                 static_cast<unsigned>(watermark_words),
+                 static_cast<unsigned>(watermark_words * sizeof(StackType_t)));
+        if (args->waiter) {
+            xTaskNotifyGive(args->waiter);
+        }
+        auth_task_handle_ = nullptr;
+        vTaskDelete(NULL);
+    }
+
+    static esp_err_t run_auth_request(bool signup,
+                                      const std::string &login_id,
+                                      const std::string &password,
+                                      const std::string &nickname) {
+        if (auth_task_handle_) return ESP_ERR_INVALID_STATE;
+        if (!allocate_internal_stack(auth_task_stack_, kAuthTaskStackWords,
+                                     "Auth")) {
+            return ESP_FAIL;
+        }
+        ESP_LOGI(TAG, "[Auth] heap before task: free=%u largest=%u",
+                 static_cast<unsigned>(heap_caps_get_free_size(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+
+        auto *args = new AuthTaskArgs();
+        args->signup = signup;
+        args->login_id = login_id;
+        args->password = password;
+        args->nickname = nickname;
+        args->waiter = xTaskGetCurrentTaskHandle();
+        auth_task_result_ = ESP_FAIL;
+        args->out_err = &auth_task_result_;
+
+        auth_task_handle_ = xTaskCreateStaticPinnedToCore(
+            &auth_task_entry, "auth_task", kAuthTaskStackWords, args, 5,
+            auth_task_stack_, &auth_task_buffer_, 1);
+        if (!auth_task_handle_) {
+            delete args;
+            return ESP_FAIL;
+        }
+
+        uint32_t notified =
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20000));
+        if (notified == 0) {
+            return ESP_ERR_TIMEOUT;
+        }
+        return auth_task_result_;
+    }
 };
+
+StackType_t *ProfileSetting::auth_task_stack_ = nullptr;
+StaticTask_t ProfileSetting::auth_task_buffer_;
+TaskHandle_t ProfileSetting::auth_task_handle_ = nullptr;
+esp_err_t ProfileSetting::auth_task_result_ = ESP_FAIL;
+StackType_t *ProfileSetting::profile_task_stack_ = nullptr;
+StaticTask_t ProfileSetting::profile_task_buffer_;
+TaskHandle_t ProfileSetting::profile_task_handle_ = nullptr;
 
 class Oled {
    public:
