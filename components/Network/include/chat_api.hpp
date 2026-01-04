@@ -24,6 +24,24 @@ namespace chatapi {
 
 static const char* CHAT_TAG = "ChatAPI";
 
+inline std::string url_encode(const std::string& input) {
+    static const char* kHex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(input.size());
+    for (unsigned char c : input) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' ||
+            c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(kHex[(c >> 4) & 0xF]);
+            out.push_back(kHex[c & 0xF]);
+        }
+    }
+    return out;
+}
+
 inline void ensure_nvs_ready() {
     static bool inited = false;
     if (inited) return;
@@ -272,6 +290,29 @@ class ChatApiClient {
         if (!sid && doc["user"].is<JsonObject>()) sid = doc["user"]["short_id"].as<const char*>();
         if (sid) nvs_put_string("short_id", std::string(sid));
         ESP_LOGI(CHAT_TAG, "register ok: token_len=%d", (int)new_token.size());
+        return ESP_OK;
+    }
+
+    esp_err_t login_id_available(const std::string& login_id,
+                                 bool* out_available) {
+        if (!out_available) return ESP_ERR_INVALID_ARG;
+        if (login_id.empty()) {
+            *out_available = false;
+            return ESP_ERR_INVALID_ARG;
+        }
+        std::string path = "/api/auth/login-id-available?login_id=" +
+                           url_encode(login_id);
+        std::string resp;
+        int status = 0;
+        auto err = perform_request("GET", path.c_str(), "", resp,
+                                   /*auth*/ false, &status);
+        if (err != ESP_OK) return err;
+        if (status >= 400) return ESP_FAIL;
+        DynamicJsonDocument doc(resp.size() + 128);
+        auto jerr = deserializeJson(doc, resp);
+        if (jerr != DeserializationError::Ok) return ESP_FAIL;
+        if (!doc["available"].is<bool>()) return ESP_FAIL;
+        *out_available = doc["available"].as<bool>();
         return ESP_OK;
     }
 

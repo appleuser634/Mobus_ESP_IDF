@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <functional>
 #include <vector>
 #include <cctype>
 #include <memory>
@@ -6568,14 +6569,28 @@ class ProfileSetting {
         esp_err_t *out_err = nullptr;
     };
 
-    static std::string input_field(const std::string &header_top,
-                                   const std::string &header_bottom,
-                                   const std::string &label,
-                                   std::string type_text = "",
-                                   size_t max_len = 32,
-                                   bool *canceled = nullptr) {
+    static std::string input_field(
+        const std::string &header_top, const std::string &header_bottom,
+        const std::string &label, std::string type_text = "",
+        size_t max_len = 32, bool *canceled = nullptr,
+        std::function<void(const std::string &, std::string &)> on_change =
+            nullptr,
+        std::function<bool(const std::string &, std::string &,
+                           std::string &)>
+            on_enter_validate = nullptr) {
         int select_x_index = 0;
         int select_y_index = 0;
+        std::string status_text;
+
+        auto show_dialog = [&](const std::string &line1,
+                               const std::string &line2) {
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            if (!line1.empty()) sprite.drawCenterString(line1.c_str(), 64, 18);
+            if (!line2.empty()) sprite.drawCenterString(line2.c_str(), 64, 34);
+            push_sprite_safe(0, 0);
+            vTaskDelay(900 / portTICK_PERIOD_MS);
+        };
 
         // 文字列の配列を作成
         char char_set[7][35];
@@ -6601,6 +6616,9 @@ class ProfileSetting {
             type_text.reserve(max_len);
         }
         if (canceled) *canceled = false;
+        if (on_change && !type_text.empty()) {
+            on_change(type_text, status_text);
+        }
 
         while (1) {
             sprite.fillRect(0, 0, 128, 64, 0);
@@ -6629,6 +6647,14 @@ class ProfileSetting {
             } else if (enter_button_state.pushed) {
                 enter_button.clear_button_state();
                 enter_button.reset_timer();
+                if (on_enter_validate) {
+                    std::string line1;
+                    std::string line2;
+                    if (!on_enter_validate(type_text, line1, line2)) {
+                        show_dialog(line1, line2);
+                        continue;
+                    }
+                }
                 break;
             } else if (joystick_state.pushed_left_edge) {
                 select_x_index -= 1;
@@ -6651,6 +6677,7 @@ class ProfileSetting {
                     if (max_len == 0 || type_text.size() < max_len) {
                         type_text.push_back(
                             char_set[select_y_index][select_x_index]);
+                        if (on_change) on_change(type_text, status_text);
                     }
                 }
                 type_button.clear_button_state();
@@ -6689,6 +6716,9 @@ class ProfileSetting {
             }
             sprite.print(type_text.c_str());
             sprite.drawFastHLine(0, 45, 128, 0xFFFF);
+            if (!status_text.empty()) {
+                sprite.drawCenterString(status_text.c_str(), 64, 24);
+            }
 
             push_sprite_safe(0, 0);
             // Feed watchdog / yield to scheduler
@@ -6854,23 +6884,64 @@ class ProfileSetting {
 
             const char *title = signup ? "SIGN UP" : "LOGIN";
             bool canceled = false;
+            auto &api = chatapi::shared_client(true);
+            const char *status_used =
+                (lang == ui::Lang::Ja) ? "使用中" : "In use";
+            const char *status_err =
+                (lang == ui::Lang::Ja) ? "確認失敗" : "Check failed";
+            std::function<bool(const std::string &, std::string &,
+                               std::string &)>
+                login_id_validator = [&](const std::string &text,
+                                         std::string &line1,
+                                         std::string &line2) {
+                    if (text.empty()) {
+                        line1 = "Login ID required";
+                        line2 = "Try again";
+                        return false;
+                    }
+                    if (text.size() < 3) {
+                        line1 = "Login ID min 3";
+                        line2 = "Try again";
+                        return false;
+                    }
+                    if (signup) {
+                        bool available = false;
+                        esp_err_t err =
+                            api.login_id_available(text, &available);
+                        if (err != ESP_OK) {
+                            line1 = status_err;
+                            line2 = "Try again";
+                            return false;
+                        }
+                        if (!available) {
+                            line1 = status_used;
+                            line2 = "Try again";
+                            return false;
+                        }
+                    }
+                    return true;
+                };
+
             std::string login_id =
-                input_field(title, "Login ID",
-                            "ID: ", get_nvs((char *)"login_id"), 24, &canceled);
+                input_field(title, "Login ID", "ID: ",
+                            get_nvs((char *)"login_id"), 24, &canceled,
+                            nullptr, login_id_validator);
             if (canceled) {
-                continue;
-            }
-            if (login_id.empty()) {
-                show_message("Login ID required", "Try again", 900, lang);
-                continue;
-            }
-            if (login_id.size() < 3) {
-                show_message("Login ID min 3", "Try again", 900, lang);
                 continue;
             }
 
             std::string password =
-                input_field(title, "Password", "PW: ", "", 32, &canceled);
+                input_field(
+                    title, "Password", "PW: ", "", 32, &canceled, nullptr,
+                    [&](const std::string &text, std::string &line1,
+                        std::string &line2) {
+                        if (signup && text.size() < 6) {
+                            line1 = "Password min 6";
+                            line2 = "Try again";
+                            return false;
+                        }
+                        return true;
+                    });
             if (canceled) {
                 continue;
             }
@@ -6880,11 +6951,6 @@ class ProfileSetting {
                     password = "password123";
                 }
             }
-            if (signup && password.size() < 6) {
-                show_message("Password min 6", "Try again", 900, lang);
-                continue;
-            }
-
             std::string nickname;
             if (signup) {
                 nickname =
