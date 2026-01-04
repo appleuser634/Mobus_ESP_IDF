@@ -20,16 +20,72 @@
 #include <stdio.h>
 #include <inttypes.h>
 #include <string>
+#include <cstring>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include <vector>
 #include <utility>
 
 // Demo utilities removed to avoid unused warnings
+
+namespace {
+struct InternalBuf {
+    char *data = nullptr;
+    size_t size = 0;
+};
+
+inline InternalBuf make_internal_copy(const char *src, size_t len) {
+    InternalBuf buf;
+    buf.data = static_cast<char *>(
+        heap_caps_malloc(len + 1, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (!buf.data) return buf;
+    buf.size = len + 1;
+    if (len > 0) {
+        memcpy(buf.data, src, len);
+    }
+    buf.data[len] = '\0';
+    return buf;
+}
+
+inline void free_internal(InternalBuf &buf) {
+    if (buf.data) {
+        free(buf.data);
+        buf.data = nullptr;
+        buf.size = 0;
+    }
+}
+
+inline esp_err_t nvs_set_str_internal(nvs_handle_t handle, const char *key,
+                                      const std::string &value) {
+    InternalBuf buf = make_internal_copy(value.c_str(), value.size());
+    if (!buf.data) return ESP_ERR_NO_MEM;
+    esp_err_t err = nvs_set_str(handle, key, buf.data);
+    free_internal(buf);
+    return err;
+}
+
+inline esp_err_t nvs_get_str_internal(nvs_handle_t handle, const char *key,
+                                      std::string &out) {
+    size_t required_size = 0;
+    esp_err_t err = nvs_get_str(handle, key, nullptr, &required_size);
+    if (err != ESP_OK) return err;
+    InternalBuf buf = make_internal_copy("", required_size ? required_size - 1 : 0);
+    if (!buf.data) return ESP_ERR_NO_MEM;
+    err = nvs_get_str(handle, key, buf.data, &required_size);
+    if (err == ESP_OK) {
+        size_t len = required_size;
+        if (len > 0 && buf.data[len - 1] == '\0') len -= 1;
+        out.assign(buf.data, len);
+    }
+    free_internal(buf);
+    return err;
+}
+}  // namespace
 
 inline void save_nvs(const char *key, const std::string &record) {
     // Initialize NVS once; avoid erasing flash while other subsystems use it
@@ -53,7 +109,7 @@ inline void save_nvs(const char *key, const std::string &record) {
     }
 
     // Write string
-    err = nvs_set_str(my_handle, key, record.c_str());
+    err = nvs_set_str_internal(my_handle, key, record);
     if (err != ESP_OK) {
         ESP_LOGE("NVS", "Failed to write string: %s", esp_err_to_name(err));
         nvs_close(my_handle);
@@ -110,19 +166,12 @@ inline std::string get_nvs(const char *key) {
     }
 
     std::string result;
-    result.resize(required_size);  // includes null terminator
-
-    err = nvs_get_str(my_handle, key, result.data(), &required_size);
+    err = nvs_get_str_internal(my_handle, key, result);
     nvs_close(my_handle);
 
     if (err != ESP_OK) {
         ESP_LOGE("NVS", "Failed to read string: %s", esp_err_to_name(err));
         return "";
-    }
-
-    // Remove trailing null character
-    if (!result.empty() && result.back() == '\0') {
-        result.pop_back();
     }
 
     // reduce logs
@@ -163,7 +212,7 @@ inline void save_wifi_credential(const std::string& ssid, const std::string& pas
                 if (cur == ssid) {
                     // update password
                     char pkey[16]; snprintf(pkey, sizeof(pkey), "wifi_pass_%d", i);
-                    nvs_set_str(h, pkey, pass.c_str());
+                    nvs_set_str_internal(h, pkey, pass);
                     nvs_commit(h); nvs_close(h);
                     return;
                 }
@@ -178,8 +227,8 @@ inline void save_wifi_credential(const std::string& ssid, const std::string& pas
     {
         char skey[16]; snprintf(skey, sizeof(skey), "wifi_ssid_%d", next);
         char pkey[16]; snprintf(pkey, sizeof(pkey), "wifi_pass_%d", next);
-        nvs_set_str(h, skey, ssid.c_str());
-        nvs_set_str(h, pkey, pass.c_str());
+        nvs_set_str_internal(h, skey, ssid);
+        nvs_set_str_internal(h, pkey, pass);
         uint8_t nn = (uint8_t)((next + 1) % 5);
         nvs_set_u8(h, "wifi_next", nn);
         nvs_commit(h);
@@ -196,15 +245,11 @@ inline std::vector<std::pair<std::string,std::string>> get_wifi_credentials()
         char pkey[16]; snprintf(pkey, sizeof(pkey), "wifi_pass_%d", i);
         size_t ssz = 0;
         if (nvs_get_str(h, skey, nullptr, &ssz) == ESP_OK && ssz > 1) {
-            std::string ssid; ssid.resize(ssz);
-            if (nvs_get_str(h, skey, ssid.data(), &ssz) == ESP_OK) {
-                if (!ssid.empty() && ssid.back() == '\0') ssid.pop_back();
+            std::string ssid;
+            if (nvs_get_str_internal(h, skey, ssid) == ESP_OK) {
                 size_t psz = 0; std::string pass;
                 if (nvs_get_str(h, pkey, nullptr, &psz) == ESP_OK && psz > 0) {
-                    pass.resize(psz);
-                    if (nvs_get_str(h, pkey, pass.data(), &psz) == ESP_OK) {
-                        if (!pass.empty() && pass.back() == '\0') pass.pop_back();
-                    } else {
+                    if (nvs_get_str_internal(h, pkey, pass) != ESP_OK) {
                         pass.clear();
                     }
                 }

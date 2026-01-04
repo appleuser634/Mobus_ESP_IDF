@@ -171,21 +171,21 @@ inline const lgfx::IFont *select_display_font(const lgfx::IFont *base_font,
     }
 
     const lgfx::IFont *fallback =
-        prefer_8px ? static_cast<const lgfx::IFont *>(&fonts::lgfxJapanGothic_8)
-                   : static_cast<const lgfx::IFont *>(
-                         &fonts::lgfxJapanGothic_16);
+        prefer_8px
+            ? static_cast<const lgfx::IFont *>(&fonts::lgfxJapanGothic_8)
+            : static_cast<const lgfx::IFont *>(&fonts::lgfxJapanGothic_16);
 
     lgfx::FontMetrics metrics = {};
-    const auto &headup =
-        prefer_8px ? mobus_fonts::HeadUpDaisy14x8() : mobus_fonts::HeadUpDaisy14x16();
+    const auto &headup = prefer_8px ? mobus_fonts::HeadUpDaisy14x8()
+                                    : mobus_fonts::HeadUpDaisy14x16();
     if (headup.updateFontMetric(&metrics, cp)) return &headup;
 
     return fallback;
 }
 
 inline const lgfx::IFont *select_ime_font(int input_lang,
-                                         const lgfx::IFont *base_font,
-                                         const std::string &utf8_char) {
+                                          const lgfx::IFont *base_font,
+                                          const std::string &utf8_char) {
     if (!base_font) base_font = &fonts::Font0;
     if (input_lang != 1) return base_font;
     return select_display_font(base_font, utf8_char);
@@ -3335,18 +3335,18 @@ class P2P_Display {
                  status == ESP_NOW_SEND_SUCCESS ? "成功" : "失敗");
     }
 
-	    void p2p_init() {
+    void p2p_init() {
         // esp_err_t result = esp_now_init();
         // ESP_LOGE(TAG, "esp_now_send result: %s", esp_err_to_name(result));
         // ESP_ERROR_CHECK(result);
 
-	        {
-	            esp_err_t err = esp_now_init();
-	            if (err != ESP_OK && err != ESP_ERR_ESPNOW_EXIST) {
-	                ESP_ERROR_CHECK(err);
-	            }
-	        }
-	        ESP_ERROR_CHECK(esp_now_register_send_cb(espnow_send_cb));
+        {
+            esp_err_t err = esp_now_init();
+            if (err != ESP_OK && err != ESP_ERR_ESPNOW_EXIST) {
+                ESP_ERROR_CHECK(err);
+            }
+        }
+        ESP_ERROR_CHECK(esp_now_register_send_cb(espnow_send_cb));
 
         esp_now_peer_info_t peerInfo = {
             .channel = 0,
@@ -3354,27 +3354,27 @@ class P2P_Display {
             .encrypt = false,
         };
 
-	        memset(peerInfo.lmk, 0, ESP_NOW_KEY_LEN);  // ← これを追加
-	        memcpy(peerInfo.peer_addr, peer_mac, 6);
-	        {
-	            esp_err_t err = esp_now_add_peer(&peerInfo);
-	            if (err == ESP_ERR_ESPNOW_EXIST) {
-	                // Re-entering the realtime chat: peer may already exist.
-	                // Prefer modify; fall back to delete+add.
-	                esp_err_t m = esp_now_mod_peer(&peerInfo);
-	                if (m != ESP_OK) {
-	                    (void)esp_now_del_peer(peerInfo.peer_addr);
-	                    ESP_ERROR_CHECK(esp_now_add_peer(&peerInfo));
-	                }
-	            } else {
-	                ESP_ERROR_CHECK(err);
-	            }
-	        }
+        memset(peerInfo.lmk, 0, ESP_NOW_KEY_LEN);  // ← これを追加
+        memcpy(peerInfo.peer_addr, peer_mac, 6);
+        {
+            esp_err_t err = esp_now_add_peer(&peerInfo);
+            if (err == ESP_ERR_ESPNOW_EXIST) {
+                // Re-entering the realtime chat: peer may already exist.
+                // Prefer modify; fall back to delete+add.
+                esp_err_t m = esp_now_mod_peer(&peerInfo);
+                if (m != ESP_OK) {
+                    (void)esp_now_del_peer(peerInfo.peer_addr);
+                    ESP_ERROR_CHECK(esp_now_add_peer(&peerInfo));
+                }
+            } else {
+                ESP_ERROR_CHECK(err);
+            }
+        }
 
-	        esp_wifi_set_max_tx_power(84);
+        esp_wifi_set_max_tx_power(84);
 
-	        espnow_recv();
-	    }
+        espnow_recv();
+    }
 
     void espnow_send(std::string message) {
         if (message == "") {
@@ -3398,13 +3398,13 @@ class P2P_Display {
         }
     }
 
-	    void espnow_recv(void) {
-	        esp_err_t err = esp_now_register_recv_cb(espnow_recv_cb);
-	        if (err != ESP_OK) {
-	            ESP_LOGW(TAG, "esp_now_register_recv_cb failed: %s",
-	                     esp_err_to_name(err));
-	        }
-	    }
+    void espnow_recv(void) {
+        esp_err_t err = esp_now_register_recv_cb(espnow_recv_cb);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "esp_now_register_recv_cb failed: %s",
+                     esp_err_to_name(err));
+        }
+    }
 
     void morse_p2p() {
         p2p_init();
@@ -3595,9 +3595,9 @@ class P2P_Display {
             message_text += alphabet_text;
             if (alphabet_text != "" && input_lang == 1) {
                 size_t safe_pos = input_switch_pos;
-                if (safe_pos > message_text.size()) safe_pos = message_text.size();
-                std::string translate_targt =
-                    message_text.substr(safe_pos);
+                if (safe_pos > message_text.size())
+                    safe_pos = message_text.size();
+                std::string translate_targt = message_text.substr(safe_pos);
                 for (const auto &pair : TalkDisplay::romaji_kana) {
                     std::cout << "Key: " << pair.first << std::endl;
                     size_t pos = translate_targt.find(pair.first);
@@ -4557,22 +4557,14 @@ class SettingMenu {
 
         // Settings list
         setting_t settings[16] = {
-            {ui::Key::SettingsProfile},
-            {ui::Key::SettingsWifi},
-            {ui::Key::SettingsBluetooth},
-            {ui::Key::SettingsLanguage},
-            {ui::Key::SettingsSound},
-            {ui::Key::SettingsVibration},
-            {ui::Key::SettingsBootSound},
-            {ui::Key::SettingsRtc},
-            {ui::Key::SettingsOpenChat},
-            {ui::Key::SettingsComposer},
-            {ui::Key::SettingsAutoUpdate},
-            {ui::Key::SettingsOtaManifest},
-            {ui::Key::SettingsUpdateNow},
-            {ui::Key::SettingsFirmwareInfo},
-            {ui::Key::SettingsDevelop},
-            {ui::Key::SettingsFactoryReset},
+            {ui::Key::SettingsProfile},    {ui::Key::SettingsWifi},
+            {ui::Key::SettingsBluetooth},  {ui::Key::SettingsLanguage},
+            {ui::Key::SettingsSound},      {ui::Key::SettingsVibration},
+            {ui::Key::SettingsBootSound},  {ui::Key::SettingsRtc},
+            {ui::Key::SettingsOpenChat},   {ui::Key::SettingsComposer},
+            {ui::Key::SettingsAutoUpdate}, {ui::Key::SettingsOtaManifest},
+            {ui::Key::SettingsUpdateNow},  {ui::Key::SettingsFirmwareInfo},
+            {ui::Key::SettingsDevelop},    {ui::Key::SettingsFactoryReset},
         };
 
         int select_index = 0;
@@ -4638,18 +4630,19 @@ class SettingMenu {
                     int vol_pct = static_cast<int>(
                         sound_settings::volume() * 100.0f + 0.5f);
                     char label[48];
-                    std::snprintf(label, sizeof(label), "%s [%s, %d%%]",
-                                  ui::text(ui::Key::SettingsSound, lang),
-                                  ui::text(on ? ui::Key::LabelOn
-                                              : ui::Key::LabelOff,
-                                           lang),
-                                  vol_pct);
+                    std::snprintf(
+                        label, sizeof(label), "%s [%s, %d%%]",
+                        ui::text(ui::Key::SettingsSound, lang),
+                        ui::text(on ? ui::Key::LabelOn : ui::Key::LabelOff,
+                                 lang),
+                        vol_pct);
                     sprite.print(label);
                 } else if (settings[i].key == ui::Key::SettingsAutoUpdate) {
                     std::string au = get_nvs((char *)"ota_auto");
                     bool on = (au == "true");
                     std::string label =
-                        std::string(ui::text(ui::Key::SettingsAutoUpdate, lang)) +
+                        std::string(
+                            ui::text(ui::Key::SettingsAutoUpdate, lang)) +
                         " [" +
                         ui::text(on ? ui::Key::LabelOn : ui::Key::LabelOff,
                                  lang) +
@@ -4658,7 +4651,8 @@ class SettingMenu {
                 } else if (settings[i].key == ui::Key::SettingsVibration) {
                     bool on = joystick_haptics_enabled();
                     std::string label =
-                        std::string(ui::text(ui::Key::SettingsVibration, lang)) +
+                        std::string(
+                            ui::text(ui::Key::SettingsVibration, lang)) +
                         " [" +
                         ui::text(on ? ui::Key::LabelOn : ui::Key::LabelOff,
                                  lang) +
@@ -4682,14 +4676,14 @@ class SettingMenu {
                     std::string pairing = get_nvs((char *)"ble_pair");
                     if (connected)
                         label += " [" +
-                                 std::string(ui::text(ui::Key::LabelConnected,
-                                                      lang)) +
+                                 std::string(
+                                     ui::text(ui::Key::LabelConnected, lang)) +
                                  "]";
                     else if (pairing == "true")
-                        label += " [" +
-                                 std::string(
-                                     ui::text(ui::Key::LabelPairing, lang)) +
-                                 "]";
+                        label +=
+                            " [" +
+                            std::string(ui::text(ui::Key::LabelPairing, lang)) +
+                            "]";
                     sprite.print(label.c_str());
                 } else if (settings[i].key == ui::Key::SettingsBootSound) {
                     std::string bs = get_nvs((char *)"boot_sound");
@@ -4698,9 +4692,9 @@ class SettingMenu {
                         bs == std::string("majestic")
                             ? "Majestic"
                             : (bs == std::string("random") ? "Random" : "Cute");
-                    std::string label =
-                        std::string(ui::text(ui::Key::SettingsBootSound, lang)) +
-                        " [" + shown + "]";
+                    std::string label = std::string(ui::text(
+                                            ui::Key::SettingsBootSound, lang)) +
+                                        " [" + shown + "]";
                     sprite.print(label.c_str());
                 } else if (settings[i].key == ui::Key::SettingsFirmwareInfo) {
                     sprite.print(ui::text(ui::Key::SettingsFirmwareInfo, lang));
@@ -4741,7 +4735,8 @@ class SettingMenu {
                 type_button.reset_timer();
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsLanguage) {
+                       settings[select_index].key ==
+                           ui::Key::SettingsLanguage) {
                 int sel = (ui::current_lang() == ui::Lang::Ja) ? 1 : 0;
                 type_button.clear_button_state();
                 enter_button.clear_button_state();
@@ -4877,7 +4872,8 @@ class SettingMenu {
                     vTaskDelay(10 / portTICK_PERIOD_MS);
                 }
             } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsVibration) {
+                       settings[select_index].key ==
+                           ui::Key::SettingsVibration) {
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 joystick.reset_timer();
@@ -4894,7 +4890,8 @@ class SettingMenu {
                 push_sprite_safe(0, 0);
                 vTaskDelay(900 / portTICK_PERIOD_MS);
             } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsBootSound) {
+                       settings[select_index].key ==
+                           ui::Key::SettingsBootSound) {
                 // Simple boot sound selector: Type=cycle, Enter=preview,
                 // Back=save
                 type_button.clear_button_state();
@@ -4983,7 +4980,8 @@ class SettingMenu {
                 }
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsBluetooth) {
+                       settings[select_index].key ==
+                           ui::Key::SettingsBluetooth) {
                 // Simple Bluetooth pairing UI (UI only, no BLE stack)
                 type_button.clear_button_state();
                 joystick.reset_timer();
@@ -5215,7 +5213,8 @@ class SettingMenu {
                     vTaskDelay(50 / portTICK_PERIOD_MS);
                 }
             } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsOtaManifest) {
+                       settings[select_index].key ==
+                           ui::Key::SettingsOtaManifest) {
                 // Show current manifest URL in a simple modal
                 std::string mf = get_nvs((char *)"ota_manifest");
                 if (mf.empty()) {
@@ -5260,7 +5259,8 @@ class SettingMenu {
                 type_button.reset_timer();
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsUpdateNow) {
+                       settings[select_index].key ==
+                           ui::Key::SettingsUpdateNow) {
                 // Manual OTA check and update
                 // Pause MQTT to free resources during TLS/OTA
                 mqtt_rt_pause();
@@ -5284,7 +5284,8 @@ class SettingMenu {
                 type_button.reset_timer();
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsAutoUpdate) {
+                       settings[select_index].key ==
+                           ui::Key::SettingsAutoUpdate) {
                 // Toggle auto OTA ON/OFF
                 std::string au = get_nvs((char *)"ota_auto");
                 bool on = (au == "true");
@@ -5307,7 +5308,8 @@ class SettingMenu {
                 type_button.reset_timer();
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsFirmwareInfo) {
+                       settings[select_index].key ==
+                           ui::Key::SettingsFirmwareInfo) {
                 // Consume the button press before entering the info loop to
                 // avoid instant exit
                 type_button.clear_button_state();
@@ -5429,7 +5431,8 @@ class SettingMenu {
                 enter_button.reset_timer();
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsOpenChat) {
+                       settings[select_index].key ==
+                           ui::Key::SettingsOpenChat) {
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 enter_button.clear_button_state();
@@ -5443,7 +5446,8 @@ class SettingMenu {
                 }
                 sprite.setFont(&fonts::Font2);
             } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsComposer) {
+                       settings[select_index].key ==
+                           ui::Key::SettingsComposer) {
                 Composer comp;
                 comp.running_flag = true;
                 comp.start_composer_task();
@@ -5455,7 +5459,8 @@ class SettingMenu {
                 type_button.reset_timer();
                 joystick.reset_timer();
             } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsFactoryReset) {
+                       settings[select_index].key ==
+                           ui::Key::SettingsFactoryReset) {
                 // Confirmation dialog
                 type_button.clear_button_state();
                 type_button.reset_timer();
@@ -5506,18 +5511,18 @@ class SettingMenu {
                             // Proceed with reset
                             sprite.fillRect(0, 0, 128, 64, 0);
                             sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                                sprite.drawCenterString("Resetting...", 64, 22);
-                                sprite.drawCenterString("Erasing NVS", 64, 40);
-                                push_sprite_safe(0, 0);
-                                sprite.fillRect(0, 0, 128, 64, 0);
-                                sprite.drawCenterString("Rebooting...", 64, 30);
-                                push_sprite_safe(0, 0);
-                                vTaskDelay(200 / portTICK_PERIOD_MS);
-                                mobus_request_factory_reset();
-                            }
-                            // If No selected or after failure, exit dialog
-                            break;
+                            sprite.drawCenterString("Resetting...", 64, 22);
+                            sprite.drawCenterString("Erasing NVS", 64, 40);
+                            push_sprite_safe(0, 0);
+                            sprite.fillRect(0, 0, 128, 64, 0);
+                            sprite.drawCenterString("Rebooting...", 64, 30);
+                            push_sprite_safe(0, 0);
+                            vTaskDelay(200 / portTICK_PERIOD_MS);
+                            mobus_request_factory_reset();
                         }
+                        // If No selected or after failure, exit dialog
+                        break;
+                    }
 
                     // debounce
                     vTaskDelay(10 / portTICK_PERIOD_MS);
@@ -6567,7 +6572,8 @@ class ProfileSetting {
                                    const std::string &header_bottom,
                                    const std::string &label,
                                    std::string type_text = "",
-                                   size_t max_len = 32) {
+                                   size_t max_len = 32,
+                                   bool *canceled = nullptr) {
         int select_x_index = 0;
         int select_y_index = 0;
 
@@ -6594,6 +6600,7 @@ class ProfileSetting {
         if (max_len > 0 && type_text.capacity() < max_len) {
             type_text.reserve(max_len);
         }
+        if (canceled) *canceled = false;
 
         while (1) {
             sprite.fillRect(0, 0, 128, 64, 0);
@@ -6612,9 +6619,16 @@ class ProfileSetting {
                 type_button.get_button_state();
             Button::button_state_t back_button_state =
                 back_button.get_button_state();
+            Button::button_state_t enter_button_state =
+                enter_button.get_button_state();
 
             // 入力イベント
             if (back_button_state.pushed) {
+                if (canceled) *canceled = true;
+                break;
+            } else if (enter_button_state.pushed) {
+                enter_button.clear_button_state();
+                enter_button.reset_timer();
                 break;
             } else if (joystick_state.pushed_left_edge) {
                 select_x_index -= 1;
@@ -6685,7 +6699,8 @@ class ProfileSetting {
     }
 
     static std::string input_info(std::string type_text = "") {
-        return input_field("HI, DE Mimoc.", "YOU ARE?", "Name: ", type_text, 20);
+        return input_field("HI, DE Mimoc.", "YOU ARE?", "Name: ", type_text,
+                           20);
     }
 
     static std::string set_profile_info(uint8_t *ssid = 0) {
@@ -6701,19 +6716,34 @@ class ProfileSetting {
         play_morse_message(text, header, cx, cy);
     }
 
-    static bool select_auth_mode(bool &signup) {
+    static bool select_auth_mode(bool &signup, ui::Lang lang) {
         Joystick joystick;
         Button type_button(GPIO_NUM_46);
         Button back_button(GPIO_NUM_3);
         Button enter_button(GPIO_NUM_5);
         int select_index = 0;
-        const char *options[2] = {"LOGIN", "SIGN UP"};
+        const char *options[2] = {ui::text(ui::Key::ActionLogin, lang),
+                                  ui::text(ui::Key::ActionSignup, lang)};
+        const lgfx::IFont *font =
+            (lang == ui::Lang::Ja)
+                ? static_cast<const lgfx::IFont *>(
+                      &mobus_fonts::MisakiGothic8())
+                : static_cast<const lgfx::IFont *>(&fonts::Font2);
+
+        type_button.clear_button_state();
+        enter_button.clear_button_state();
+        back_button.clear_button_state();
+        joystick.reset_timer();
+        vTaskDelay(50 / portTICK_PERIOD_MS);
 
         while (1) {
             sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.setFont(font);
             sprite.setTextColor(0xFFFFFFu, 0x000000u);
-            sprite.drawCenterString("ACCOUNT", 64, 0);
-            sprite.drawCenterString("Choose", 64, 15);
+            sprite.drawCenterString(ui::text(ui::Key::TitleAccount, lang), 64,
+                                    0);
+            sprite.drawCenterString(ui::text(ui::Key::TitleChoose, lang), 64,
+                                    15);
 
             for (int i = 0; i < 2; i++) {
                 int y = 32 + i * 14;
@@ -6749,21 +6779,23 @@ class ProfileSetting {
             if (select_index < 0) select_index = 1;
             if (select_index > 1) select_index = 0;
 
+            push_sprite_safe(0, 0);
+
             vTaskDelay(50 / portTICK_PERIOD_MS);
         }
     }
 
     static void profile_setting_task() {
         if (profile_task_handle_) return;
-        if (!allocate_internal_stack(profile_task_stack_, kProfileTaskStackWords,
+        if (!allocate_internal_stack(profile_task_stack_,
+                                     kProfileTaskStackWords,
                                      "ProfileSetting")) {
             return;
         }
         TaskHandle_t waiter = xTaskGetCurrentTaskHandle();
         profile_task_handle_ = xTaskCreateStaticPinnedToCore(
-            &profile_task_entry, "profile_setting_task",
-            kProfileTaskStackWords, waiter, 5, profile_task_stack_,
-            &profile_task_buffer_, 1);
+            &profile_task_entry, "profile_setting_task", kProfileTaskStackWords,
+            waiter, 5, profile_task_stack_, &profile_task_buffer_, 1);
         if (!profile_task_handle_) {
             return;
         }
@@ -6788,31 +6820,15 @@ class ProfileSetting {
     }
 
     static void profile_setting_task_impl() {
-        // Ensure Wi-Fi is connected before proceeding to initial setup
-        while (1) {
-            // If event group exists and connected bit is set, continue
-            if (s_wifi_event_group) {
-                EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
-                if (bits & WIFI_CONNECTED_BIT) {
-                    break;
-                }
-            }
-
-            // Launch Wi-Fi setting UI; returns to this loop when user exits
-            WiFiSetting wifi_setting;
-            wifi_setting.running_flag = true;
-            wifi_setting.start_wifi_setting_task();
-            while (wifi_setting.running_flag) {
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-            }
-
-            // Loop again to re-check connectivity; block until online
-        }
-
         auto show_message = [&](const char *line1, const char *line2,
-                                int delay_ms) {
+                                int delay_ms, ui::Lang lang) {
+            const lgfx::IFont *font =
+                (lang == ui::Lang::Ja)
+                    ? static_cast<const lgfx::IFont *>(
+                          &mobus_fonts::MisakiGothic8())
+                    : static_cast<const lgfx::IFont *>(&fonts::Font2);
             sprite.fillRect(0, 0, 128, 64, 0);
-            sprite.setFont(&fonts::Font2);
+            sprite.setFont(font);
             sprite.setTextColor(0xFFFFFFu, 0x000000u);
             if (line1) sprite.drawCenterString(line1, 64, 18);
             if (line2) sprite.drawCenterString(line2, 64, 34);
@@ -6820,55 +6836,67 @@ class ProfileSetting {
             vTaskDelay(delay_ms / portTICK_PERIOD_MS);
         };
 
-        int cx = 64;
-        int cy = 15;
-        morse_greeting("HI, DE Mimoc.", "", cx, cy);
-        vTaskDelay(400 / portTICK_PERIOD_MS);
-        morse_greeting("YOU ARE?", "HI, DE Mimoc.");
-
-        while (cy > 0) {
-            sprite.fillRect(0, 0, 128, 64, 0);
-            sprite.drawCenterString("HI, DE Mimoc.", cx, cy);
-            sprite.drawCenterString("YOU ARE?", cx, cy + 17);
-            push_sprite_safe(0, 0);
-            cy--;
-            vTaskDelay(20 / portTICK_PERIOD_MS);
+        ui::Lang lang = ui::current_lang();
+        while (1) {
+            lang = prompt_language();
+            if (ensure_wifi_connected(lang)) break;
         }
 
         // Ask login or signup, then attempt auth; only persist on success
         while (true) {
             bool signup = false;
-            if (!select_auth_mode(signup)) {
+            if (!select_auth_mode(signup, lang)) {
+                if (!ensure_wifi_connected(lang)) {
+                    lang = prompt_language();
+                }
                 continue;
             }
 
             const char *title = signup ? "SIGN UP" : "LOGIN";
+            bool canceled = false;
             std::string login_id =
-                input_field(title, "Login ID", "ID: ",
-                            get_nvs((char *)"login_id"), 24);
+                input_field(title, "Login ID",
+                            "ID: ", get_nvs((char *)"login_id"), 24, &canceled);
+            if (canceled) {
+                continue;
+            }
             if (login_id.empty()) {
-                show_message("Login ID required", "Try again", 900);
+                show_message("Login ID required", "Try again", 900, lang);
+                continue;
+            }
+            if (login_id.size() < 3) {
+                show_message("Login ID min 3", "Try again", 900, lang);
                 continue;
             }
 
-            std::string password = input_field(title, "Password", "PW: ", "", 32);
+            std::string password =
+                input_field(title, "Password", "PW: ", "", 32, &canceled);
+            if (canceled) {
+                continue;
+            }
             if (password.empty()) {
                 password = get_nvs("password");
                 if (password.empty()) {
                     password = "password123";
-                    save_nvs((char *)"password", password);
                 }
-            } else {
-                save_nvs((char *)"password", password);
+            }
+            if (signup && password.size() < 6) {
+                show_message("Password min 6", "Try again", 900, lang);
+                continue;
             }
 
             std::string nickname;
             if (signup) {
-                nickname = input_field(title, "Nickname", "Name: ", "", 20);
+                nickname =
+                    input_field(title, "Nickname", "Name: ", "", 20, &canceled);
+                if (canceled) {
+                    continue;
+                }
                 if (nickname.empty()) nickname = login_id;
             }
 
-            esp_err_t err = run_auth_request(signup, login_id, password, nickname);
+            esp_err_t err =
+                run_auth_request(signup, login_id, password, nickname);
             if (err == ESP_OK) {
                 save_nvs("login_id", login_id);
                 if (signup) {
@@ -6876,10 +6904,16 @@ class ProfileSetting {
                 } else if (get_nvs("user_name").empty()) {
                     save_nvs("user_name", login_id);
                 }
+                if (!password.empty()) {
+                    save_nvs((char *)"password", password);
+                }
+                show_message(ui::text(ui::Key::GreetingLine1, lang),
+                             ui::text(ui::Key::GreetingLine2, lang), 1200,
+                             lang);
                 break;
             }
 
-            show_message("Auth Failed", "Check creds & net", 1200);
+            show_message("Auth Failed", "Check creds & net", 1200, lang);
         }
     }
 
@@ -6919,8 +6953,7 @@ class ProfileSetting {
         vTaskDelete(NULL);
     }
 
-    static esp_err_t run_auth_request(bool signup,
-                                      const std::string &login_id,
+    static esp_err_t run_auth_request(bool signup, const std::string &login_id,
                                       const std::string &password,
                                       const std::string &nickname) {
         if (auth_task_handle_) return ESP_ERR_INVALID_STATE;
@@ -6951,12 +6984,178 @@ class ProfileSetting {
             return ESP_FAIL;
         }
 
-        uint32_t notified =
-            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20000));
+        uint32_t notified = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20000));
         if (notified == 0) {
             return ESP_ERR_TIMEOUT;
         }
         return auth_task_result_;
+    }
+
+    static ui::Lang prompt_language() {
+        Joystick joystick;
+        Button type_button(GPIO_NUM_46);
+        Button enter_button(GPIO_NUM_5);
+        ui::Lang selected = ui::current_lang();
+        int sel = (selected == ui::Lang::Ja) ? 1 : 0;
+        while (1) {
+            const ui::Lang lang = (sel == 1) ? ui::Lang::Ja : ui::Lang::En;
+            const lgfx::IFont *font =
+                (lang == ui::Lang::Ja)
+                    ? static_cast<const lgfx::IFont *>(
+                          &mobus_fonts::MisakiGothic8())
+                    : static_cast<const lgfx::IFont *>(&fonts::Font2);
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.setFont(font);
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            sprite.drawCenterString(ui::text(ui::Key::TitleLanguage, lang), 64,
+                                    6);
+            const char *opts[2] = {ui::text(ui::Key::LangEnglish, lang),
+                                   ui::text(ui::Key::LangJapanese, lang)};
+            for (int i = 0; i < 2; i++) {
+                int y = 24 + i * 16;
+                if (sel == i) {
+                    sprite.fillRect(8, y - 2, 112, 14, 0xFFFF);
+                    sprite.setTextColor(0x000000u, 0xFFFFFFu);
+                } else {
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                }
+                sprite.drawCenterString(opts[i], 64, y);
+            }
+            push_sprite_safe(0, 0);
+
+            auto js = joystick.get_joystick_state();
+            auto tbs = type_button.get_button_state();
+            auto ebs = enter_button.get_button_state();
+
+            if (js.pushed_up_edge || js.pushed_down_edge) sel = (sel + 1) % 2;
+            if (tbs.pushed || ebs.pushed) {
+                ui::Lang chosen = (sel == 1) ? ui::Lang::Ja : ui::Lang::En;
+                if (confirm_language(chosen)) {
+                    save_nvs("ui_lang", chosen == ui::Lang::Ja ? "ja" : "en");
+                    return chosen;
+                }
+            }
+            vTaskDelay(50 / portTICK_PERIOD_MS);
+        }
+    }
+
+    static bool confirm_language(ui::Lang lang) {
+        Joystick joystick;
+        Button type_button(GPIO_NUM_46);
+        Button enter_button(GPIO_NUM_5);
+        Button back_button(GPIO_NUM_3);
+        const lgfx::IFont *font =
+            (lang == ui::Lang::Ja)
+                ? static_cast<const lgfx::IFont *>(
+                      &mobus_fonts::MisakiGothic8())
+                : static_cast<const lgfx::IFont *>(&fonts::Font2);
+        int sel = 0;
+        while (1) {
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.setFont(font);
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            sprite.drawCenterString(
+                ui::text(ui::Key::TitleLanguageConfirm, lang), 64, 6);
+            const char *opts[2] = {ui::text(ui::Key::LabelConfirm, lang),
+                                   ui::text(ui::Key::LabelBack, lang)};
+            for (int i = 0; i < 2; i++) {
+                int y = 28 + i * 16;
+                if (sel == i) {
+                    sprite.fillRect(8, y - 2, 112, 14, 0xFFFF);
+                    sprite.setTextColor(0x000000u, 0xFFFFFFu);
+                } else {
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                }
+                sprite.drawCenterString(opts[i], 64, y);
+            }
+            push_sprite_safe(0, 0);
+
+            auto js = joystick.get_joystick_state();
+            auto tbs = type_button.get_button_state();
+            auto ebs = enter_button.get_button_state();
+            auto bbs = back_button.get_button_state();
+
+            if (js.pushed_up_edge || js.pushed_down_edge) sel = (sel + 1) % 2;
+            if (bbs.pushed) return false;
+            if (tbs.pushed || ebs.pushed) {
+                return sel == 0;
+            }
+            vTaskDelay(50 / portTICK_PERIOD_MS);
+        }
+    }
+
+    static bool ensure_wifi_connected(ui::Lang lang) {
+        while (1) {
+            if (s_wifi_event_group) {
+                EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
+                if (bits & WIFI_CONNECTED_BIT) {
+                    return true;
+                }
+            }
+
+            WiFiSetting wifi_setting;
+            wifi_setting.running_flag = true;
+            wifi_setting.start_wifi_setting_task();
+            while (wifi_setting.running_flag) {
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+            }
+
+            if (s_wifi_event_group) {
+                EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
+                if (bits & WIFI_CONNECTED_BIT) {
+                    return true;
+                }
+            }
+
+            if (!prompt_wifi_retry_or_back(lang)) {
+                return false;
+            }
+        }
+    }
+
+    static bool prompt_wifi_retry_or_back(ui::Lang lang) {
+        Joystick joystick;
+        Button type_button(GPIO_NUM_46);
+        Button enter_button(GPIO_NUM_5);
+        Button back_button(GPIO_NUM_3);
+        const lgfx::IFont *font =
+            (lang == ui::Lang::Ja)
+                ? static_cast<const lgfx::IFont *>(
+                      &mobus_fonts::MisakiGothic8())
+                : static_cast<const lgfx::IFont *>(&fonts::Font2);
+        int sel = 0;
+        while (1) {
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.setFont(font);
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+            sprite.drawCenterString(ui::text(ui::Key::TitleWifiSetup, lang), 64,
+                                    6);
+            const char *opts[2] = {ui::text(ui::Key::LabelRetry, lang),
+                                   ui::text(ui::Key::LabelBack, lang)};
+            for (int i = 0; i < 2; i++) {
+                int y = 28 + i * 16;
+                if (sel == i) {
+                    sprite.fillRect(8, y - 2, 112, 14, 0xFFFF);
+                    sprite.setTextColor(0x000000u, 0xFFFFFFu);
+                } else {
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                }
+                sprite.drawCenterString(opts[i], 64, y);
+            }
+            push_sprite_safe(0, 0);
+
+            auto js = joystick.get_joystick_state();
+            auto tbs = type_button.get_button_state();
+            auto ebs = enter_button.get_button_state();
+            auto bbs = back_button.get_button_state();
+
+            if (js.pushed_up_edge || js.pushed_down_edge) sel = (sel + 1) % 2;
+            if (bbs.pushed) return false;
+            if (tbs.pushed || ebs.pushed) {
+                return sel == 0;
+            }
+            vTaskDelay(50 / portTICK_PERIOD_MS);
+        }
     }
 };
 

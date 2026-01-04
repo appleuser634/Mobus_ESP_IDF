@@ -33,8 +33,19 @@ enum class Key {
     LabelConnected,
     LabelPairing,
     TitleLanguage,
+    TitleLanguageConfirm,
+    TitleWifiSetup,
+    TitleAccount,
+    TitleChoose,
+    LabelConfirm,
+    LabelBack,
+    LabelRetry,
+    ActionLogin,
+    ActionSignup,
     LangEnglish,
     LangJapanese,
+    GreetingLine1,
+    GreetingLine2,
 };
 
 inline Lang current_lang() {
@@ -67,8 +78,19 @@ inline const char* text(Key key, Lang lang = current_lang()) {
             case Key::LabelConnected: return "コネクト";
             case Key::LabelPairing: return "ペアリング";
             case Key::TitleLanguage: return "ゲンゴ センタク";
+            case Key::TitleLanguageConfirm: return "コレデ イイ?";
+            case Key::TitleWifiSetup: return "ワイファイ セッテイ";
+            case Key::TitleAccount: return "アカウント";
+            case Key::TitleChoose: return "エラブ";
+            case Key::LabelConfirm: return "ケッテイ";
+            case Key::LabelBack: return "モドル";
+            case Key::LabelRetry: return "モウイチド";
+            case Key::ActionLogin: return "ログイン";
+            case Key::ActionSignup: return "サインアップ";
             case Key::LangEnglish: return "イングリッシュ";
             case Key::LangJapanese: return "ニホンゴ";
+            case Key::GreetingLine1: return "ヨウコソ";
+            case Key::GreetingLine2: return "ミモック";
         }
     }
 
@@ -94,8 +116,19 @@ inline const char* text(Key key, Lang lang = current_lang()) {
         case Key::LabelConnected: return "Connected";
         case Key::LabelPairing: return "PAIRING";
         case Key::TitleLanguage: return "Select Language";
+        case Key::TitleLanguageConfirm: return "Confirm Language";
+        case Key::TitleWifiSetup: return "Wi-Fi Setup";
+        case Key::TitleAccount: return "Account";
+        case Key::TitleChoose: return "Choose";
+        case Key::LabelConfirm: return "OK";
+        case Key::LabelBack: return "Back";
+        case Key::LabelRetry: return "Retry";
+        case Key::ActionLogin: return "Login";
+        case Key::ActionSignup: return "Sign Up";
         case Key::LangEnglish: return "English";
         case Key::LangJapanese: return "Japanese";
+        case Key::GreetingLine1: return "Welcome";
+        case Key::GreetingLine2: return "to Mimoc";
     }
 
     return "";
