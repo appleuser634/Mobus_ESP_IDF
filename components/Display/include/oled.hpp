@@ -1172,101 +1172,18 @@ class MessageBox {
                     DeserializationError err = deserializeJson(in, js);
                     if (err == DeserializationError::Ok) {
                         int count = 0;
-                        // Accept legacy shape: {messages:[{message,from},...]}
-                        // Or transform server-like shape into legacy
-                        bool legacy = false;
-                        if (in["messages"].is<JsonArray>()) {
-                            for (JsonObject m :
-                                 in["messages"].as<JsonArray>()) {
-                                if (m.containsKey("message") &&
-                                    m.containsKey("from")) {
-                                    legacy = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (legacy) {
-                            std::string outBuf;
-                            serializeJson(in, outBuf);
-                            deserializeJson(res, outBuf);
-                            count = res["messages"].is<JsonArray>()
-                                        ? res["messages"].as<JsonArray>().size()
-                                        : 0;
-                        } else if (in["messages"].is<JsonArray>()) {
-                            // Transform {content,sender_id,receiver_id} ->
-                            // {message,from}
-                            DynamicJsonDocument out(4096);
-                            auto arr = out.createNestedArray("messages");
-                            std::string my_id = get_nvs((char *)"user_id");
-                            std::string my_name = get_nvs((char *)"user_name");
-                            std::string my_short = get_nvs((char *)"short_id");
-                            if (my_name.empty()) my_name = get_nvs((char *)"login_id");
-                            if (my_name.empty()) my_name = my_short;
-                            if (my_name.empty()) my_name = "me";
-                            const std::string friend_id =
-                                !active_friend_id.empty() ? active_friend_id : fid;
-                            const std::string friend_short =
-                                !active_short_id.empty() ? active_short_id : fid;
-                            for (JsonObject m :
-                                 in["messages"].as<JsonArray>()) {
-                                JsonObject o = arr.createNestedObject();
-                                const char *content =
-                                    m["content"].as<const char *>();
-                                const char *msg =
-                                    m["message"].as<const char *>();
-                                o["message"] =
-                                    content ? content : (msg ? msg : "");
-                                const char *sender =
-                                    m["sender_id"].as<const char *>();
-                                const char *receiver =
-                                    m["receiver_id"].as<const char *>();
-                                const char *from_field =
-                                    m["from"].as<const char *>();
-                                bool is_friend = false;
-                                bool is_me = false;
-                                if (sender && !*sender) sender = nullptr;
-                                if (receiver && !*receiver) receiver = nullptr;
-                                if (sender && !friend_id.empty() &&
-                                    friend_id == sender) {
-                                    is_friend = true;
-                                } else if (sender && !my_id.empty() &&
-                                           my_id == sender) {
-                                    is_me = true;
-                                } else if (receiver && !friend_id.empty() &&
-                                           friend_id == receiver) {
-                                    is_me = true;
-                                } else if (from_field && !friend_short.empty() &&
-                                           friend_short == from_field) {
-                                    is_friend = true;
-                                } else if (from_field && !my_short.empty() &&
-                                           my_short == from_field) {
-                                    is_me = true;
-                                }
-                                o["from"] = is_me ? my_name.c_str() : fid.c_str();
-                                const char *mid = m["id"].as<const char *>();
-                                if (!mid)
-                                    mid = m["message_id"].as<const char *>();
-                                if (mid && mid[0] != '\0') o["id"] = mid;
-                                const char *created =
-                                    m["created_at"].as<const char *>();
-                                if (created && created[0] != '\0')
-                                    o["created_at"] = created;
-                                if (m.containsKey("is_read")) {
-                                    o["is_read"] = m["is_read"].as<bool>();
-                                }
-                            }
-                            count = arr.size();
-                            std::string outBuf;
-                            serializeJson(out, outBuf);
-                            deserializeJson(res, outBuf);
-                        } else if (in["payload"]["messages"].is<JsonArray>()) {
+                        // Prefer payload.messages when present.
+                        if (in["payload"]["messages"].is<JsonArray>()) {
                             // Handle { type:..., payload: { messages:[...] } }
                             DynamicJsonDocument out(4096);
                             auto arr = out.createNestedArray("messages");
                             std::string my_id = get_nvs((char *)"user_id");
                             std::string my_name = get_nvs((char *)"user_name");
                             std::string my_short = get_nvs((char *)"short_id");
-                            if (my_name.empty()) my_name = get_nvs((char *)"login_id");
+                            std::string my_login = get_nvs((char *)"login_id");
+                            std::string my_username = get_nvs((char *)"username");
+                            if (my_name.empty()) my_name = my_login;
+                            if (my_name.empty()) my_name = my_username;
                             if (my_name.empty()) my_name = my_short;
                             if (my_name.empty()) my_name = "me";
                             const std::string friend_id =
@@ -1295,17 +1212,33 @@ class MessageBox {
                                 if (sender && !friend_id.empty() &&
                                     friend_id == sender) {
                                     is_friend = true;
-                                } else if (sender && !my_id.empty() &&
-                                           my_id == sender) {
-                                    is_me = true;
                                 } else if (receiver && !friend_id.empty() &&
                                            friend_id == receiver) {
                                     is_me = true;
+                                } else if (sender && !my_id.empty() &&
+                                           my_id == sender) {
+                                    is_me = true;
+                                } else if (receiver && !my_id.empty() &&
+                                           my_id == receiver) {
+                                    is_friend = true;
                                 } else if (from_field && !friend_short.empty() &&
                                            friend_short == from_field) {
                                     is_friend = true;
-                                } else if (from_field && !my_short.empty() &&
-                                           my_short == from_field) {
+                                } else if (from_field &&
+                                           (!my_short.empty() &&
+                                            my_short == from_field)) {
+                                    is_me = true;
+                                } else if (from_field &&
+                                           (!my_login.empty() &&
+                                            my_login == from_field)) {
+                                    is_me = true;
+                                } else if (from_field &&
+                                           (!my_username.empty() &&
+                                            my_username == from_field)) {
+                                    is_me = true;
+                                } else if (from_field &&
+                                           (!my_name.empty() &&
+                                            my_name == from_field)) {
                                     is_me = true;
                                 }
                                 o["from"] = is_me ? my_name.c_str() : fid.c_str();
@@ -1326,9 +1259,120 @@ class MessageBox {
                             serializeJson(out, outBuf);
                             deserializeJson(res, outBuf);
                         } else {
-                            ESP_LOGW(
-                                TAG,
-                                "[BLE] Unexpected JSON shape for messages");
+                            // Accept legacy shape only when sender/receiver IDs are absent.
+                            bool legacy = false;
+                            bool has_sender_receiver = false;
+                            if (in["messages"].is<JsonArray>()) {
+                                for (JsonObject m :
+                                     in["messages"].as<JsonArray>()) {
+                                    if (m.containsKey("sender_id") ||
+                                        m.containsKey("receiver_id")) {
+                                        has_sender_receiver = true;
+                                    }
+                                    if (m.containsKey("message") &&
+                                        m.containsKey("from")) {
+                                        legacy = true;
+                                    }
+                                }
+                            }
+                            if (legacy && !has_sender_receiver) {
+                                std::string outBuf;
+                                serializeJson(in, outBuf);
+                                deserializeJson(res, outBuf);
+                                count = res["messages"].is<JsonArray>()
+                                            ? res["messages"].as<JsonArray>().size()
+                                            : 0;
+                            } else if (in["messages"].is<JsonArray>()) {
+                            // Transform {content,sender_id,receiver_id} ->
+                            // {message,from}
+                            DynamicJsonDocument out(4096);
+                            auto arr = out.createNestedArray("messages");
+                            std::string my_id = get_nvs((char *)"user_id");
+                            std::string my_name = get_nvs((char *)"user_name");
+                            std::string my_short = get_nvs((char *)"short_id");
+                            std::string my_login = get_nvs((char *)"login_id");
+                            std::string my_username = get_nvs((char *)"username");
+                            if (my_name.empty()) my_name = my_login;
+                            if (my_name.empty()) my_name = my_username;
+                            if (my_name.empty()) my_name = my_short;
+                            if (my_name.empty()) my_name = "me";
+                            const std::string friend_id =
+                                !active_friend_id.empty() ? active_friend_id : fid;
+                            const std::string friend_short =
+                                !active_short_id.empty() ? active_short_id : fid;
+                            for (JsonObject m :
+                                 in["messages"].as<JsonArray>()) {
+                                JsonObject o = arr.createNestedObject();
+                                const char *content =
+                                    m["content"].as<const char *>();
+                                const char *msg =
+                                    m["message"].as<const char *>();
+                                o["message"] =
+                                    content ? content : (msg ? msg : "");
+                                const char *sender =
+                                    m["sender_id"].as<const char *>();
+                                const char *receiver =
+                                    m["receiver_id"].as<const char *>();
+                                const char *from_field =
+                                    m["from"].as<const char *>();
+                                bool is_friend = false;
+                                bool is_me = false;
+                                if (sender && !*sender) sender = nullptr;
+                                if (receiver && !*receiver) receiver = nullptr;
+                                if (sender && !friend_id.empty() &&
+                                    friend_id == sender) {
+                                    is_friend = true;
+                                } else if (receiver && !friend_id.empty() &&
+                                           friend_id == receiver) {
+                                    is_me = true;
+                                } else if (sender && !my_id.empty() &&
+                                           my_id == sender) {
+                                    is_me = true;
+                                } else if (receiver && !my_id.empty() &&
+                                           my_id == receiver) {
+                                    is_friend = true;
+                                } else if (from_field && !friend_short.empty() &&
+                                           friend_short == from_field) {
+                                    is_friend = true;
+                                } else if (from_field &&
+                                           (!my_short.empty() &&
+                                            my_short == from_field)) {
+                                    is_me = true;
+                                } else if (from_field &&
+                                           (!my_login.empty() &&
+                                            my_login == from_field)) {
+                                    is_me = true;
+                                } else if (from_field &&
+                                           (!my_username.empty() &&
+                                            my_username == from_field)) {
+                                    is_me = true;
+                                } else if (from_field &&
+                                           (!my_name.empty() &&
+                                            my_name == from_field)) {
+                                    is_me = true;
+                                }
+                                o["from"] = is_me ? my_name.c_str() : fid.c_str();
+                                const char *mid = m["id"].as<const char *>();
+                                if (!mid)
+                                    mid = m["message_id"].as<const char *>();
+                                if (mid && mid[0] != '\0') o["id"] = mid;
+                                const char *created =
+                                    m["created_at"].as<const char *>();
+                                if (created && created[0] != '\0')
+                                    o["created_at"] = created;
+                                if (m.containsKey("is_read")) {
+                                    o["is_read"] = m["is_read"].as<bool>();
+                                }
+                            }
+                            count = arr.size();
+                            std::string outBuf;
+                            serializeJson(out, outBuf);
+                            deserializeJson(res, outBuf);
+                            } else {
+                                ESP_LOGW(
+                                    TAG,
+                                    "[BLE] Unexpected JSON shape for messages");
+                            }
                         }
                         ESP_LOGI(TAG, "[BLE] Parsed %d message(s) via BLE",
                                  count);
@@ -2989,9 +3033,17 @@ class WiFiSetting {
         }
         if (!allocate_internal_stack(task_stack_, kTaskStackWords,
                                      "WiFiSetting")) {
-            ESP_LOGE(TAG, "Failed to alloc wifi setting stack");
-            running_flag = false;
-            return;
+            size_t bytes = kTaskStackWords * sizeof(StackType_t);
+            task_stack_ = static_cast<StackType_t *>(heap_caps_malloc(
+                bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            if (!task_stack_) {
+                ESP_LOGE(TAG, "Failed to alloc wifi setting stack");
+                running_flag = false;
+                return;
+            }
+            ESP_LOGW(TAG,
+                     "[OLED] stack alloc in PSRAM (WiFiSetting, bytes=%u)",
+                     static_cast<unsigned>(bytes));
         }
         task_handle_ = xTaskCreateStaticPinnedToCore(
             &wifi_setting_task, "wifi_setting_task", kTaskStackWords, NULL, 6,

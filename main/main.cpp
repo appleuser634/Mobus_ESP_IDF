@@ -229,7 +229,8 @@ static void handle_factory_reset_if_requested() {
     const esp_err_t erase_labeled = nvs_flash_erase_partition("nvs");
     if (erase_default != ESP_OK && erase_labeled != ESP_OK) {
         ESP_LOGE(TAG, "[FactoryReset] erase failed: default=%s labeled=%s",
-                 esp_err_to_name(erase_default), esp_err_to_name(erase_labeled));
+                 esp_err_to_name(erase_default),
+                 esp_err_to_name(erase_labeled));
     }
     (void)nvs_flash_init();
     vTaskDelay(pdMS_TO_TICKS(200));
@@ -914,7 +915,7 @@ void app_main(void) {
     };
 
     if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
-        profiler.run_step("Boot sound", [&]() { play_boot_sound(); });
+        // profiler.run_step("Boot sound", [&]() { play_boot_sound(); });
         profiler.run_step("Boot display", [&]() { oled.BootDisplay(); });
         profiler.run_step("Boot LED animation", boot_led_animation);
 
@@ -942,7 +943,7 @@ void app_main(void) {
         }
         esp_deep_sleep_start();
     } else {
-        profiler.run_step("Boot sound", [&]() { play_boot_sound(); });
+        // profiler.run_step("Boot sound", [&]() { play_boot_sound(); });
         profiler.run_step("Boot display", [&]() { oled.BootDisplay(); });
         profiler.run_step("Boot LED animation", boot_led_animation);
     }
