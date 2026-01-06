@@ -44,7 +44,9 @@ static void handle_frame_from_phone(const std::string& frame);
 // Shared state across implementations
 static bool g_stack_inited = false;
 static bool g_net_suspended_for_ble = false;
+static bool g_resume_wifi_on_disable = false;
 static int g_last_err = 0;
+static std::string g_cached_messages;
 
 // Network helpers used to free/recover memory around BLE usage
 static void shutdown_network_stack() {
@@ -78,13 +80,15 @@ static void handle_frame_from_phone(const std::string& frame) {
     }
     // Cache messages list for current friend
     if (frame.find("\"type\":\"messages\"") != std::string::npos) {
+        g_cached_messages = frame;
         save_nvs((char*)"ble_messages", frame);
-        ESP_LOGI(GATTS_TAG, "Saved messages to NVS (ble_messages)");
+        ESP_LOGI(GATTS_TAG, "Cached messages (ble_messages)");
     }
     // Fallback: if top-level contains a "messages" field, persist it even if type differs
     else if (frame.find("\"messages\"") != std::string::npos) {
+        g_cached_messages = frame;
         save_nvs((char*)"ble_messages", frame);
-        ESP_LOGI(GATTS_TAG, "Saved messages (fallback) to NVS (ble_messages)");
+        ESP_LOGI(GATTS_TAG, "Cached messages (fallback) (ble_messages)");
     }
     // Cache pending requests list
     if (frame.find("\"type\":\"pending_requests\"") != std::string::npos ||
@@ -305,12 +309,7 @@ static void host_sync_cb(void) {
     std::string sid = get_nvs((char*)"short_id");
     if (sid.empty()) sid = get_nvs((char*)"ble_code");
     if (!sid.empty()) name += "-" + sid.substr(0, 8);
-    // Ensure services are registered at sync time
-    gatt_build_and_register();
-    ble_svc_gap_init();
-    ble_svc_gatt_init();
-    // Make GATT db active
-    (void)ble_gatts_start();
+    // GATT services are registered before NimBLE host task starts.
     ble_svc_gap_device_name_set(name.c_str());
 
     // Keep ADV payload minimal: flags + 128-bit service UUID only
@@ -373,13 +372,22 @@ extern "C" void ble_uart_enable(void) {
         host_sync_cb();
         return;
     }
+    // If Wi‑Fi is running (even without link), stop it to avoid coex/heap issues.
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    if (esp_wifi_get_mode(&mode) == ESP_OK && mode != WIFI_MODE_NULL) {
+        (void)esp_wifi_stop();
+        g_resume_wifi_on_disable = true;
+    }
     // Keep Wi‑Fi/network running so HTTP APIs continue to work while BLE is active.
     // On ESP32-S3 with NimBLE there is enough memory; disabling network causes
     // app features (friends list fetch, MQTT, etc.) to fail.
 
-    // Release Classic BT memory (host+controller)
-    (void)esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
-    (void)esp_bt_mem_release(ESP_BT_MODE_CLASSIC_BT);
+    // Release Classic BT memory (host+controller) once.
+    static bool s_bt_mem_released = false;
+    if (!s_bt_mem_released) {
+        (void)esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+        s_bt_mem_released = true;
+    }
 
     // Initialize NimBLE host; it will set up controller/HCI internally.
     esp_err_t err = nimble_port_init();
@@ -394,6 +402,10 @@ extern "C" void ble_uart_enable(void) {
             g_last_err = err;
             ESP_LOGE(GATTS_TAG, "nimble_port_init failed: %s", esp_err_to_name(err));
             if (g_net_suspended_for_ble) { restart_network_stack(); g_net_suspended_for_ble = false; }
+            if (g_resume_wifi_on_disable) {
+                restart_network_stack();
+                g_resume_wifi_on_disable = false;
+            }
             return;
         }
     }
@@ -410,6 +422,11 @@ extern "C" void ble_uart_enable(void) {
 #if HAVE_BLE_STORE_CONFIG
     ble_store_config_init();
 #endif
+
+    // Register GATT services before starting NimBLE host task.
+    gatt_build_and_register();
+    ble_svc_gap_init();
+    ble_svc_gatt_init();
 
     nimble_port_freertos_init(nimble_host_task);
     ESP_LOGI(GATTS_TAG, "nimble_port_freertos_init OK");
@@ -429,6 +446,10 @@ extern "C" void ble_uart_disable(void) {
         g_stack_inited = false;
     }
     if (g_net_suspended_for_ble) { restart_network_stack(); g_net_suspended_for_ble = false; }
+    if (g_resume_wifi_on_disable) {
+        restart_network_stack();
+        g_resume_wifi_on_disable = false;
+    }
 }
 
 extern "C" int ble_uart_is_ready(void) {
@@ -445,10 +466,19 @@ extern "C" int ble_uart_send(const uint8_t* data, size_t len) {
         ESP_LOGI(GATTS_TAG, "Queue frame until notify enabled (%u bytes)", (unsigned)len);
         return 0;
     }
-    struct os_mbuf* om = ble_hs_mbuf_from_flat(data, len);
-    if (!om) return -2;
-    int rc = ble_gatts_notify_custom(g_conn_handle, tx_val_handle, om);
-    return rc == 0 ? 0 : -3;
+    uint16_t mtu = ble_att_mtu(g_conn_handle);
+    size_t mtu_payload = (mtu > 3) ? (mtu - 3) : 20;
+    size_t offset = 0;
+    while (offset < len) {
+        size_t chunk = len - offset;
+        if (chunk > mtu_payload) chunk = mtu_payload;
+        struct os_mbuf* om = ble_hs_mbuf_from_flat(data + offset, chunk);
+        if (!om) return -2;
+        int rc = ble_gatts_notify_custom(g_conn_handle, tx_val_handle, om);
+        if (rc != 0) return -3;
+        offset += chunk;
+    }
+    return 0;
 }
 
 extern "C" int ble_uart_send_str(const char* s) {
@@ -457,6 +487,10 @@ extern "C" int ble_uart_send_str(const char* s) {
 }
 
 extern "C" int ble_uart_last_err(void) { return g_last_err; }
+
+std::string ble_uart_get_cached_messages() { return g_cached_messages; }
+
+void ble_uart_clear_cached_messages() { g_cached_messages.clear(); }
 
 #elif defined(CONFIG_BT_ENABLED) && defined(CONFIG_BT_BLE_ENABLED)
 

@@ -979,9 +979,17 @@ class MessageBox {
         }
         if (!allocate_internal_stack(task_stack_, kTaskStackWords,
                                      "MessageBox")) {
-            delete arg;
-            running_flag = false;
-            return;
+            size_t bytes = kTaskStackWords * sizeof(StackType_t);
+            task_stack_ = static_cast<StackType_t *>(heap_caps_malloc(
+                bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            if (!task_stack_) {
+                delete arg;
+                running_flag = false;
+                return;
+            }
+            ESP_LOGW(TAG,
+                     "[OLED] stack alloc in PSRAM (MessageBox, bytes=%u)",
+                     static_cast<unsigned>(bytes));
         }
         task_handle_ = xTaskCreateStaticPinnedToCore(
             &box_task, "box_task", kTaskStackWords, arg, 6, task_stack_,
@@ -1126,6 +1134,7 @@ class MessageBox {
 
             // Clear previous BLE messages so only fresh response is read
             save_nvs((char *)"ble_messages", std::string(""));
+            ble_uart_clear_cached_messages();
             // Phone app should reply with a frame stored in NVS under
             // "ble_messages". Include redundant identifier fields to maximise
             // compatibility across app versions.
@@ -1150,7 +1159,12 @@ class MessageBox {
 
             int waited = 0;
             while (waited < timeout_ms) {
-                std::string js = get_nvs((char *)"ble_messages");
+                std::string js = ble_uart_get_cached_messages();
+                if (js.empty()) {
+                    js = get_nvs((char *)"ble_messages");
+                } else {
+                    ble_uart_clear_cached_messages();
+                }
                 if (!js.empty()) {
                     ESP_LOGI(TAG, "[BLE] Received cached response (%zu bytes)",
                              js.size());
@@ -1185,6 +1199,14 @@ class MessageBox {
                             auto arr = out.createNestedArray("messages");
                             std::string my_id = get_nvs((char *)"user_id");
                             std::string my_name = get_nvs((char *)"user_name");
+                            std::string my_short = get_nvs((char *)"short_id");
+                            if (my_name.empty()) my_name = get_nvs((char *)"login_id");
+                            if (my_name.empty()) my_name = my_short;
+                            if (my_name.empty()) my_name = "me";
+                            const std::string friend_id =
+                                !active_friend_id.empty() ? active_friend_id : fid;
+                            const std::string friend_short =
+                                !active_short_id.empty() ? active_short_id : fid;
                             for (JsonObject m :
                                  in["messages"].as<JsonArray>()) {
                                 JsonObject o = arr.createNestedObject();
@@ -1196,12 +1218,31 @@ class MessageBox {
                                     content ? content : (msg ? msg : "");
                                 const char *sender =
                                     m["sender_id"].as<const char *>();
-                                if (sender && !my_id.empty() &&
-                                    my_id == sender) {
-                                    o["from"] = my_name.c_str();
-                                } else {
-                                    o["from"] = fid.c_str();
+                                const char *receiver =
+                                    m["receiver_id"].as<const char *>();
+                                const char *from_field =
+                                    m["from"].as<const char *>();
+                                bool is_friend = false;
+                                bool is_me = false;
+                                if (sender && !*sender) sender = nullptr;
+                                if (receiver && !*receiver) receiver = nullptr;
+                                if (sender && !friend_id.empty() &&
+                                    friend_id == sender) {
+                                    is_friend = true;
+                                } else if (sender && !my_id.empty() &&
+                                           my_id == sender) {
+                                    is_me = true;
+                                } else if (receiver && !friend_id.empty() &&
+                                           friend_id == receiver) {
+                                    is_me = true;
+                                } else if (from_field && !friend_short.empty() &&
+                                           friend_short == from_field) {
+                                    is_friend = true;
+                                } else if (from_field && !my_short.empty() &&
+                                           my_short == from_field) {
+                                    is_me = true;
                                 }
+                                o["from"] = is_me ? my_name.c_str() : fid.c_str();
                                 const char *mid = m["id"].as<const char *>();
                                 if (!mid)
                                     mid = m["message_id"].as<const char *>();
@@ -1224,6 +1265,14 @@ class MessageBox {
                             auto arr = out.createNestedArray("messages");
                             std::string my_id = get_nvs((char *)"user_id");
                             std::string my_name = get_nvs((char *)"user_name");
+                            std::string my_short = get_nvs((char *)"short_id");
+                            if (my_name.empty()) my_name = get_nvs((char *)"login_id");
+                            if (my_name.empty()) my_name = my_short;
+                            if (my_name.empty()) my_name = "me";
+                            const std::string friend_id =
+                                !active_friend_id.empty() ? active_friend_id : fid;
+                            const std::string friend_short =
+                                !active_short_id.empty() ? active_short_id : fid;
                             for (JsonObject m :
                                  in["payload"]["messages"].as<JsonArray>()) {
                                 JsonObject o = arr.createNestedObject();
@@ -1235,12 +1284,31 @@ class MessageBox {
                                     content ? content : (msg ? msg : "");
                                 const char *sender =
                                     m["sender_id"].as<const char *>();
-                                if (sender && !my_id.empty() &&
-                                    my_id == sender) {
-                                    o["from"] = my_name.c_str();
-                                } else {
-                                    o["from"] = fid.c_str();
+                                const char *receiver =
+                                    m["receiver_id"].as<const char *>();
+                                const char *from_field =
+                                    m["from"].as<const char *>();
+                                bool is_friend = false;
+                                bool is_me = false;
+                                if (sender && !*sender) sender = nullptr;
+                                if (receiver && !*receiver) receiver = nullptr;
+                                if (sender && !friend_id.empty() &&
+                                    friend_id == sender) {
+                                    is_friend = true;
+                                } else if (sender && !my_id.empty() &&
+                                           my_id == sender) {
+                                    is_me = true;
+                                } else if (receiver && !friend_id.empty() &&
+                                           friend_id == receiver) {
+                                    is_me = true;
+                                } else if (from_field && !friend_short.empty() &&
+                                           friend_short == from_field) {
+                                    is_friend = true;
+                                } else if (from_field && !my_short.empty() &&
+                                           my_short == from_field) {
+                                    is_me = true;
                                 }
+                                o["from"] = is_me ? my_name.c_str() : fid.c_str();
                                 const char *mid = m["id"].as<const char *>();
                                 if (!mid)
                                     mid = m["message_id"].as<const char *>();
@@ -1296,7 +1364,10 @@ class MessageBox {
             (void)recreate_message_sprite(lcd.width(), lcd.height());
         }
 
-        const std::string my_name = get_nvs((char *)"user_name");
+        std::string my_name = get_nvs((char *)"user_name");
+        if (my_name.empty()) my_name = get_nvs((char *)"login_id");
+        if (my_name.empty()) my_name = get_nvs((char *)"short_id");
+        if (my_name.empty()) my_name = "me";
         std::string morse_header = !chat_title.empty() ? chat_title : chat_to;
 
         auto make_suffix = [&](const std::string &source) {
@@ -3214,6 +3285,13 @@ class WiFiSetting {
         Button back_button(GPIO_NUM_3);
         Button enter_button(GPIO_NUM_5);
 
+        auto is_wifi_manual_off = []() -> bool {
+            return get_nvs((char *)"wifi_manual_off") == std::string("1");
+        };
+        auto set_wifi_manual_off = [](bool off) {
+            save_nvs((char *)"wifi_manual_off", off ? "1" : "0");
+        };
+
         uint16_t ssid_n = DEFAULT_SCAN_LIST_SIZE;
         wifi_ap_record_t ap_info[DEFAULT_SCAN_LIST_SIZE];
         wifi.wifi_scan(&ssid_n, ap_info);
@@ -3241,10 +3319,11 @@ class WiFiSetting {
                 select_index += 1;
             }
 
+            int max_index = ssid_n + 1;  // 0: Wi-Fi toggle, 1..ssid_n: SSIDs, last: Other
             if (select_index < 0) {
                 select_index = 0;
-            } else if (select_index > ssid_n) {
-                select_index = ssid_n;
+            } else if (select_index > max_index) {
+                select_index = max_index;
             }
 
             if (type_button_state.pushed) {
@@ -3255,13 +3334,14 @@ class WiFiSetting {
                 joystick.reset_timer();
             }
 
-            for (int i = 0; i <= ssid_n; i++) {
+            for (int i = 0; i <= ssid_n + 1; i++) {
                 sprite.setCursor(10, (font_height + margin) * i);
 
-                if (i < ssid_n) {
-                    ESP_LOGI(TAG, "SSID \t\t%s", ap_info[i].ssid);
-                    ESP_LOGI(TAG, "RSSI \t\t%d", ap_info[i].rssi);
-                    ESP_LOGI(TAG, "Channel \t\t%d", ap_info[i].primary);
+                if (i > 0 && i <= ssid_n) {
+                    int idx = i - 1;
+                    ESP_LOGI(TAG, "SSID \t\t%s", ap_info[idx].ssid);
+                    ESP_LOGI(TAG, "RSSI \t\t%d", ap_info[idx].rssi);
+                    ESP_LOGI(TAG, "Channel \t\t%d", ap_info[idx].primary);
                 }
 
                 if (i == select_index) {
@@ -3272,13 +3352,19 @@ class WiFiSetting {
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 }
 
-                if (ssid_n == i) {
+                if (i == 0) {
+                    std::string disp_wifi =
+                        std::string("Wi-Fi: ") +
+                        (is_wifi_manual_off() ? "OFF" : "ON");
+                    sprite.print(disp_wifi.c_str());
+                } else if (ssid_n + 1 == i) {
                     // 手動入力のためのOtherを表示
                     std::string disp_ssid = "Other";
                     sprite.print(disp_ssid.c_str());
                 } else {
                     // スキャンの結果取得できたSSIDを表示
-                    sprite.print(get_omitted_ssid(ap_info[i].ssid).c_str());
+                    int idx = i - 1;
+                    sprite.print(get_omitted_ssid(ap_info[idx].ssid).c_str());
                 }
             }
 
@@ -3286,10 +3372,40 @@ class WiFiSetting {
 
             // 個別のWiFi設定画面へ遷移
             if (type_button_state.pushed) {
-                if (ssid_n == select_index) {
+                if (select_index == 0) {
+                    bool off = is_wifi_manual_off();
+                    if (off) {
+                        set_wifi_manual_off(false);
+                        esp_err_t err = esp_wifi_start();
+                        if (err != ESP_OK && err != ESP_ERR_WIFI_CONN &&
+                            err != ESP_ERR_WIFI_NOT_STOPPED) {
+                            ESP_LOGW(TAG, "esp_wifi_start returned %s",
+                                     esp_err_to_name(err));
+                        }
+                        err = esp_wifi_connect();
+                        if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
+                            ESP_LOGW(TAG, "esp_wifi_connect returned %s",
+                                     esp_err_to_name(err));
+                        }
+                    } else {
+                        set_wifi_manual_off(true);
+                        esp_err_t err = esp_wifi_disconnect();
+                        if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED &&
+                            err != ESP_ERR_WIFI_CONN) {
+                            ESP_LOGW(TAG, "esp_wifi_disconnect returned %s",
+                                     esp_err_to_name(err));
+                        }
+                        err = esp_wifi_stop();
+                        if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
+                            ESP_LOGW(TAG, "esp_wifi_stop returned %s",
+                                     esp_err_to_name(err));
+                        }
+                    }
+                } else if (ssid_n + 1 == select_index) {
                     set_wifi_info();
                 } else {
-                    set_wifi_info(ap_info[select_index].ssid);
+                    int idx = select_index - 1;
+                    set_wifi_info(ap_info[idx].ssid);
                 }
                 type_button.clear_button_state();
                 type_button.reset_timer();

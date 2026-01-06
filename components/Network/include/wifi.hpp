@@ -58,7 +58,10 @@ class WiFi {
             }
             std::string ble_pair = get_nvs((char *)"ble_pair");
             std::string ble_rst = get_nvs((char *)"ble_wifi_rst");
-            bool forced_off = (ble_pair == "true") || (ble_rst == "1");
+            std::string wifi_manual = get_nvs((char *)"wifi_manual_off");
+            bool forced_off =
+                (ble_pair == "true") || (ble_rst == "1") ||
+                (wifi_manual == "1");
             if (s_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
                 if (forced_off) {
                     ESP_LOGI(TAG,
@@ -312,7 +315,12 @@ class WiFi {
         wifi_init_sta();
         // Disable power save to avoid driver path timing issues during bring-up
         esp_wifi_set_ps(WIFI_PS_NONE);
-        // Try saved credentials first (if any); otherwise leave Wi‑Fi idle until user configures
-        wifi_connect_saved_any();
+        // Try saved credentials first unless Wi‑Fi is manually disabled.
+        if (get_nvs((char *)"wifi_manual_off") != "1") {
+            wifi_connect_saved_any();
+        } else {
+            ESP_LOGI(TAG, "Wi-Fi disabled by user; skip auto-connect");
+            (void)esp_wifi_stop();
+        }
     }
 };

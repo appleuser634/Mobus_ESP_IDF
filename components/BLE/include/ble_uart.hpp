@@ -7,6 +7,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#ifdef __cplusplus
+#include <string>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,4 +35,8 @@ int ble_uart_send_str(const char* s);
 
 #ifdef __cplusplus
 }
+
+// C++ helpers for cached BLE frames.
+std::string ble_uart_get_cached_messages();
+void ble_uart_clear_cached_messages();
 #endif
