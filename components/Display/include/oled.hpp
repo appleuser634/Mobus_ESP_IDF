@@ -1503,6 +1503,14 @@ class MessageBox {
 
                 // cursor_y = offset_y + sprite.getCursorY() + 20;
                 cursor_y = offset_y + (font_height * (i + 1));
+                const int line_top = cursor_y;
+                const int line_bottom = cursor_y + font_height;
+                if (line_bottom <= 0 || line_top >= lcd.height()) {
+                    continue;
+                }
+                if (line_top < 0 || line_bottom > lcd.height()) {
+                    continue;
+                }
 
                 if (message_from != my_name) {
                     // Incoming from friend
@@ -1522,19 +1530,17 @@ class MessageBox {
                 size_t pos = 0;
                 while (pos < message.length()) {
                     // UTF-8の先頭バイトを調べる
-                    uint8_t c = message[pos];
-                    int char_len = 1;
-                    if ((c & 0xE0) == 0xC0)
-                        char_len = 2;  // 2バイト文字
-                    else if ((c & 0xF0) == 0xE0)
-                        char_len = 3;  // 3バイト文字
-
+                    uint8_t c = static_cast<uint8_t>(message[pos]);
+                    size_t char_len = utf8_char_length(c);
+                    if (char_len == 0 || pos + char_len > message.size()) {
+                        char_len = 1;
+                    }
                     std::string ch = message.substr(pos, char_len);
 
                     // カタカナ or ASCII 判定（UTF-8 →
                     // Unicodeへ変換するのが理想）
                     // 仮にカタカナ判定だけハードコーディングする例：
-                    if ((uint8_t)ch[0] == 0xE3 &&
+                    if (ch.size() >= 2 && (uint8_t)ch[0] == 0xE3 &&
                         ((uint8_t)ch[1] == 0x82 || (uint8_t)ch[1] == 0x83)) {
                         sprite.setFont(&fonts::lgfxJapanGothic_12);
                     } else {
@@ -1720,9 +1726,10 @@ class ContactBook {
         int CONTACT_PER_PAGE = 4;
 
         typedef struct {
-            std::string display_name;  // username
+            std::string display_name;  // nickname (fallback to username)
             std::string
                 identifier;  // preferred identifier (short_id if available)
+            std::string username;  // login id for contact
             std::string short_id;
             std::string friend_id;
         } contact_t;
@@ -1752,10 +1759,17 @@ class ContactBook {
                             std::string username = get_nvs((char *)"user_name");
                             for (JsonObject f : arr) {
                                 contact_t c;
-                                c.display_name = std::string(
+                                c.username = std::string(
                                     f["username"].as<const char *>()
                                         ? f["username"].as<const char *>()
                                         : "");
+                                const std::string nickname =
+                                    std::string(f["nickname"].as<const char *>()
+                                                    ? f["nickname"]
+                                                          .as<const char *>()
+                                                    : "");
+                                c.display_name =
+                                    nickname.empty() ? c.username : nickname;
                                 const char *sid =
                                     f["short_id"].as<const char *>();
                                 const char *fid =
@@ -1769,8 +1783,8 @@ class ContactBook {
                                 else if (!c.friend_id.empty())
                                     c.identifier = c.friend_id;
                                 else
-                                    c.identifier = c.display_name;
-                                if (c.display_name != username &&
+                                    c.identifier = c.username;
+                                if (c.username != username &&
                                     !c.identifier.empty()) {
                                     contacts.push_back(c);
                                 }
@@ -1858,10 +1872,16 @@ class ContactBook {
                 if (derr == DeserializationError::Ok) {
                     for (JsonObject f : doc["friends"].as<JsonArray>()) {
                         contact_t c;
-                        c.display_name =
+                        c.username =
                             std::string(f["username"].as<const char *>()
                                             ? f["username"].as<const char *>()
                                             : "");
+                        const std::string nickname =
+                            std::string(f["nickname"].as<const char *>()
+                                            ? f["nickname"].as<const char *>()
+                                            : "");
+                        c.display_name =
+                            nickname.empty() ? c.username : nickname;
                         const char *sid = f["short_id"].as<const char *>();
                         const char *fid = f["friend_id"].as<const char *>();
                         c.short_id =
@@ -1872,8 +1892,8 @@ class ContactBook {
                         else if (!c.friend_id.empty())
                             c.identifier = c.friend_id;
                         else
-                            c.identifier = c.display_name;
-                        if (c.display_name != username &&
+                            c.identifier = c.username;
+                        if (c.username != username &&
                             !c.identifier.empty()) {
                             contacts.push_back(c);
                         }
@@ -2390,6 +2410,13 @@ class ContactBook {
                     while (box.running_flag) {
                         feed_wdt();
                         vTaskDelay(100 / portTICK_PERIOD_MS);
+                    }
+
+                    if (!recreate_contact_sprite(lcd.width(), lcd.height())) {
+                        ESP_LOGE("CONTACT",
+                                 "Sprite recreate failed after MessageBox");
+                        finish_task();
+                        return;
                     }
 
                     // 通知の取得
