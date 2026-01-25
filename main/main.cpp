@@ -852,32 +852,9 @@ void app_main(void) {
                       start_deferred_ota_validation);
 
     auto& speaker = audio::speaker();
-    // Helper to choose boot sound: cute (default) or majestic. NVS key:
-    // boot_sound = "cute"|"majestic"|"random"
+    // Boot sound: always play cute at startup.
     auto play_boot_sound = [&]() {
-        std::string sel = get_nvs((char*)"boot_sound");
-        if (sel == "majestic") {
-            boot_sounds::play_majestic(speaker, 0.55f);
-        } else if (sel == "gb") {
-            boot_sounds::play_gb(speaker, 0.9f);
-        } else if (sel == "random") {
-            uint64_t t = (uint64_t)esp_timer_get_time();
-            uint32_t r = (uint32_t)((t ^ (t >> 7) ^ (t >> 15)) & 0x3);
-            if (r == 0)
-                boot_sounds::play_cute(speaker, 0.5f);
-            else if (r == 1)
-                boot_sounds::play_majestic(speaker, 0.55f);
-            else
-                boot_sounds::play_gb(speaker, 0.9f);
-        } else if (sel == "song1") {
-            boot_sounds::play_song(speaker, 1, 0.9f);
-        } else if (sel == "song2") {
-            boot_sounds::play_song(speaker, 2, 0.9f);
-        } else if (sel == "song3") {
-            boot_sounds::play_song(speaker, 3, 0.9f);
-        } else {
-            boot_sounds::play_cute(speaker, 0.5f);
-        }
+        speaker.play_tone(2700.0f, 500, 1.0f);
     };
     Oled oled;
     MenuDisplay menu;
@@ -915,7 +892,7 @@ void app_main(void) {
     };
 
     if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
-        // profiler.run_step("Boot sound", [&]() { play_boot_sound(); });
+        profiler.run_step("Boot sound", [&]() { play_boot_sound(); });
         profiler.run_step("Boot display", [&]() { oled.BootDisplay(); });
         profiler.run_step("Boot LED animation", boot_led_animation);
 
@@ -943,7 +920,7 @@ void app_main(void) {
         }
         esp_deep_sleep_start();
     } else {
-        // profiler.run_step("Boot sound", [&]() { play_boot_sound(); });
+        profiler.run_step("Boot sound", [&]() { play_boot_sound(); });
         profiler.run_step("Boot display", [&]() { oled.BootDisplay(); });
         profiler.run_step("Boot LED animation", boot_led_animation);
     }

@@ -21,6 +21,7 @@
 #include "freertos/FreeRTOS.h"
 
 #include "driver/i2s_std.h"
+#include "driver/gpio.h"
 
 class Max98357A {
    public:
@@ -28,6 +29,7 @@ class Max98357A {
     int pin_bclk = 40;
     int pin_lrck = 39;  // WS
     int pin_din = 41;   // DOUT
+    int pin_sd = 42;    // SD/SHDN (amplifier enable)
 
     uint32_t sample_rate = 44100;  // Typical audio sample rate
     i2s_chan_handle_t tx_chan = nullptr;
@@ -61,6 +63,19 @@ class Max98357A {
                      (unsigned)heap_caps_get_largest_free_block(
                          MALLOC_CAP_DMA));
             return ESP_ERR_NO_MEM;
+        }
+
+        // Ensure amplifier SD pin is configured and enabled (HIGH).
+        if (pin_sd >= 0) {
+            gpio_config_t io_conf = {};
+            io_conf.pin_bit_mask = (1ULL << static_cast<uint64_t>(pin_sd));
+            io_conf.mode = GPIO_MODE_OUTPUT;
+            io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+            io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+            io_conf.intr_type = GPIO_INTR_DISABLE;
+            ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_config(&io_conf));
+            ESP_ERROR_CHECK_WITHOUT_ABORT(
+                gpio_set_level(static_cast<gpio_num_t>(pin_sd), 1));
         }
 
         // Create TX channel (master)
@@ -133,6 +148,11 @@ class Max98357A {
             ESP_ERROR_CHECK_WITHOUT_ABORT(i2s_channel_disable(tx_chan));
             is_enabled = false;
         }
+        // Best-effort: put amplifier into shutdown when audio is stopped.
+        if (pin_sd >= 0) {
+            ESP_ERROR_CHECK_WITHOUT_ABORT(
+                gpio_set_level(static_cast<gpio_num_t>(pin_sd), 0));
+        }
         return ESP_OK;
     }
 
@@ -176,7 +196,10 @@ class Max98357A {
             size_t bytes_to_write = n * channels * sizeof(int16_t);
             size_t bytes_written = 0;
             esp_err_t err = i2s_channel_write(tx_chan, buf, bytes_to_write, &bytes_written, portMAX_DELAY);
-            if (err != ESP_OK) return err;
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "i2s_channel_write failed: %s", esp_err_to_name(err));
+                return err;
+            }
             samples_done += n;
         }
         // fade out briefly to avoid pop

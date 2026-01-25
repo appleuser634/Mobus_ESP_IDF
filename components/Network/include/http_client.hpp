@@ -16,6 +16,7 @@
 #include <string>
 #include <utility>
 #include <atomic>
+#include <mutex>
 #include "esp_attr.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -229,7 +230,16 @@ static StackType_t *ensure_http_friends_stack() {
 }
 
 JsonDocument res;
-volatile int res_flag = 0;
+static std::mutex res_mutex;
+static std::atomic<bool> res_flag{false};
+
+static void fill_empty_messages(JsonDocument &target) {
+    StaticJsonDocument<128> emptyDoc;
+    emptyDoc.createNestedArray("messages");
+    std::string outBuf;
+    serializeJson(emptyDoc, outBuf);
+    deserializeJson(target, outBuf);
+}
 void http_get_message_task(void *pvParameters) {
     ESP_LOGW(TAG, "Start http_get_message_task");
     // Take ownership of heap arg and free after copy
@@ -269,12 +279,11 @@ void http_get_message_task(void *pvParameters) {
         ESP_LOGE(TAG, "get_messages failed: %s (status=%d)",
                  esp_err_to_name(err), status);
         // Return empty messages to avoid indefinite Loading... UI
-        StaticJsonDocument<128> emptyDoc;
-        emptyDoc.createNestedArray("messages");
-        std::string outBuf;
-        serializeJson(emptyDoc, outBuf);
-        deserializeJson(res, outBuf);
-        res_flag = 1;
+        {
+            std::lock_guard<std::mutex> lock(res_mutex);
+            fill_empty_messages(res);
+        }
+        res_flag.store(true);
         http_get_task_handle = nullptr;
         vTaskDelete(NULL);
         return;
@@ -288,24 +297,22 @@ void http_get_message_task(void *pvParameters) {
     StaticJsonDocument<3072> in;
     if (deserializeJson(in, response) != DeserializationError::Ok) {
         ESP_LOGE(TAG, "JSON parse error");
-        StaticJsonDocument<128> emptyDoc;
-        emptyDoc.createNestedArray("messages");
-        std::string outBuf;
-        serializeJson(emptyDoc, outBuf);
-        deserializeJson(res, outBuf);
-        res_flag = 1;
+        {
+            std::lock_guard<std::mutex> lock(res_mutex);
+            fill_empty_messages(res);
+        }
+        res_flag.store(true);
         http_get_task_handle = nullptr;
         vTaskDelete(NULL);
         return;
     }
     if (status < 200 || status >= 300) {
         ESP_LOGW(TAG, "get_messages non-OK HTTP status=%d", status);
-        StaticJsonDocument<128> emptyDoc;
-        emptyDoc.createNestedArray("messages");
-        std::string outBuf;
-        serializeJson(emptyDoc, outBuf);
-        deserializeJson(res, outBuf);
-        res_flag = 1;
+        {
+            std::lock_guard<std::mutex> lock(res_mutex);
+            fill_empty_messages(res);
+        }
+        res_flag.store(true);
         http_get_task_handle = nullptr;
         vTaskDelete(NULL);
         return;
@@ -336,8 +343,11 @@ void http_get_message_task(void *pvParameters) {
     // Serialize to buffer then parse into global res to keep type compatibility
     std::string outBuf;
     serializeJson(out, outBuf);
-    deserializeJson(res, outBuf);
-    res_flag = 1;
+    {
+        std::lock_guard<std::mutex> lock(res_mutex);
+        deserializeJson(res, outBuf);
+    }
+    res_flag.store(true);
     http_get_task_handle = nullptr;
     vTaskDelete(NULL);
 }
@@ -372,7 +382,8 @@ static void http_get_friends_task(void *pvParameters) {
 }
 
 static JsonDocument notif_res;
-int notif_res_flag = 0;
+static std::mutex notif_mutex;
+static std::atomic<bool> notif_res_flag{false};
 
 void http_get_notifications_task(void *pvParameters);
 
@@ -541,28 +552,26 @@ class HttpClient {
         auto *arg = new std::string(chat_from);
 
         ESP_LOGI(TAG, "Start get message!");
-        res_flag = 0;
+        res_flag.store(false);
         if (http_get_task_handle != nullptr) {
             ESP_LOGW(TAG, "Previous http_get_message_task still running; "
                            "skipping new request");
             delete arg;
-            StaticJsonDocument<128> emptyDoc;
-            emptyDoc.createNestedArray("messages");
-            std::string outBuf;
-            serializeJson(emptyDoc, outBuf);
-            deserializeJson(res, outBuf);
-            return res;
+            {
+                std::lock_guard<std::mutex> lock(res_mutex);
+                fill_empty_messages(res);
+                return res;
+            }
         }
-        res_flag = 0;
+        res_flag.store(false);
         if (!ensure_http_get_stack()) {
             ESP_LOGE(TAG, "http_get_message_task: stack alloc failed");
             delete arg;
-            StaticJsonDocument<128> emptyDoc;
-            emptyDoc.createNestedArray("messages");
-            std::string outBuf;
-            serializeJson(emptyDoc, outBuf);
-            deserializeJson(res, outBuf);
-            return res;
+            {
+                std::lock_guard<std::mutex> lock(res_mutex);
+                fill_empty_messages(res);
+                return res;
+            }
         }
         http_get_task_handle = xTaskCreateStaticPinnedToCore(
             &http_get_message_task, "http_get_message_task",
@@ -572,35 +581,58 @@ class HttpClient {
             ESP_LOGE(TAG, "Task create failed! free_heap=%u",
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
             delete arg;
-            StaticJsonDocument<128> emptyDoc;
-            emptyDoc.createNestedArray("messages");
-            std::string outBuf;
-            serializeJson(emptyDoc, outBuf);
-            deserializeJson(res, outBuf);
-            return res;
+            {
+                std::lock_guard<std::mutex> lock(res_mutex);
+                fill_empty_messages(res);
+                return res;
+            }
         }
         // Wait with timeout to avoid indefinite freeze
         const int timeout_ms = 7000;
         int waited = 0;
-        while (!res_flag && waited < timeout_ms) {
+        while (!res_flag.load() && waited < timeout_ms) {
             vTaskDelay(10 / portTICK_PERIOD_MS);
             waited += 10;
         }
-        if (!res_flag) {
+        if (!res_flag.load()) {
             // Timeout: return empty messages to let UI proceed
-            StaticJsonDocument<128> emptyDoc;
-            emptyDoc.createNestedArray("messages");
-            std::string outBuf;
-            serializeJson(emptyDoc, outBuf);
-            deserializeJson(res, outBuf);
+            std::lock_guard<std::mutex> lock(res_mutex);
+            fill_empty_messages(res);
         }
-        res_flag = 0;
+        res_flag.store(false);
+        std::lock_guard<std::mutex> lock(res_mutex);
         return res;
     }
 
     bool mark_message_read(const std::string &message_id) {
-        (void)message_id;
-        return false;
+        if (message_id.empty()) return false;
+        auto &api = dev_chat_api();
+        api.set_scheme("https");
+        const auto creds = chatapi::load_credentials_from_nvs();
+        if (chatapi::ensure_authenticated(api, creds) != ESP_OK) {
+            ESP_LOGW(TAG, "Chat API auth failed; mark read may fail");
+        }
+
+        int status = 0;
+        esp_err_t err = api.mark_as_read(message_id, &status);
+        if (err == ESP_OK && status == 401) {
+            if (chatapi::ensure_authenticated(api, creds, false,
+                                              /*force_refresh=*/true) ==
+                ESP_OK) {
+                status = 0;
+                err = api.mark_as_read(message_id, &status);
+            }
+        }
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "mark_message_read failed: %s",
+                     esp_err_to_name(err));
+            return false;
+        }
+        if (status < 200 || status >= 300) {
+            ESP_LOGW(TAG, "mark_message_read HTTP status=%d", status);
+            return false;
+        }
+        return true;
     }
 
     FriendsResponse fetch_friends_blocking(uint32_t timeout_ms = 12000) {
@@ -672,13 +704,14 @@ class HttpClient {
     }
 
     static JsonDocument get_notifications() {
-        if (!notif_res_flag) {
+        std::lock_guard<std::mutex> lock(notif_mutex);
+        if (!notif_res_flag.load()) {
             JsonDocument doc;
             JsonArray data = doc.createNestedArray("notifications");
             return doc;
         }
 
-        notif_res_flag = 0;
+        notif_res_flag.store(false);
         return notif_res;
     }
 
@@ -773,8 +806,11 @@ inline void http_get_notifications_task(void *pvParameters) {
 
             std::string outBuf;
             serializeJson(out, outBuf);
-            deserializeJson(notif_res, outBuf);
-            notif_res_flag = 1;
+            {
+                std::lock_guard<std::mutex> lock(notif_mutex);
+                deserializeJson(notif_res, outBuf);
+            }
+            notif_res_flag.store(true);
 
             auto &client = HttpClient::shared();
             if (client.refresh_unread_count() != ESP_OK) {

@@ -22,6 +22,7 @@ struct State {
     int port = 1883;
     std::string user_id;
     std::string topic; // chat/messages/<user_id>
+    std::string uri;
     esp_mqtt_client_handle_t client = nullptr;
     bool connected = false;
     std::queue<std::string> queue;
@@ -97,9 +98,9 @@ int mqtt_rt_start(void)
 {
     if (S.client) return 0; // already started
     if (S.host.empty()) return -1;
-    std::string uri = std::string("mqtt://") + S.host + ":" + std::to_string(S.port);
+    S.uri = std::string("mqtt://") + S.host + ":" + std::to_string(S.port);
     esp_mqtt_client_config_t cfg = {};
-    cfg.broker.address.uri = uri.c_str();
+    cfg.broker.address.uri = S.uri.c_str();
     cfg.network.disable_auto_reconnect = false;
     cfg.session.keepalive = 30;
     cfg.task.stack_size = 4096;

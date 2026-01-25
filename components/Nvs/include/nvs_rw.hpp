@@ -30,10 +30,16 @@
 #include "nvs.h"
 #include <vector>
 #include <utility>
+#include <mutex>
 
 // Demo utilities removed to avoid unused warnings
 
 namespace {
+inline std::mutex& nvs_mutex() {
+    static std::mutex m;
+    return m;
+}
+
 struct InternalBuf {
     char *data = nullptr;
     size_t size = 0;
@@ -88,6 +94,7 @@ inline esp_err_t nvs_get_str_internal(nvs_handle_t handle, const char *key,
 }  // namespace
 
 inline void save_nvs(const char *key, const std::string &record) {
+    std::lock_guard<std::mutex> lock(nvs_mutex());
     // Initialize NVS once; avoid erasing flash while other subsystems use it
     static bool s_nvs_ok = false;
     if (!s_nvs_ok) {
@@ -106,6 +113,7 @@ inline void save_nvs(const char *key, const std::string &record) {
     esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
     if (err != ESP_OK) {
         ESP_LOGE("NVS", "Error (%s) opening NVS handle!", esp_err_to_name(err));
+        return;
     }
 
     // Write string
@@ -131,6 +139,7 @@ inline void save_nvs(const char *key, const std::string &record) {
 }
 
 inline std::string get_nvs(const char *key) {
+    std::lock_guard<std::mutex> lock(nvs_mutex());
     // Initialize NVS once; avoid erasing flash while other subsystems use it
     static bool s_nvs_ok = false;
     if (!s_nvs_ok) {
@@ -199,6 +208,7 @@ inline static esp_err_t nvs_open_storage(nvs_handle_t* out)
 inline void save_wifi_credential(const std::string& ssid, const std::string& pass)
 {
     if (ssid.empty()) return;
+    std::lock_guard<std::mutex> lock(nvs_mutex());
     nvs_handle_t h; if (nvs_open_storage(&h) != ESP_OK) return;
 
     // If SSID exists, update password only
@@ -239,6 +249,7 @@ inline void save_wifi_credential(const std::string& ssid, const std::string& pas
 inline std::vector<std::pair<std::string,std::string>> get_wifi_credentials()
 {
     std::vector<std::pair<std::string,std::string>> out;
+    std::lock_guard<std::mutex> lock(nvs_mutex());
     nvs_handle_t h; if (nvs_open_storage(&h) != ESP_OK) return out;
     for (int i = 0; i < 5; ++i) {
         char skey[16]; snprintf(skey, sizeof(skey), "wifi_ssid_%d", i);

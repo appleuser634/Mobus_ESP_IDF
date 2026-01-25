@@ -366,11 +366,13 @@ class ChatApiClient {
         return err;
     }
 
-    esp_err_t mark_as_read(const std::string& message_id) {
+    esp_err_t mark_as_read(const std::string& message_id,
+                           int* out_status = nullptr) {
         if (!has_token()) return ESP_ERR_INVALID_STATE;
         std::string resp;
         std::string path = std::string("/api/messages/") + message_id + "/read";
-        return perform_request("PUT", path.c_str(), "", resp, /*auth*/ true, nullptr);
+        return perform_request("PUT", path.c_str(), "", resp, /*auth*/ true,
+                               out_status);
     }
 
     esp_err_t mark_all_as_read(const std::string& friend_identifier) {

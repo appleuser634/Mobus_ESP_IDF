@@ -951,7 +951,6 @@ class MessageBox {
     static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
     static StackType_t *task_stack_;
-    static std::unordered_set<std::string> played_message_ids_;
 
     static void set_active_contact(const std::string &short_id,
                                    const std::string &friend_id) {
@@ -1080,29 +1079,6 @@ class MessageBox {
         };
         std::vector<MessageViewEntry> message_views;
         const std::string server_chat_id = resolve_chat_backend_id(chat_to);
-        auto message_playback_key = [&](const JsonObject &msg) -> std::string {
-            std::string key = server_chat_id;
-            key.push_back('|');
-            const char *mid = msg["id"] | static_cast<const char *>(nullptr);
-            if ((!mid || mid[0] == '\0') && msg.containsKey("message_id")) {
-                mid = msg["message_id"].as<const char *>();
-            }
-            const char *created =
-                msg["created_at"] | static_cast<const char *>(nullptr);
-            const char *content = msg["message"].as<const char *>();
-            if (mid && mid[0] != '\0') {
-                key.append(mid);
-            } else if (created && created[0] != '\0') {
-                key.append("ts:");
-                key.append(created);
-            } else if (content && content[0] != '\0') {
-                key.append("msg:");
-                key.append(content);
-            } else {
-                key.append("unknown");
-            }
-            return key;
-        };
         auto fetch_messages_via_ble = [&](const std::string &fid,
                                           int timeout_ms) -> bool {
             if (wifi_is_connected()) {
@@ -1414,25 +1390,6 @@ class MessageBox {
         if (my_name.empty()) my_name = "me";
         std::string morse_header = !chat_title.empty() ? chat_title : chat_to;
 
-        auto make_suffix = [&](const std::string &source) {
-            if (source.size() <= 12) return source;
-            return source.substr(source.size() - 12);
-        };
-        std::string key_suffix =
-            server_chat_id.empty() ? chat_to : server_chat_id;
-        key_suffix = make_suffix(key_suffix);
-        std::string last_played_time_key = "lt_" + key_suffix;
-        std::string last_played_id_key = "li_" + key_suffix;
-        auto strip_null = [](std::string &s) {
-            if (!s.empty() && s.back() == '\0') s.pop_back();
-        };
-        std::string last_played_time = get_nvs(last_played_time_key.c_str());
-        strip_null(last_played_time);
-        std::string last_played_id = get_nvs(last_played_id_key.c_str());
-        strip_null(last_played_id);
-        std::string newest_played_time = last_played_time;
-        std::string newest_played_id = last_played_id;
-        bool played_any = false;
         if (res["messages"].is<JsonArray>()) {
             for (JsonObject msg : res["messages"].as<JsonArray>()) {
                 bool unread = true;
@@ -1446,19 +1403,9 @@ class MessageBox {
                 std::string message_id_str =
                     (message_id && message_id[0] != '\0') ? message_id
                                                           : std::string();
-                std::string playback_key = message_playback_key(msg);
-                if (!playback_key.empty() &&
-                    played_message_ids_.count(playback_key)) {
-                    unread = false;
-                }
                 const char *created = msg["created_at"].as<const char *>();
                 std::string created_str =
                     (created && created[0] != '\0') ? created : std::string();
-                if (!created_str.empty() && !last_played_time.empty()) {
-                    if (!(created_str > last_played_time)) unread = false;
-                } else if (!message_id_str.empty() && !last_played_id.empty()) {
-                    if (!(message_id_str > last_played_id)) unread = false;
-                }
                 if (!unread) continue;
                 const char *from = msg["from"].as<const char *>();
                 if (from && !my_name.empty() && my_name == from) {
@@ -1469,47 +1416,16 @@ class MessageBox {
                     continue;
                 }
                 play_morse_message(content, morse_header);
-                played_any = true;
-                if (!created_str.empty() &&
-                    (newest_played_time.empty() ||
-                     created_str > newest_played_time)) {
-                    newest_played_time = created_str;
-                }
-                if (created_str.empty() && !message_id_str.empty() &&
-                    (newest_played_id.empty() ||
-                     message_id_str > newest_played_id)) {
-                    newest_played_id = message_id_str;
-                }
-                if (!playback_key.empty()) {
-                    played_message_ids_.insert(playback_key);
-                    if (played_message_ids_.size() > 1024) {
-                        played_message_ids_.clear();
-                        played_message_ids_.insert(playback_key);
-                    }
-                    if (!message_id_str.empty() &&
-                        !http_client.mark_message_read(message_id_str)) {
-                        ESP_LOGW(TAG,
-                                 "Failed to mark message %s as read; will "
-                                 "retry later",
-                                 message_id_str.c_str());
-                    } else {
-                        msg["is_read"] = true;
-                    }
+                if (!message_id_str.empty() &&
+                    !http_client.mark_message_read(message_id_str)) {
+                    ESP_LOGW(TAG,
+                             "Failed to mark message %s as read; will "
+                             "retry later",
+                             message_id_str.c_str());
                 } else {
                     msg["is_read"] = true;
                 }
                 vTaskDelay(pdMS_TO_TICKS(200));
-            }
-        }
-
-        if (played_any) {
-            if (!newest_played_time.empty() &&
-                newest_played_time != last_played_time) {
-                save_nvs(last_played_time_key.c_str(), newest_played_time);
-            }
-            if (!newest_played_id.empty() &&
-                newest_played_id != last_played_id) {
-                save_nvs(last_played_id_key.c_str(), newest_played_id);
             }
         }
 
@@ -1702,7 +1618,6 @@ std::string MessageBox::active_friend_id = "";
 TaskHandle_t MessageBox::task_handle_ = nullptr;
 StaticTask_t MessageBox::task_buffer_;
 StackType_t *MessageBox::task_stack_ = nullptr;
-std::unordered_set<std::string> MessageBox::played_message_ids_;
 
 inline std::string resolve_chat_backend_id(const std::string &fallback) {
     return MessageBox::backend_identifier(fallback);
@@ -3316,13 +3231,26 @@ class WiFiSetting {
     }
 
     static void wifi_setting_task(void *pvParameters) {
+        run_wifi_setting_flow();
+
+        running_flag = false;
+        task_handle_ = nullptr;
+        vTaskDelete(NULL);
+    }
+
+    static void run_wifi_setting_flow() {
         lcd.init();
         lcd.setRotation(2);
 
-        sprite.setColorDepth(8);
-        sprite.setFont(&fonts::Font2);
-        sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
-        sprite.createSprite(lcd.width(), lcd.height());
+        if (sprite.getBuffer() == nullptr) {
+            sprite.setColorDepth(8);
+            sprite.setFont(&fonts::Font2);
+            sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
+            sprite.createSprite(lcd.width(), lcd.height());
+        } else {
+            sprite.setFont(&fonts::Font2);
+            sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
+        }
 
         sprite.fillRect(0, 0, 128, 64, 0);
         sprite.setCursor(30, 20);
@@ -3391,9 +3319,7 @@ class WiFiSetting {
 
                 if (i > 0 && i <= ssid_n) {
                     int idx = i - 1;
-                    ESP_LOGI(TAG, "SSID \t\t%s", ap_info[idx].ssid);
-                    ESP_LOGI(TAG, "RSSI \t\t%d", ap_info[idx].rssi);
-                    ESP_LOGI(TAG, "Channel \t\t%d", ap_info[idx].primary);
+                    (void)idx;
                 }
 
                 if (i == select_index) {
@@ -3469,10 +3395,6 @@ class WiFiSetting {
             // チャタリング防止用に100msのsleep
             vTaskDelay(10 / portTICK_PERIOD_MS);
         }
-
-        running_flag = false;
-        task_handle_ = nullptr;
-        vTaskDelete(NULL);
     };
 
    private:
@@ -7354,12 +7276,9 @@ class ProfileSetting {
                 }
             }
 
-            WiFiSetting wifi_setting;
-            wifi_setting.running_flag = true;
-            wifi_setting.start_wifi_setting_task();
-            while (wifi_setting.running_flag) {
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-            }
+            WiFiSetting::running_flag = true;
+            WiFiSetting::run_wifi_setting_flow();
+            WiFiSetting::running_flag = false;
 
             if (s_wifi_event_group) {
                 EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
