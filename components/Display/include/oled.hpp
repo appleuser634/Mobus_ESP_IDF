@@ -44,6 +44,7 @@
 #pragma once
 
 extern "C" void mobus_request_factory_reset();
+extern "C" void mobus_request_ota_minimal_mode();
 
 inline std::string resolve_chat_backend_id(const std::string &fallback);
 
@@ -100,7 +101,7 @@ class LGFX : public lgfx::LGFX_Device {
 
             cfg.offset_x = 0;
             cfg.offset_y = 0;
-            cfg.offset_rotation = 0;
+            cfg.offset_rotation = 2;
 
             cfg.dummy_read_pixel = 8;
             cfg.dummy_read_bits = 1;
@@ -5492,28 +5493,15 @@ class SettingMenu {
             } else if (type_button_state.pushed &&
                        settings[select_index].key ==
                            ui::Key::SettingsUpdateNow) {
-                // Manual OTA check and update
-                // Pause MQTT to free resources during TLS/OTA
+                // Reboot into OTA-minimal mode (only Wi-Fi + OTA tasks)
                 mqtt_rt_pause();
                 sprite.fillRect(0, 0, 128, 64, 0);
                 sprite.setFont(&fonts::Font2);
                 sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                sprite.drawCenterString("Checking update...", 64, 26);
+                sprite.drawCenterString("Rebooting OTA...", 64, 26);
                 push_sprite_safe(0, 0);
-                esp_err_t r = ota_client::check_and_update_once();
-                // If update was available, device will reboot inside OTA
-                sprite.fillRect(0, 0, 128, 64, 0);
-                if (r == ESP_OK) {
-                    sprite.drawCenterString("Up-to-date", 64, 26);
-                } else {
-                    sprite.drawCenterString("Update failed", 64, 26);
-                }
-                push_sprite_safe(0, 0);
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
-                mqtt_rt_resume();
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                joystick.reset_timer();
+                vTaskDelay(150 / portTICK_PERIOD_MS);
+                mobus_request_ota_minimal_mode();
             } else if (type_button_state.pushed &&
                        settings[select_index].key ==
                            ui::Key::SettingsAutoUpdate) {

@@ -12,8 +12,10 @@ extern "C" esp_err_t esp_crt_bundle_attach(void *conf);
 #define HAVE_CRT_BUNDLE 0
 #endif
 #include "esp_log.h"
-#include "esp_ota_ops.h"
+#include "esp_task_wdt.h"
 #include "esp_heap_caps.h"
+#include "esp_ota_ops.h"
+#include "esp_wifi.h"
 #include "bootloader_common.h"
 #include "esp_flash_partitions.h"
 #include "freertos/FreeRTOS.h"
@@ -26,6 +28,9 @@ extern "C" esp_err_t esp_crt_bundle_attach(void *conf);
 #include <memory>
 
 static const char* TAG_OTA = "OTAClient";
+static constexpr int kOtaMaxAttempts = 3;
+static constexpr int kRangeChunkSize = 64 * 1024;
+static constexpr int kRangeNoProgressMaxRetries = 5;
 
 extern "C" {
 extern const unsigned char ca_cert_pem_start[] asm("_binary_ca_cert_pem_start");
@@ -44,6 +49,88 @@ std::string nvs_get(const char* key) {
     }
     nvs_close(h);
     return s;
+}
+
+void nvs_set_string(const char* key, const char* value) {
+    nvs_handle_t h;
+    if (nvs_open("storage", NVS_READWRITE, &h) != ESP_OK) return;
+    (void)nvs_set_str(h, key, value);
+    (void)nvs_commit(h);
+    nvs_close(h);
+}
+
+inline void feed_task_wdt_best_effort() {
+    if (esp_task_wdt_status(nullptr) == ESP_OK) {
+        (void)esp_task_wdt_reset();
+    }
+}
+
+inline void delay_with_wdt(int ms_total) {
+    const int step_ms = 100;
+    int left = ms_total;
+    while (left > 0) {
+        feed_task_wdt_best_effort();
+        const int d = (left > step_ms) ? step_ms : left;
+        vTaskDelay(pdMS_TO_TICKS(d));
+        left -= d;
+    }
+}
+
+esp_err_t set_boot_partition_unverified(const esp_partition_t* update_partition) {
+    if (!update_partition || update_partition->type != ESP_PARTITION_TYPE_APP ||
+        update_partition->subtype < ESP_PARTITION_SUBTYPE_APP_OTA_MIN ||
+        update_partition->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const esp_partition_t* otadata = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, nullptr);
+    if (!otadata) return ESP_ERR_NOT_FOUND;
+
+    esp_ota_select_entry_t two[2];
+    esp_err_t err = ESP_OK;
+    const size_t esz = otadata->erase_size;
+    if ((err = esp_partition_read(otadata, 0, &two[0], sizeof(two[0]))) != ESP_OK) {
+        return err;
+    }
+    if ((err = esp_partition_read(otadata, esz, &two[1], sizeof(two[1]))) != ESP_OK) {
+        return err;
+    }
+
+    const int active = bootloader_common_get_active_otadata(two);
+    const int app_count = (int)esp_ota_get_app_partition_count();
+    if (app_count <= 0) return ESP_ERR_NOT_FOUND;
+
+    const int target_index =
+        (int)update_partition->subtype - (int)ESP_PARTITION_SUBTYPE_APP_OTA_MIN;
+    const uint32_t base = (uint32_t)((target_index + 1) % app_count);
+    const uint32_t cur_seq = (active >= 0) ? two[active].ota_seq : 0;
+    uint32_t i = 0;
+    while (cur_seq > base + i * (uint32_t)app_count) {
+        ++i;
+    }
+    const uint32_t new_seq =
+        (active >= 0) ? (base + i * (uint32_t)app_count)
+                      : (uint32_t)(target_index + 1);
+    const int next = (active >= 0) ? ((~active) & 1) : 0;
+
+    esp_ota_select_entry_t new_entry = two[next];
+    new_entry.ota_seq = new_seq;
+#ifdef CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+    new_entry.ota_state = ESP_OTA_IMG_NEW;
+#else
+    new_entry.ota_state = ESP_OTA_IMG_UNDEFINED;
+#endif
+    new_entry.crc = bootloader_common_ota_select_crc(&new_entry);
+
+    if ((err = esp_partition_erase_range(otadata, (size_t)next * esz, esz)) != ESP_OK) {
+        return err;
+    }
+    if ((err = esp_partition_write(otadata, (size_t)next * esz, &new_entry,
+                                   sizeof(new_entry))) != ESP_OK) {
+        return err;
+    }
+    return ESP_OK;
 }
 
 // helper kept for potential future use
@@ -79,6 +166,8 @@ esp_err_t http_get(const std::string& url, std::string& out) {
             break;
         }
         out.append(buf, buf + r);
+        feed_task_wdt_best_effort();
+        vTaskDelay(1);
     }
     esp_http_client_close(c);
     esp_http_client_cleanup(c);
@@ -104,147 +193,186 @@ static std::string rewrite_dev_url_http(const std::string& url) {
     return url;
 }
 
-// Download firmware via HTTP(S), write to next OTA partition, and set it to boot.
-// Validation of the image is deferred to bootloader/app (rollback flow).
+// Download firmware and reboot into updated slot.
 esp_err_t do_ota(const std::string& bin_url_in) {
-    auto set_boot_partition_unverified = [](const esp_partition_t* update_partition) -> esp_err_t {
-        if (!update_partition || update_partition->type != ESP_PARTITION_TYPE_APP ||
-            update_partition->subtype < ESP_PARTITION_SUBTYPE_APP_OTA_MIN || update_partition->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_MAX) {
-            return ESP_ERR_INVALID_ARG;
-        }
-
-        // Read current OTA data entries
-        const esp_partition_t* otadata = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, nullptr);
-        if (!otadata) return ESP_ERR_NOT_FOUND;
-
-        esp_ota_select_entry_t two[2];
-        esp_err_t err = ESP_OK;
-        size_t esz = otadata->erase_size;
-        if ((err = esp_partition_read(otadata, 0, &two[0], sizeof(two[0]))) != ESP_OK) return err;
-        if ((err = esp_partition_read(otadata, esz, &two[1], sizeof(two[1]))) != ESP_OK) return err;
-
-        int active = bootloader_common_get_active_otadata(two);
-        int n = (int)esp_ota_get_app_partition_count();
-        if (n <= 0) return ESP_ERR_NOT_FOUND;
-        int target_index = (int)update_partition->subtype - (int)ESP_PARTITION_SUBTYPE_APP_OTA_MIN; // 0..n-1
-        uint32_t base = (uint32_t)((target_index + 1) % n);
-        uint32_t cur_seq = (active >= 0) ? two[active].ota_seq : 0;
-        uint32_t i = 0;
-        while (cur_seq > base + i * (uint32_t)n) i++;
-        uint32_t new_seq = (active >= 0) ? (base + i * (uint32_t)n) : (uint32_t)(target_index + 1);
-        int next = (active >= 0) ? ((~active) & 1) : 0;
-
-        esp_ota_select_entry_t new_entry = two[next];
-        new_entry.ota_seq = new_seq;
-#ifdef CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
-        new_entry.ota_state = ESP_OTA_IMG_NEW;
-#else
-        new_entry.ota_state = ESP_OTA_IMG_UNDEFINED;
-#endif
-        new_entry.crc = bootloader_common_ota_select_crc(&new_entry);
-
-        if ((err = esp_partition_erase_range(otadata, (size_t)next * esz, esz)) != ESP_OK) return err;
-        if ((err = esp_partition_write(otadata, (size_t)next * esz, &new_entry, sizeof(new_entry))) != ESP_OK) return err;
-        return ESP_OK;
-    };
-
     auto download_and_write = [&](const std::string& url) -> esp_err_t {
-        esp_http_client_config_t hc = {};
-        hc.url = url.c_str();
-        hc.timeout_ms = 15000;
-        hc.keep_alive_enable = true;
-        bool is_https = url.rfind("https://", 0) == 0;
+        auto init_http_client = [&](esp_http_client_config_t& hc) {
+            hc = {};
+            hc.url = url.c_str();
+            hc.timeout_ms = 30000;
+            hc.keep_alive_enable = false;
+            hc.buffer_size = 16 * 1024;
+            const bool is_https = url.rfind("https://", 0) == 0;
 #if HAVE_CRT_BUNDLE
-        if (is_https) hc.crt_bundle_attach = esp_crt_bundle_attach; else hc.crt_bundle_attach = nullptr;
-        hc.cert_pem = nullptr;
+            if (is_https) hc.crt_bundle_attach = esp_crt_bundle_attach;
+            else hc.crt_bundle_attach = nullptr;
+            hc.cert_pem = nullptr;
 #else
-        hc.cert_pem = is_https ? (const char*)ca_cert_pem_start : nullptr;
+            hc.cert_pem = is_https ? (const char*)ca_cert_pem_start : nullptr;
 #endif
-
+        };
         ESP_LOGI(TAG_OTA, "OTA from %s", url.c_str());
-        esp_http_client_handle_t client = esp_http_client_init(&hc);
-        if (!client) return ESP_FAIL;
-        esp_err_t err = esp_http_client_open(client, 0);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG_OTA, "HTTP open failed: %s", esp_err_to_name(err));
-            esp_http_client_cleanup(client);
-            return err;
-        }
+        ESP_LOGI(TAG_OTA, "Partial HTTP download enabled: chunk=%d bytes",
+                 kRangeChunkSize);
+        ESP_LOGI(TAG_OTA, "Heap before OTA: free_int=%u largest_int=%u free_psram=%u",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        feed_task_wdt_best_effort();
 
-        // Read and log response headers. Ensure status 200 before reading body.
-        int64_t content_len = esp_http_client_fetch_headers(client);
-        int status = esp_http_client_get_status_code(client);
-        ESP_LOGI(TAG_OTA, "HTTP status=%d, content_length=%lld", status, (long long)content_len);
-        if (status != 200) {
-            ESP_LOGE(TAG_OTA, "Unexpected HTTP status: %d", status);
-            esp_http_client_close(client);
-            esp_http_client_cleanup(client);
-            return ESP_FAIL;
+        // 1) Determine total image length with HEAD first.
+        int64_t content_len = -1;
+        {
+            esp_http_client_config_t hc;
+            init_http_client(hc);
+            esp_http_client_handle_t c = esp_http_client_init(&hc);
+            if (!c) return ESP_FAIL;
+            esp_http_client_set_method(c, HTTP_METHOD_HEAD);
+            esp_err_t herr = esp_http_client_perform(c);
+            int hstatus = esp_http_client_get_status_code(c);
+            if (herr == ESP_OK && hstatus == 200) {
+                content_len = esp_http_client_get_content_length(c);
+            }
+            esp_http_client_cleanup(c);
+            if (content_len <= 0) {
+                ESP_LOGE(TAG_OTA, "HEAD failed (status=%d, len=%lld)", hstatus,
+                         (long long)content_len);
+                return ESP_FAIL;
+            }
         }
+        ESP_LOGI(TAG_OTA, "HTTP content_length=%lld", (long long)content_len);
 
         const esp_partition_t* update_partition = esp_ota_get_next_update_partition(nullptr);
         if (!update_partition) {
             ESP_LOGE(TAG_OTA, "No OTA partition available");
-            esp_http_client_close(client);
-            esp_http_client_cleanup(client);
             return ESP_FAIL;
         }
-        ESP_LOGI(TAG_OTA, "Writing to <%s> partition at offset 0x%lx", update_partition->label, (unsigned long)update_partition->address);
+        ESP_LOGI(TAG_OTA, "Writing to <%s> partition at offset 0x%lx",
+                 update_partition->label, (unsigned long)update_partition->address);
 
         esp_ota_handle_t ota_handle = 0;
-        err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
+        esp_err_t err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
         if (err != ESP_OK) {
             ESP_LOGE(TAG_OTA, "esp_ota_begin failed: %s", esp_err_to_name(err));
-            esp_http_client_close(client);
-            esp_http_client_cleanup(client);
             return err;
         }
 
         constexpr size_t BUF_SZ = 16 * 1024;
-        std::unique_ptr<uint8_t[], void(*)(void*)> buf((uint8_t*)heap_caps_malloc(BUF_SZ, MALLOC_CAP_DEFAULT | MALLOC_CAP_8BIT), free);
+        std::unique_ptr<uint8_t[], void(*)(void*)> buf(
+            (uint8_t*)heap_caps_malloc(BUF_SZ, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+            free);
+        if (!buf) {
+            buf.reset((uint8_t*)heap_caps_malloc(BUF_SZ, MALLOC_CAP_DEFAULT | MALLOC_CAP_8BIT));
+        }
         if (!buf) {
             buf.reset((uint8_t*)malloc(BUF_SZ));
         }
         if (!buf) {
-            ESP_LOGE(TAG_OTA, "No memory for OTA buffer");
             esp_ota_abort(ota_handle);
-            esp_http_client_close(client);
-            esp_http_client_cleanup(client);
             return ESP_ERR_NO_MEM;
         }
 
+        int last_progress_kb = -1;
         int read_total = 0;
-        while (true) {
-            int r = esp_http_client_read(client, (char*)buf.get(), BUF_SZ);
-            if (r < 0) {
-                ESP_LOGE(TAG_OTA, "HTTP read error");
+        int64_t offset = 0;
+        int no_progress_retries = 0;
+        err = ESP_OK;
+        while (offset < content_len) {
+            const int64_t end = std::min<int64_t>(offset + kRangeChunkSize - 1,
+                                                  content_len - 1);
+            std::string range = "bytes=" + std::to_string((long long)offset) +
+                                "-" + std::to_string((long long)end);
+
+            esp_http_client_config_t hc;
+            init_http_client(hc);
+            esp_http_client_handle_t c = esp_http_client_init(&hc);
+            if (!c) {
                 err = ESP_FAIL;
                 break;
             }
-            if (r == 0) {
-                // EOF
-                err = ESP_OK;
-                break;
-            }
-            err = esp_ota_write(ota_handle, buf.get(), r);
+            esp_http_client_set_method(c, HTTP_METHOD_GET);
+            esp_http_client_set_header(c, "Range", range.c_str());
+            esp_http_client_set_header(c, "Connection", "close");
+
+            err = esp_http_client_open(c, 0);
             if (err != ESP_OK) {
-                ESP_LOGE(TAG_OTA, "esp_ota_write failed at %d: %s", read_total, esp_err_to_name(err));
-                break;
+                esp_http_client_cleanup(c);
+                if (++no_progress_retries > kRangeNoProgressMaxRetries) break;
+                ESP_LOGW(TAG_OTA, "Range open failed at %lld (retry %d/%d): %s",
+                         (long long)offset, no_progress_retries,
+                         kRangeNoProgressMaxRetries, esp_err_to_name(err));
+                err = ESP_OK;
+                delay_with_wdt(300 * no_progress_retries);
+                continue;
             }
-            read_total += r;
+            (void)esp_http_client_fetch_headers(c);
+            const int status = esp_http_client_get_status_code(c);
+            if (!(status == 206 || (status == 200 && offset == 0))) {
+                esp_http_client_close(c);
+                esp_http_client_cleanup(c);
+                err = ESP_FAIL;
+                if (++no_progress_retries > kRangeNoProgressMaxRetries) break;
+                ESP_LOGW(TAG_OTA, "Range status %d at %lld (retry %d/%d)", status,
+                         (long long)offset, no_progress_retries,
+                         kRangeNoProgressMaxRetries);
+                err = ESP_OK;
+                delay_with_wdt(300 * no_progress_retries);
+                continue;
+            }
+
+            int bytes_before = read_total;
+            while (true) {
+                int want = (int)std::min<int64_t>((int64_t)BUF_SZ, end - offset + 1);
+                int r = esp_http_client_read(c, (char*)buf.get(), want);
+                if (r < 0) {
+                    err = ESP_FAIL;
+                    break;
+                }
+                if (r == 0) {
+                    if (offset <= end) {
+                        err = ESP_FAIL;
+                    }
+                    break;
+                }
+                err = esp_ota_write(ota_handle, buf.get(), r);
+                if (err != ESP_OK) {
+                    ESP_LOGE(TAG_OTA, "esp_ota_write failed at %d: %s", read_total,
+                             esp_err_to_name(err));
+                    break;
+                }
+                read_total += r;
+                int progress_kb = read_total / 1024;
+                if (progress_kb / 128 != last_progress_kb / 128) {
+                    ESP_LOGI(TAG_OTA, "OTA progress: %d KB", progress_kb);
+                    last_progress_kb = progress_kb;
+                }
+                offset += r;
+                feed_task_wdt_best_effort();
+                vTaskDelay(1);
+            }
+            esp_http_client_close(c);
+            esp_http_client_cleanup(c);
+            if (err == ESP_OK && offset > end) {
+                no_progress_retries = 0;
+                continue;
+            }
+            if (read_total == bytes_before) {
+                if (++no_progress_retries > kRangeNoProgressMaxRetries) break;
+                ESP_LOGW(TAG_OTA, "Range stalled at %lld (retry %d/%d)",
+                         (long long)offset, no_progress_retries,
+                         kRangeNoProgressMaxRetries);
+                err = ESP_OK;
+                delay_with_wdt(300 * no_progress_retries);
+                continue;
+            }
+            no_progress_retries = 0;
+            err = ESP_OK;
         }
 
-        if (read_total == 0) {
-            ESP_LOGE(TAG_OTA, "No data received for OTA image");
+        if (read_total == 0 || offset < content_len) {
             esp_ota_abort(ota_handle);
-            esp_http_client_close(client);
-            esp_http_client_cleanup(client);
             return ESP_FAIL;
         }
-
-        esp_http_client_close(client);
-        esp_http_client_cleanup(client);
-
         if (err != ESP_OK) {
             esp_ota_abort(ota_handle);
             return err;
@@ -253,33 +381,64 @@ esp_err_t do_ota(const std::string& bin_url_in) {
         err = esp_ota_end(ota_handle);
         if (err != ESP_OK) {
             ESP_LOGE(TAG_OTA, "esp_ota_end failed: %s", esp_err_to_name(err));
-            if (err != ESP_ERR_OTA_VALIDATE_FAILED) {
-                return err;
+            if (err == ESP_ERR_OTA_VALIDATE_FAILED) {
+                ESP_LOGW(TAG_OTA,
+                         "Validation mmap failed; switching boot slot as unverified");
+                esp_err_t set_err = set_boot_partition_unverified(update_partition);
+                if (set_err == ESP_OK) {
+                    ESP_LOGI(TAG_OTA, "Boot slot updated (unverified). Rebooting.");
+                    esp_restart();
+                }
+                ESP_LOGE(TAG_OTA, "set_boot_partition_unverified failed: %s",
+                         esp_err_to_name(set_err));
             }
-            ESP_LOGW(TAG_OTA, "Proceeding despite validation failure; will validate on boot");
-        }
-
-        // Set next boot slot without pre-validation, rely on bootloader validation
-        err = set_boot_partition_unverified(update_partition);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG_OTA, "esp_ota_set_boot_partition failed: %s", esp_err_to_name(err));
             return err;
         }
-        ESP_LOGI(TAG_OTA, "Set boot partition to: %s; rebooting for validation", update_partition->label);
+        err = esp_ota_set_boot_partition(update_partition);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG_OTA, "esp_ota_set_boot_partition failed: %s",
+                     esp_err_to_name(err));
+            return err;
+        }
+        ESP_LOGI(TAG_OTA, "OTA write complete; boot partition set to %s; rebooting",
+                 update_partition->label);
         esp_restart();
         return ESP_OK; // not reached
     };
 
-    // First try with given URL; if it's an HTTPS dev URL, also try HTTP fallback
     std::string url = rewrite_dev_url_http(bin_url_in);
-    esp_err_t err = download_and_write(url);
-    if (err == ESP_OK) return err; // rebooted already
+    esp_err_t err = ESP_FAIL;
+    wifi_ps_type_t ps_prev = WIFI_PS_MIN_MODEM;
+    bool ps_changed = false;
+    if (esp_wifi_get_ps(&ps_prev) == ESP_OK) {
+        if (esp_wifi_set_ps(WIFI_PS_NONE) == ESP_OK) {
+            ps_changed = true;
+            ESP_LOGI(TAG_OTA, "Wi-Fi power save disabled during OTA");
+        }
+    }
+    for (int attempt = 1; attempt <= kOtaMaxAttempts; ++attempt) {
+        err = download_and_write(url);
+        if (err == ESP_OK) return err; // rebooted already
+        ESP_LOGW(TAG_OTA, "OTA attempt %d/%d failed: %s", attempt,
+                 kOtaMaxAttempts, esp_err_to_name(err));
+        delay_with_wdt(1000 * attempt);
+    }
 
     bool was_https = bin_url_in.rfind("https://", 0) == 0;
     std::string alt = rewrite_dev_url_http(bin_url_in);
     if (was_https && alt != bin_url_in) {
         ESP_LOGW(TAG_OTA, "Retry OTA via HTTP: %s", alt.c_str());
-        return download_and_write(alt);
+        for (int attempt = 1; attempt <= kOtaMaxAttempts; ++attempt) {
+            err = download_and_write(alt);
+            if (err == ESP_OK) return err; // rebooted already
+            ESP_LOGW(TAG_OTA, "OTA(HTTP) attempt %d/%d failed: %s", attempt,
+                     kOtaMaxAttempts, esp_err_to_name(err));
+            delay_with_wdt(1000 * attempt);
+        }
+    }
+    if (ps_changed) {
+        (void)esp_wifi_set_ps(ps_prev);
+        ESP_LOGI(TAG_OTA, "Wi-Fi power save restored");
     }
     return err;
 }
@@ -288,6 +447,21 @@ esp_err_t do_ota(const std::string& bin_url_in) {
 namespace ota_client {
 
 esp_err_t check_and_update_once() {
+    bool wdt_removed_here = false;
+    if (esp_task_wdt_status(nullptr) == ESP_OK) {
+        if (esp_task_wdt_delete(nullptr) == ESP_OK) {
+            wdt_removed_here = true;
+            ESP_LOGI(TAG_OTA, "Temporarily removed current task from TWDT during OTA");
+        }
+    }
+
+    auto finish = [&](esp_err_t r) -> esp_err_t {
+        if (wdt_removed_here) {
+            (void)esp_task_wdt_add(nullptr);
+        }
+        return r;
+    };
+
     const esp_app_desc_t* app = esp_app_get_description();
     std::string current = app ? std::string(app->version) : std::string("0.0.0");
     std::string manifest = nvs_get("ota_manifest");
@@ -299,7 +473,7 @@ esp_err_t check_and_update_once() {
     // Append current version as hint
     std::string url = manifest + std::string("&current=") + current;
     std::string body;
-    if (http_get(url, body) != ESP_OK) return ESP_FAIL;
+    if (http_get(url, body) != ESP_OK) return finish(ESP_FAIL);
     std::string latest, bin;
     auto extract_string = [&](const char* key) -> std::string {
         std::string k = std::string("\"") + key + "\""; // "key"
@@ -328,9 +502,9 @@ esp_err_t check_and_update_once() {
     bin    = extract_string("url");
     if (!version_is_newer(current, latest) || bin.empty()) {
         ESP_LOGI(TAG_OTA, "No update. current=%s latest=%s", current.c_str(), latest.c_str());
-        return ESP_OK;
+        return finish(ESP_OK);
     }
-    return do_ota(bin);
+    return finish(do_ota(bin));
 }
 
 static void ota_bg_task(void*) {

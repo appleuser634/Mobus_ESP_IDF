@@ -211,11 +211,14 @@ extern "C" {
 #include "esp_attr.h"
 
 extern "C" void mobus_request_factory_reset();
+extern "C" void mobus_request_ota_minimal_mode();
 
 namespace {
 static constexpr uint32_t kFactoryResetMagic = 0x46525354u;  // 'FRST'
+static constexpr uint32_t kOtaMinimalMagic = 0x4F54414Du;    // 'OTAM'
 // Must survive esp_restart(); do not initialize at startup.
 RTC_NOINIT_ATTR uint32_t s_factory_reset_magic;
+RTC_NOINIT_ATTR uint32_t s_ota_minimal_magic;
 
 static void handle_factory_reset_if_requested() {
     if (s_factory_reset_magic != kFactoryResetMagic) return;
@@ -240,6 +243,11 @@ static void handle_factory_reset_if_requested() {
 
 extern "C" void mobus_request_factory_reset() {
     s_factory_reset_magic = kFactoryResetMagic;
+    esp_restart();
+}
+
+extern "C" void mobus_request_ota_minimal_mode() {
+    s_ota_minimal_magic = kOtaMinimalMagic;
     esp_restart();
 }
 
@@ -795,6 +803,29 @@ void check_notification() {
 void app_main(void) {
     printf("Hello world!!!!\n");
     handle_factory_reset_if_requested();
+    const bool ota_minimal_mode = (s_ota_minimal_magic == kOtaMinimalMagic);
+    if (ota_minimal_mode) {
+        s_ota_minimal_magic = 0;
+        ESP_LOGW(TAG, "Boot in OTA-minimal mode");
+
+        (void)nvs_flash_init();
+        save_nvs((char *)"wifi_manual_off", std::string("0"));
+        mqtt_rt_pause();
+
+        WiFi wifi;
+        wifi.main();
+        EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+                                               WIFI_CONNECTED_BIT, pdFALSE,
+                                               pdTRUE, pdMS_TO_TICKS(30000));
+        if (!(bits & WIFI_CONNECTED_BIT)) {
+            ESP_LOGE(TAG, "OTA-minimal mode: Wi-Fi connect timeout");
+            esp_restart();
+        }
+
+        esp_err_t r = ota_client::check_and_update_once();
+        ESP_LOGI(TAG, "OTA-minimal mode finished: %s", esp_err_to_name(r));
+        esp_restart();
+    }
 
     bool mem_profile_enabled = kMemoryProfilerEnabled;
     if (mem_profile_enabled) {
