@@ -57,7 +57,7 @@ class Max98357A {
         }
         if (initialized) return ESP_OK;
 
-        constexpr size_t kMinDmaBlock = 2048;
+        constexpr size_t kMinDmaBlock = 1024;
         if (heap_caps_get_largest_free_block(MALLOC_CAP_DMA) < kMinDmaBlock) {
             ESP_LOGW(TAG, "insufficient DMA-capable heap (largest=%u)",
                      (unsigned)heap_caps_get_largest_free_block(
@@ -79,11 +79,17 @@ class Max98357A {
         }
 
         // Create TX channel (master)
-        i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
+        i2s_chan_config_t chan_cfg =
+            I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
+        // Lower DMA footprint to improve robustness under memory pressure.
+        chan_cfg.dma_desc_num = 3;
+        chan_cfg.dma_frame_num = 96;
         esp_err_t err = i2s_new_channel(&chan_cfg, &tx_chan, nullptr);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "i2s_new_channel failed: %s", esp_err_to_name(err));
-            audio_blacklisted = true;
+            if (err != ESP_ERR_NO_MEM) {
+                audio_blacklisted = true;
+            }
             return err;
         }
 
@@ -109,7 +115,9 @@ class Max98357A {
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "i2s_channel_init_std_mode failed: %s",
                      esp_err_to_name(err));
-            audio_blacklisted = true;
+            if (err != ESP_ERR_NO_MEM) {
+                audio_blacklisted = true;
+            }
             i2s_del_channel(tx_chan);
             tx_chan = nullptr;
             return err;
@@ -118,7 +126,9 @@ class Max98357A {
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "i2s_channel_enable failed: %s",
                      esp_err_to_name(err));
-            audio_blacklisted = true;
+            if (err != ESP_ERR_NO_MEM) {
+                audio_blacklisted = true;
+            }
             i2s_del_channel(tx_chan);
             tx_chan = nullptr;
             return err;
@@ -131,6 +141,11 @@ class Max98357A {
 
     esp_err_t enable() {
         if (audio_blacklisted) return ESP_ERR_INVALID_STATE;
+        // Amplifier SD/SHDN must be HIGH before audio output.
+        if (pin_sd >= 0) {
+            ESP_ERROR_CHECK_WITHOUT_ABORT(
+                gpio_set_level(static_cast<gpio_num_t>(pin_sd), 1));
+        }
         if (!initialized) {
             esp_err_t err = init();
             if (err != ESP_OK) return err;
@@ -470,9 +485,17 @@ class Max98357A {
     void tone_task_main() {
         const int channels = 2;
         const float two_pi = 6.283185307179586f;
-        const size_t chunk_samples = 256;
-        int16_t* buf = (int16_t*)heap_caps_malloc(chunk_samples * channels * sizeof(int16_t), MALLOC_CAP_DMA);
+        const size_t chunk_samples = 128;
+        int16_t* buf = (int16_t*)heap_caps_malloc(
+            chunk_samples * channels * sizeof(int16_t), MALLOC_CAP_DMA);
         if (!buf) {
+            // Fallback: non-DMA internal RAM still works with i2s_channel_write.
+            buf = (int16_t*)heap_caps_malloc(
+                chunk_samples * channels * sizeof(int16_t),
+                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        }
+        if (!buf) {
+            ESP_LOGW(TAG, "tone_task_main: buffer alloc failed");
             tone_running = false;
             disable();
             TaskHandle_t self = tone_task_handle;
@@ -531,8 +554,8 @@ class Max98357A {
             size_t bytes_written = 0;
             i2s_channel_write(tx_chan, buf, bytes_to_write, &bytes_written, pdMS_TO_TICKS(20));
         }
-        // stop clock
-        disable();
+        // Keep I2S/amplifier enabled for low-latency retrigger.
+        // Power-down is handled by explicit disable()/deinit() or one-shot APIs.
         heap_caps_free(buf);
         // mark task done
         TaskHandle_t self = tone_task_handle;

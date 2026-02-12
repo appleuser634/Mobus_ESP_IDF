@@ -71,9 +71,9 @@ class LGFX : public lgfx::LGFX_Device {
                 SPI3_HOST;     // ESP32-S3では SPI2_HOST または SPI3_HOST
             cfg.spi_mode = 0;  // SSD1309のSPIモードは0
 
-            cfg.freq_write = 20000000;  // 8MHz程度が安定（モジュールによる）
-            cfg.freq_read = 0;          // dev/ 読み取り不要なため 0
-            cfg.spi_3wire = false;      // DCピン使用するので false
+            cfg.freq_write = 400000;  // 8MHz程度が安定（モジュールによる）
+            cfg.freq_read = 0;        // dev/ 読み取り不要なため 0
+            cfg.spi_3wire = false;    // DCピン使用するので false
             cfg.use_lock = true;
 
             // 接続ピン（あなたの配線に基づく）
@@ -100,7 +100,7 @@ class LGFX : public lgfx::LGFX_Device {
 
             cfg.offset_x = 0;
             cfg.offset_y = 0;
-            cfg.offset_rotation = 2;
+            cfg.offset_rotation = 0;
 
             cfg.dummy_read_pixel = 8;
             cfg.dummy_read_bits = 1;
@@ -190,6 +190,92 @@ inline const lgfx::IFont *select_ime_font(int input_lang,
     if (!base_font) base_font = &fonts::Font0;
     if (input_lang != 1) return base_font;
     return select_display_font(base_font, utf8_char);
+}
+
+inline void wrap_char_set_index(int &select_y_index, int char_set_length) {
+    if (char_set_length <= 0) {
+        select_y_index = 0;
+        return;
+    }
+    if (select_y_index >= char_set_length) select_y_index = 0;
+    if (select_y_index < 0) select_y_index = char_set_length - 1;
+}
+
+inline int wrap_char_index(int &select_x_index, const char *row_chars,
+                           bool enable_delete_button) {
+    int row_len = static_cast<int>(strlen(row_chars));
+    if (row_len <= 0) row_len = 1;
+    const int selectable_count = row_len + (enable_delete_button ? 1 : 0);
+    if (select_x_index >= selectable_count) select_x_index = 0;
+    if (select_x_index < 0) select_x_index = selectable_count - 1;
+    return row_len;
+}
+
+inline bool apply_char_or_delete(std::string &type_text, const char *row_chars,
+                                 int select_x_index, size_t max_len,
+                                 bool enable_delete_button) {
+    const int row_len = static_cast<int>(strlen(row_chars));
+    if (enable_delete_button && select_x_index == row_len) {
+        if (!type_text.empty()) {
+            type_text.pop_back();
+            return true;
+        }
+        return false;
+    }
+    if (row_len <= 0) return false;
+    if (select_x_index < 0 || select_x_index >= row_len) return false;
+    if (max_len != 0 && type_text.size() >= max_len) return false;
+    type_text.push_back(row_chars[select_x_index]);
+    return true;
+}
+
+inline void draw_char_selector_row(const char *row_chars, int y,
+                                   int select_x_index,
+                                   bool enable_delete_button) {
+    const int kCharSpacing = 8;
+    int draw_x = 0;
+    for (int i = 0; row_chars[i] != '\0'; i++) {
+        sprite.setCursor(draw_x, y);
+        if (select_x_index == i) {
+            sprite.setTextColor(0x000000u, 0xFFFFFFu);
+        } else {
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+        }
+        sprite.print(row_chars[i]);
+        draw_x += kCharSpacing;
+    }
+
+    if (!enable_delete_button) return;
+
+    const int row_len = static_cast<int>(strlen(row_chars));
+    const bool selected = (select_x_index == row_len);
+    const uint16_t fg = selected ? 0x000000u : 0xFFFFFFu;
+    const uint16_t bg = selected ? 0xFFFFFFu : 0x000000u;
+    const int btn_top = y - 1;  // keep top aligned with previous design
+    const int btn_bottom = 60;  // slightly shorter for better balance
+    const int btn_left = 118;
+    const int btn_right = 127;
+    const int tip_x = 114;
+    const int tip_y = (btn_top + btn_bottom) / 2;
+
+    // Fill delete button shape (rect body + arrow tip)
+    sprite.fillRect(btn_left, btn_top, btn_right - btn_left + 1,
+                    btn_bottom - btn_top + 1, bg);
+    sprite.fillTriangle(tip_x, tip_y, btn_left, btn_top, btn_left, btn_bottom,
+                        bg);
+
+    // Draw outline with pointed left edge
+    sprite.drawLine(btn_left, btn_top, btn_right, btn_top, fg);
+    sprite.drawLine(btn_right, btn_top, btn_right, btn_bottom, fg);
+    sprite.drawLine(btn_right, btn_bottom, btn_left, btn_bottom, fg);
+    sprite.drawLine(btn_left, btn_top, tip_x, tip_y, fg);
+    sprite.drawLine(tip_x, tip_y, btn_left, btn_bottom, fg);
+
+    // Draw "X" icon at center of the button
+    const int cx = (btn_left + btn_right) / 2;
+    const int cy = tip_y;
+    sprite.drawLine(cx - 2, cy - 2, cx + 2, cy + 2, fg);
+    sprite.drawLine(cx + 2, cy - 2, cx - 2, cy + 2, fg);
 }
 
 struct SpriteState {
@@ -979,15 +1065,14 @@ class MessageBox {
         if (!allocate_internal_stack(task_stack_, kTaskStackWords,
                                      "MessageBox")) {
             size_t bytes = kTaskStackWords * sizeof(StackType_t);
-            task_stack_ = static_cast<StackType_t *>(heap_caps_malloc(
-                bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            task_stack_ = static_cast<StackType_t *>(
+                heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
             if (!task_stack_) {
                 delete arg;
                 running_flag = false;
                 return;
             }
-            ESP_LOGW(TAG,
-                     "[OLED] stack alloc in PSRAM (MessageBox, bytes=%u)",
+            ESP_LOGW(TAG, "[OLED] stack alloc in PSRAM (MessageBox, bytes=%u)",
                      static_cast<unsigned>(bytes));
         }
         task_handle_ = xTaskCreateStaticPinnedToCore(
@@ -1157,15 +1242,18 @@ class MessageBox {
                             std::string my_name = get_nvs((char *)"user_name");
                             std::string my_short = get_nvs((char *)"short_id");
                             std::string my_login = get_nvs((char *)"login_id");
-                            std::string my_username = get_nvs((char *)"username");
+                            std::string my_username =
+                                get_nvs((char *)"username");
                             if (my_name.empty()) my_name = my_login;
                             if (my_name.empty()) my_name = my_username;
                             if (my_name.empty()) my_name = my_short;
                             if (my_name.empty()) my_name = "me";
                             const std::string friend_id =
-                                !active_friend_id.empty() ? active_friend_id : fid;
+                                !active_friend_id.empty() ? active_friend_id
+                                                          : fid;
                             const std::string friend_short =
-                                !active_short_id.empty() ? active_short_id : fid;
+                                !active_short_id.empty() ? active_short_id
+                                                         : fid;
                             for (JsonObject m :
                                  in["payload"]["messages"].as<JsonArray>()) {
                                 JsonObject o = arr.createNestedObject();
@@ -1197,7 +1285,8 @@ class MessageBox {
                                 } else if (receiver && !my_id.empty() &&
                                            my_id == receiver) {
                                     is_friend = true;
-                                } else if (from_field && !friend_short.empty() &&
+                                } else if (from_field &&
+                                           !friend_short.empty() &&
                                            friend_short == from_field) {
                                     is_friend = true;
                                 } else if (from_field &&
@@ -1217,7 +1306,8 @@ class MessageBox {
                                             my_name == from_field)) {
                                     is_me = true;
                                 }
-                                o["from"] = is_me ? my_name.c_str() : fid.c_str();
+                                o["from"] =
+                                    is_me ? my_name.c_str() : fid.c_str();
                                 const char *mid = m["id"].as<const char *>();
                                 if (!mid)
                                     mid = m["message_id"].as<const char *>();
@@ -1235,7 +1325,8 @@ class MessageBox {
                             serializeJson(out, outBuf);
                             deserializeJson(res, outBuf);
                         } else {
-                            // Accept legacy shape only when sender/receiver IDs are absent.
+                            // Accept legacy shape only when sender/receiver IDs
+                            // are absent.
                             bool legacy = false;
                             bool has_sender_receiver = false;
                             if (in["messages"].is<JsonArray>()) {
@@ -1255,95 +1346,107 @@ class MessageBox {
                                 std::string outBuf;
                                 serializeJson(in, outBuf);
                                 deserializeJson(res, outBuf);
-                                count = res["messages"].is<JsonArray>()
-                                            ? res["messages"].as<JsonArray>().size()
-                                            : 0;
+                                count =
+                                    res["messages"].is<JsonArray>()
+                                        ? res["messages"].as<JsonArray>().size()
+                                        : 0;
                             } else if (in["messages"].is<JsonArray>()) {
-                            // Transform {content,sender_id,receiver_id} ->
-                            // {message,from}
-                            DynamicJsonDocument out(4096);
-                            auto arr = out.createNestedArray("messages");
-                            std::string my_id = get_nvs((char *)"user_id");
-                            std::string my_name = get_nvs((char *)"user_name");
-                            std::string my_short = get_nvs((char *)"short_id");
-                            std::string my_login = get_nvs((char *)"login_id");
-                            std::string my_username = get_nvs((char *)"username");
-                            if (my_name.empty()) my_name = my_login;
-                            if (my_name.empty()) my_name = my_username;
-                            if (my_name.empty()) my_name = my_short;
-                            if (my_name.empty()) my_name = "me";
-                            const std::string friend_id =
-                                !active_friend_id.empty() ? active_friend_id : fid;
-                            const std::string friend_short =
-                                !active_short_id.empty() ? active_short_id : fid;
-                            for (JsonObject m :
-                                 in["messages"].as<JsonArray>()) {
-                                JsonObject o = arr.createNestedObject();
-                                const char *content =
-                                    m["content"].as<const char *>();
-                                const char *msg =
-                                    m["message"].as<const char *>();
-                                o["message"] =
-                                    content ? content : (msg ? msg : "");
-                                const char *sender =
-                                    m["sender_id"].as<const char *>();
-                                const char *receiver =
-                                    m["receiver_id"].as<const char *>();
-                                const char *from_field =
-                                    m["from"].as<const char *>();
-                                bool is_friend = false;
-                                bool is_me = false;
-                                if (sender && !*sender) sender = nullptr;
-                                if (receiver && !*receiver) receiver = nullptr;
-                                if (sender && !friend_id.empty() &&
-                                    friend_id == sender) {
-                                    is_friend = true;
-                                } else if (receiver && !friend_id.empty() &&
-                                           friend_id == receiver) {
-                                    is_me = true;
-                                } else if (sender && !my_id.empty() &&
-                                           my_id == sender) {
-                                    is_me = true;
-                                } else if (receiver && !my_id.empty() &&
-                                           my_id == receiver) {
-                                    is_friend = true;
-                                } else if (from_field && !friend_short.empty() &&
-                                           friend_short == from_field) {
-                                    is_friend = true;
-                                } else if (from_field &&
-                                           (!my_short.empty() &&
-                                            my_short == from_field)) {
-                                    is_me = true;
-                                } else if (from_field &&
-                                           (!my_login.empty() &&
-                                            my_login == from_field)) {
-                                    is_me = true;
-                                } else if (from_field &&
-                                           (!my_username.empty() &&
-                                            my_username == from_field)) {
-                                    is_me = true;
-                                } else if (from_field &&
-                                           (!my_name.empty() &&
-                                            my_name == from_field)) {
-                                    is_me = true;
+                                // Transform {content,sender_id,receiver_id} ->
+                                // {message,from}
+                                DynamicJsonDocument out(4096);
+                                auto arr = out.createNestedArray("messages");
+                                std::string my_id = get_nvs((char *)"user_id");
+                                std::string my_name =
+                                    get_nvs((char *)"user_name");
+                                std::string my_short =
+                                    get_nvs((char *)"short_id");
+                                std::string my_login =
+                                    get_nvs((char *)"login_id");
+                                std::string my_username =
+                                    get_nvs((char *)"username");
+                                if (my_name.empty()) my_name = my_login;
+                                if (my_name.empty()) my_name = my_username;
+                                if (my_name.empty()) my_name = my_short;
+                                if (my_name.empty()) my_name = "me";
+                                const std::string friend_id =
+                                    !active_friend_id.empty() ? active_friend_id
+                                                              : fid;
+                                const std::string friend_short =
+                                    !active_short_id.empty() ? active_short_id
+                                                             : fid;
+                                for (JsonObject m :
+                                     in["messages"].as<JsonArray>()) {
+                                    JsonObject o = arr.createNestedObject();
+                                    const char *content =
+                                        m["content"].as<const char *>();
+                                    const char *msg =
+                                        m["message"].as<const char *>();
+                                    o["message"] =
+                                        content ? content : (msg ? msg : "");
+                                    const char *sender =
+                                        m["sender_id"].as<const char *>();
+                                    const char *receiver =
+                                        m["receiver_id"].as<const char *>();
+                                    const char *from_field =
+                                        m["from"].as<const char *>();
+                                    bool is_friend = false;
+                                    bool is_me = false;
+                                    if (sender && !*sender) sender = nullptr;
+                                    if (receiver && !*receiver)
+                                        receiver = nullptr;
+                                    if (sender && !friend_id.empty() &&
+                                        friend_id == sender) {
+                                        is_friend = true;
+                                    } else if (receiver && !friend_id.empty() &&
+                                               friend_id == receiver) {
+                                        is_me = true;
+                                    } else if (sender && !my_id.empty() &&
+                                               my_id == sender) {
+                                        is_me = true;
+                                    } else if (receiver && !my_id.empty() &&
+                                               my_id == receiver) {
+                                        is_friend = true;
+                                    } else if (from_field &&
+                                               !friend_short.empty() &&
+                                               friend_short == from_field) {
+                                        is_friend = true;
+                                    } else if (from_field &&
+                                               (!my_short.empty() &&
+                                                my_short == from_field)) {
+                                        is_me = true;
+                                    } else if (from_field &&
+                                               (!my_login.empty() &&
+                                                my_login == from_field)) {
+                                        is_me = true;
+                                    } else if (from_field &&
+                                               (!my_username.empty() &&
+                                                my_username == from_field)) {
+                                        is_me = true;
+                                    } else if (from_field &&
+                                               (!my_name.empty() &&
+                                                my_name == from_field)) {
+                                        is_me = true;
+                                    }
+                                    o["from"] =
+                                        is_me ? my_name.c_str() : fid.c_str();
+                                    const char *mid =
+                                        m["id"].as<const char *>();
+                                    if (!mid)
+                                        mid =
+                                            m["message_id"].as<const char *>();
+                                    if (mid && mid[0] != '\0') o["id"] = mid;
+                                    const char *created =
+                                        m["created_at"].as<const char *>();
+                                    if (created && created[0] != '\0')
+                                        o["created_at"] = created;
+                                    if (m.containsKey("is_read")) {
+                                        o["is_read"] = m["is_read"].as<bool>();
+                                    }
                                 }
-                                o["from"] = is_me ? my_name.c_str() : fid.c_str();
-                                const char *mid = m["id"].as<const char *>();
-                                if (!mid)
-                                    mid = m["message_id"].as<const char *>();
-                                if (mid && mid[0] != '\0') o["id"] = mid;
-                                const char *created =
-                                    m["created_at"].as<const char *>();
-                                if (created && created[0] != '\0')
-                                    o["created_at"] = created;
-                                if (m.containsKey("is_read")) {
-                                    o["is_read"] = m["is_read"].as<bool>();
-                                }
-                            }
-                            count = arr.size();
-                            std::string outBuf;
-                            serializeJson(out, outBuf);
-                            deserializeJson(res, outBuf);
+                                count = arr.size();
+                                std::string outBuf;
+                                serializeJson(out, outBuf);
+                                deserializeJson(res, outBuf);
                             } else {
                                 ESP_LOGW(
                                     TAG,
@@ -1793,11 +1896,10 @@ class ContactBook {
                                     f["username"].as<const char *>()
                                         ? f["username"].as<const char *>()
                                         : "");
-                                const std::string nickname =
-                                    std::string(f["nickname"].as<const char *>()
-                                                    ? f["nickname"]
-                                                          .as<const char *>()
-                                                    : "");
+                                const std::string nickname = std::string(
+                                    f["nickname"].as<const char *>()
+                                        ? f["nickname"].as<const char *>()
+                                        : "");
                                 c.display_name =
                                     nickname.empty() ? c.username : nickname;
                                 const char *sid =
@@ -1923,8 +2025,7 @@ class ContactBook {
                             c.identifier = c.friend_id;
                         else
                             c.identifier = c.username;
-                        if (c.username != username &&
-                            !c.identifier.empty()) {
+                        if (c.username != username && !c.identifier.empty()) {
                             contacts.push_back(c);
                         }
                     }
@@ -2949,15 +3050,14 @@ class WiFiSetting {
         if (!allocate_internal_stack(task_stack_, kTaskStackWords,
                                      "WiFiSetting")) {
             size_t bytes = kTaskStackWords * sizeof(StackType_t);
-            task_stack_ = static_cast<StackType_t *>(heap_caps_malloc(
-                bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            task_stack_ = static_cast<StackType_t *>(
+                heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
             if (!task_stack_) {
                 ESP_LOGE(TAG, "Failed to alloc wifi setting stack");
                 running_flag = false;
                 return;
             }
-            ESP_LOGW(TAG,
-                     "[OLED] stack alloc in PSRAM (WiFiSetting, bytes=%u)",
+            ESP_LOGW(TAG, "[OLED] stack alloc in PSRAM (WiFiSetting, bytes=%u)",
                      static_cast<unsigned>(bytes));
         }
         task_handle_ = xTaskCreateStaticPinnedToCore(
@@ -3002,15 +3102,16 @@ class WiFiSetting {
         int select_y_index = 0;
 
         // 文字列の配列を作成
-        char char_set[7][35];
+        char char_set[8][35];
 
         sprintf(char_set[0], "0123456789");
-        sprintf(char_set[1], "abcdefghijklmn");
-        sprintf(char_set[2], "opqrstuvwxyz");
-        sprintf(char_set[3], "ABCDEFGHIJKLMN");
-        sprintf(char_set[4], "OPQRSTUVWXYZ");
-        sprintf(char_set[5], "!\"#$%%&\\'()*+,");
-        sprintf(char_set[6], "-./:;<=>?@[]^_`{|}~");
+        sprintf(char_set[1], "abcdefghijklm");
+        sprintf(char_set[2], "nopqrstuvwxyz");
+        sprintf(char_set[3], "ABCDEFGHIJKLM");
+        sprintf(char_set[4], "NOPQRSTUVWXYZ");
+        sprintf(char_set[5], "!\"#$%%&\\'()");
+        sprintf(char_set[6], "-_./:;<=>?@[]");
+        sprintf(char_set[7], "*+,`{|}~^");
 
         // int font_ = 13; // unused
         // int margin = 3; // unused
@@ -3036,9 +3137,13 @@ class WiFiSetting {
                 type_button.get_button_state();
             Button::button_state_t back_button_state =
                 back_button.get_button_state();
+            Button::button_state_t enter_button_state =
+                enter_button.get_button_state();
 
             // 入力イベント
             if (back_button_state.pushed) {
+                break;
+            } else if (enter_button_state.pushed) {
                 break;
             } else if (joystick_state.pushed_left_edge) {
                 select_x_index -= 1;
@@ -3049,46 +3154,20 @@ class WiFiSetting {
             } else if (joystick_state.pushed_down_edge) {
                 select_y_index += 1;
             } else if (type_button_state.pushed) {
-                type_text =
-                    type_text + char_set[select_y_index][select_x_index];
+                const char *row_chars = char_set[select_y_index];
+                (void)apply_char_or_delete(type_text, row_chars, select_x_index,
+                                           0, true);
                 type_button.clear_button_state();
                 type_button.reset_timer();
             }
 
             // 文字種のスクロールの設定
             int char_set_length = sizeof(char_set) / sizeof(char_set[0]);
-            if (select_y_index >= char_set_length) {
-                select_y_index = 0;
-            } else if (select_y_index < 0) {
-                select_y_index = char_set_length - 1;
-            }
-
-            // 文字選択のスクロールの設定
-            if (select_x_index < 0) {
-                // 一番左へ行ったら右端へ戻る
-                select_x_index = 0;
-                for (int i = 0; char_set[select_y_index][i] != '\0'; i++) {
-                    select_x_index += 1;
-                }
-                select_x_index -= 1;  // 最後の有効インデックス
-            } else if (char_set[select_y_index][select_x_index] == '\0') {
-                // 一番右へ行ったら左へ戻る
-                select_x_index = 0;
-            }
-
-            int draw_x = 0;
-            for (int i = 0; char_set[select_y_index][i] != '\0'; i++) {
-                sprite.setCursor(draw_x, 46);
-                if (select_x_index == i) {
-                    sprite.setTextColor(0x000000u, 0xFFFFFFu);
-                } else {
-                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                }
-                sprite.print(char_set[select_y_index][i]);
-                char c = char_set[select_y_index][i];
-                const char *c_ptr = &c;
-                draw_x += 8;
-            }
+            wrap_char_set_index(select_y_index, char_set_length);
+            (void)wrap_char_index(select_x_index, char_set[select_y_index],
+                                  true);
+            draw_char_selector_row(char_set[select_y_index], 46, select_x_index,
+                                   true);
 
             // 入力された文字の表示
             sprite.setTextColor(0xFFFFFFu, 0x000000u);
@@ -3231,14 +3310,14 @@ class WiFiSetting {
     }
 
     static void wifi_setting_task(void *pvParameters) {
-        run_wifi_setting_flow();
+        run_wifi_setting_flow(false);
 
         running_flag = false;
         task_handle_ = nullptr;
         vTaskDelete(NULL);
     }
 
-    static void run_wifi_setting_flow() {
+    static void run_wifi_setting_flow(bool auto_exit_on_connected = false) {
         lcd.init();
         lcd.setRotation(2);
 
@@ -3279,8 +3358,16 @@ class WiFiSetting {
         int select_index = 0;
         int font_height = 13;
         int margin = 3;
+        auto is_connected_bit_set = []() -> bool {
+            if (!s_wifi_event_group) return false;
+            EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
+            return (bits & WIFI_CONNECTED_BIT) != 0;
+        };
 
         while (true) {
+            if (auto_exit_on_connected && is_connected_bit_set()) {
+                return;
+            }
             sprite.fillRect(0, 0, 128, 64, 0);
 
             Joystick::joystick_state_t joystick_state =
@@ -3299,7 +3386,8 @@ class WiFiSetting {
                 select_index += 1;
             }
 
-            int max_index = ssid_n + 1;  // 0: Wi-Fi toggle, 1..ssid_n: SSIDs, last: Other
+            int max_index =
+                ssid_n + 1;  // 0: Wi-Fi toggle, 1..ssid_n: SSIDs, last: Other
             if (select_index < 0) {
                 select_index = 0;
             } else if (select_index > max_index) {
@@ -3384,6 +3472,14 @@ class WiFiSetting {
                 } else {
                     int idx = select_index - 1;
                     set_wifi_info(ap_info[idx].ssid);
+                }
+                if (auto_exit_on_connected && s_wifi_event_group) {
+                    EventBits_t bits = xEventGroupWaitBits(
+                        s_wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdTRUE,
+                        pdMS_TO_TICKS(1500));
+                    if (bits & WIFI_CONNECTED_BIT) {
+                        return;
+                    }
                 }
                 type_button.clear_button_state();
                 type_button.reset_timer();
@@ -3557,6 +3653,7 @@ class P2P_Display {
 
         size_t input_switch_pos = 0;
         size_t pos = 0;
+        bool tone_playing = false;
 
         while (true) {
             Joystick::joystick_state_t joystick_state =
@@ -3573,6 +3670,13 @@ class P2P_Display {
 
             if (type_button_state.push_edge and !back_button_state.pushing) {
                 buzzer.start_tone(2300.0f, 0.6f);
+                tone_playing = true;
+            }
+
+            if (!type_button_state.pushing && tone_playing) {
+                buzzer.stop_tone();
+                buzzer.disable();
+                tone_playing = false;
             }
 
             if (type_button_state.pushed and !back_button_state.pushing) {
@@ -3586,7 +3690,6 @@ class P2P_Display {
                 }
 
                 type_button.clear_button_state();
-                buzzer.stop_tone();
             }
 
             // printf("Release time:%lld\n",button_state.release_sec);
@@ -3616,9 +3719,19 @@ class P2P_Display {
             } else if (back_button_state.pushed and
                        !back_button_state.pushed_same_time and
                        !type_button_state.pushing) {
+                if (tone_playing) {
+                    buzzer.stop_tone();
+                    buzzer.disable();
+                    tone_playing = false;
+                }
                 clear_inputs();
                 return;
             } else if (joystick_state.left) {
+                if (tone_playing) {
+                    buzzer.stop_tone();
+                    buzzer.disable();
+                    tone_playing = false;
+                }
                 clear_inputs();
                 return;
             } else if (joystick_state.pushed_right_edge) {
@@ -5891,6 +6004,7 @@ class Game {
             float p_time = 0;
 
             // 問題を解き終わるまでループ
+            bool tone_active = false;
             while (c < n) {
                 feed_wdt();
                 sprite.fillRect(0, 0, 128, 64, 0);
@@ -5910,6 +6024,14 @@ class Game {
                 if (type_button_state.push_edge and
                     !back_button_state.pushing) {
                     buzzer.start_tone(2300.0f, 0.6f);
+                    tone_active = true;
+                }
+
+                // Ensure tone is only active while the key is held.
+                if (!type_button_state.pushing && tone_active) {
+                    buzzer.stop_tone();
+                    buzzer.disable();
+                    tone_active = false;
                 }
 
                 if (type_button_state.pushed and !back_button_state.pushing) {
@@ -5924,7 +6046,6 @@ class Game {
                     }
 
                     type_button.clear_button_state();
-                    buzzer.stop_tone();
                 }
 
                 // printf("Release time:%lld\n",button_state.release_sec);
@@ -6028,6 +6149,11 @@ class Game {
 
             // break_flagが立ってたら終了
             if (break_flag) {
+                if (tone_active) {
+                    buzzer.stop_tone();
+                    buzzer.disable();
+                    tone_active = false;
+                }
                 buzzer.stop_tone();
                 buzzer.deinit();
                 break;
@@ -6692,9 +6818,9 @@ class ProfileSetting {
         size_t max_len = 32, bool *canceled = nullptr,
         std::function<void(const std::string &, std::string &)> on_change =
             nullptr,
-        std::function<bool(const std::string &, std::string &,
-                           std::string &)>
-            on_enter_validate = nullptr) {
+        std::function<bool(const std::string &, std::string &, std::string &)>
+            on_enter_validate = nullptr,
+        bool enable_delete_button = false) {
         int select_x_index = 0;
         int select_y_index = 0;
         std::string status_text;
@@ -6782,20 +6908,14 @@ class ProfileSetting {
             } else if (joystick_state.pushed_down_edge) {
                 select_y_index += 1;
             } else if (type_button_state.pushed) {
-                // Safe append only when indices are valid
                 int char_set_length = sizeof(char_set) / sizeof(char_set[0]);
-                if (select_y_index < 0) select_y_index = 0;
-                if (select_y_index >= char_set_length)
-                    select_y_index = char_set_length - 1;
-                int row_len = strlen(char_set[select_y_index]);
-                if (row_len > 0) {
-                    if (select_x_index < 0) select_x_index = 0;
-                    if (select_x_index >= row_len) select_x_index = row_len - 1;
-                    if (max_len == 0 || type_text.size() < max_len) {
-                        type_text.push_back(
-                            char_set[select_y_index][select_x_index]);
-                        if (on_change) on_change(type_text, status_text);
-                    }
+                wrap_char_set_index(select_y_index, char_set_length);
+                (void)wrap_char_index(select_x_index, char_set[select_y_index],
+                                      enable_delete_button);
+                if (apply_char_or_delete(type_text, char_set[select_y_index],
+                                         select_x_index, max_len,
+                                         enable_delete_button)) {
+                    if (on_change) on_change(type_text, status_text);
                 }
                 type_button.clear_button_state();
                 type_button.reset_timer();
@@ -6803,27 +6923,11 @@ class ProfileSetting {
 
             // 文字種のスクロールの設定
             int char_set_length = sizeof(char_set) / sizeof(char_set[0]);
-            if (select_y_index >= char_set_length) select_y_index = 0;
-            if (select_y_index < 0) select_y_index = char_set_length - 1;
-
-            // 文字選択のスクロールの設定（行末/行頭で循環）
-            int row_len = strlen(char_set[select_y_index]);
-            if (row_len <= 0) row_len = 1;
-            if (select_x_index >= row_len) select_x_index = 0;
-            if (select_x_index < 0) select_x_index = row_len - 1;
-
-            int draw_x = 0;
-            const int kCharSpacing = 8;
-            for (int i = 0; char_set[select_y_index][i] != '\0'; i++) {
-                sprite.setCursor(draw_x, 46);
-                if (select_x_index == i) {
-                    sprite.setTextColor(0x000000u, 0xFFFFFFu);
-                } else {
-                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                }
-                sprite.print(char_set[select_y_index][i]);
-                draw_x += kCharSpacing;
-            }
+            wrap_char_set_index(select_y_index, char_set_length);
+            (void)wrap_char_index(select_x_index, char_set[select_y_index],
+                                  enable_delete_button);
+            draw_char_selector_row(char_set[select_y_index], 46, select_x_index,
+                                   enable_delete_button);
 
             // 入力された文字の表示
             sprite.setTextColor(0xFFFFFFu, 0x000000u);
@@ -6846,8 +6950,8 @@ class ProfileSetting {
     }
 
     static std::string input_info(std::string type_text = "") {
-        return input_field("HI, DE Mimoc.", "YOU ARE?", "Name: ", type_text,
-                           20);
+        return input_field("HI, DE Mimoc.", "YOU ARE?", "Name: ", type_text, 20,
+                           nullptr, nullptr, nullptr, true);
     }
 
     static std::string set_profile_info(uint8_t *ssid = 0) {
@@ -7039,26 +7143,24 @@ class ProfileSetting {
                     return true;
                 };
 
-            std::string login_id =
-                input_field(title, "Login ID", "ID: ",
-                            get_nvs((char *)"login_id"), 24, &canceled,
-                            nullptr, login_id_validator);
+            std::string login_id = input_field(
+                title, "Login ID", "ID: ", get_nvs((char *)"login_id"), 24,
+                &canceled, nullptr, login_id_validator);
             if (canceled) {
                 continue;
             }
 
-            std::string password =
-                input_field(
-                    title, "Password", "PW: ", "", 32, &canceled, nullptr,
-                    [&](const std::string &text, std::string &line1,
-                        std::string &line2) {
-                        if (signup && text.size() < 6) {
-                            line1 = "Password min 6";
-                            line2 = "Try again";
-                            return false;
-                        }
-                        return true;
-                    });
+            std::string password = input_field(
+                title, "Password", "PW: ", "", 32, &canceled, nullptr,
+                [&](const std::string &text, std::string &line1,
+                    std::string &line2) {
+                    if (signup && text.size() < 6) {
+                        line1 = "Password min 6";
+                        line2 = "Try again";
+                        return false;
+                    }
+                    return true;
+                });
             if (canceled) {
                 continue;
             }
@@ -7176,8 +7278,12 @@ class ProfileSetting {
 
     static ui::Lang prompt_language() {
         Joystick joystick;
-        Button type_button(GPIO_NUM_46);
-        Button enter_button(GPIO_NUM_5);
+        static Button type_button(GPIO_NUM_46);
+        static Button enter_button(GPIO_NUM_5);
+        type_button.clear_button_state();
+        type_button.reset_timer();
+        enter_button.clear_button_state();
+        enter_button.reset_timer();
         ui::Lang selected = ui::current_lang();
         int sel = (selected == ui::Lang::Ja) ? 1 : 0;
         while (1) {
@@ -7224,9 +7330,15 @@ class ProfileSetting {
 
     static bool confirm_language(ui::Lang lang) {
         Joystick joystick;
-        Button type_button(GPIO_NUM_46);
-        Button enter_button(GPIO_NUM_5);
-        Button back_button(GPIO_NUM_3);
+        static Button type_button(GPIO_NUM_46);
+        static Button enter_button(GPIO_NUM_5);
+        static Button back_button(GPIO_NUM_3);
+        type_button.clear_button_state();
+        type_button.reset_timer();
+        enter_button.clear_button_state();
+        enter_button.reset_timer();
+        back_button.clear_button_state();
+        back_button.reset_timer();
         const lgfx::IFont *font =
             (lang == ui::Lang::Ja)
                 ? static_cast<const lgfx::IFont *>(
@@ -7268,24 +7380,24 @@ class ProfileSetting {
     }
 
     static bool ensure_wifi_connected(ui::Lang lang) {
+        auto wait_wifi_connected = [](uint32_t timeout_ms) -> bool {
+            if (!s_wifi_event_group) return false;
+            EventBits_t bits =
+                xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT,
+                                    pdFALSE, pdTRUE, pdMS_TO_TICKS(timeout_ms));
+            return (bits & WIFI_CONNECTED_BIT) != 0;
+        };
+
         while (1) {
-            if (s_wifi_event_group) {
-                EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
-                if (bits & WIFI_CONNECTED_BIT) {
-                    return true;
-                }
-            }
+            if (wait_wifi_connected(0)) return true;
 
             WiFiSetting::running_flag = true;
-            WiFiSetting::run_wifi_setting_flow();
+            WiFiSetting::run_wifi_setting_flow(true);
             WiFiSetting::running_flag = false;
 
-            if (s_wifi_event_group) {
-                EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
-                if (bits & WIFI_CONNECTED_BIT) {
-                    return true;
-                }
-            }
+            // Give IP event handler a short window to set event bits after UI
+            // flow returns.
+            if (wait_wifi_connected(1500)) return true;
 
             if (!prompt_wifi_retry_or_back(lang)) {
                 return false;
@@ -7295,9 +7407,15 @@ class ProfileSetting {
 
     static bool prompt_wifi_retry_or_back(ui::Lang lang) {
         Joystick joystick;
-        Button type_button(GPIO_NUM_46);
-        Button enter_button(GPIO_NUM_5);
-        Button back_button(GPIO_NUM_3);
+        static Button type_button(GPIO_NUM_46);
+        static Button enter_button(GPIO_NUM_5);
+        static Button back_button(GPIO_NUM_3);
+        type_button.clear_button_state();
+        type_button.reset_timer();
+        enter_button.clear_button_state();
+        enter_button.reset_timer();
+        back_button.clear_button_state();
+        back_button.reset_timer();
         const lgfx::IFont *font =
             (lang == ui::Lang::Ja)
                 ? static_cast<const lgfx::IFont *>(

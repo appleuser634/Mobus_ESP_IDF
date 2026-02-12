@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string.h>
+#include <atomic>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -38,6 +39,8 @@ static int s_retry_num = 0;
 static bool s_handlers_registered = false;
 static esp_event_handler_instance_t s_instance_any_id = nullptr;
 static esp_event_handler_instance_t s_instance_got_ip = nullptr;
+static std::atomic<bool> s_wifi_reconfiguring{false};
+static std::atomic<bool> s_post_connect_task_running{false};
 
 class WiFi {
    public:
@@ -47,6 +50,20 @@ class WiFi {
     } wifi_state_t;
 
     wifi_state_t wifi_state = {false, 'w'};
+
+    static void post_connect_task(void *pvParameters) {
+        (void)pvParameters;
+        if (ble_uart_is_ready()) {
+            ESP_LOGI(TAG, "Wi-Fi connected; disabling BLE bridge");
+            ble_uart_disable();
+            (void)mqtt_rt_resume();
+            save_nvs((char *)"ble_pair", std::string("false"));
+            save_nvs((char *)"ble_code", std::string(""));
+            save_nvs((char *)"ble_exp_us", std::string("0"));
+        }
+        s_post_connect_task_running.store(false);
+        vTaskDelete(nullptr);
+    }
 
     static void event_handler(void *arg, esp_event_base_t event_base,
                               int32_t event_id, void *event_data) {
@@ -62,6 +79,10 @@ class WiFi {
             bool forced_off =
                 (ble_pair == "true") || (ble_rst == "1") ||
                 (wifi_manual == "1");
+            if (s_wifi_reconfiguring.load()) {
+                ESP_LOGI(TAG, "Wi-Fi reconfiguring; skip auto-reconnect");
+                return;
+            }
             if (s_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
                 if (forced_off) {
                     ESP_LOGI(TAG,
@@ -85,18 +106,22 @@ class WiFi {
             if (s_wifi_event_group) {
                 xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
             }
-            if (ble_uart_is_ready()) {
-                ESP_LOGI(TAG, "Wi-Fi connected; disabling BLE bridge");
-                ble_uart_disable();
-                mqtt_rt_resume();
-                save_nvs((char *)"ble_pair", std::string("false"));
-                save_nvs((char *)"ble_code", std::string(""));
-                save_nvs((char *)"ble_exp_us", std::string("0"));
+            bool expected = false;
+            if (s_post_connect_task_running.compare_exchange_strong(expected,
+                                                                     true)) {
+                BaseType_t ok = xTaskCreate(&post_connect_task,
+                                            "wifi_post_connect", 4096, nullptr,
+                                            5, nullptr);
+                if (ok != pdPASS) {
+                    s_post_connect_task_running.store(false);
+                    ESP_LOGW(TAG, "Failed to start wifi_post_connect task");
+                }
             }
         }
     }
 
     void wifi_set_sta(std::string WIFI_SSID = "", std::string WIFI_PASS = "") {
+        s_wifi_reconfiguring.store(true);
         if (!s_wifi_event_group) {
             s_wifi_event_group = xEventGroupCreate();
         } else {
@@ -174,7 +199,9 @@ class WiFi {
         ESP_LOGI(TAG, "Connect to SSID:%s, password:%s", WIFI_SSID.c_str(),
                  WIFI_PASS.c_str());
 
-        ESP_ERROR_CHECK(esp_wifi_connect());
+        esp_err_t conn_err = esp_wifi_connect();
+        s_wifi_reconfiguring.store(false);
+        ESP_ERROR_CHECK(conn_err);
 
         /* Waiting until either the connection is established
          * (WIFI_CONNECTED_BIT) or connection failed for the maximum number of
@@ -215,6 +242,9 @@ class WiFi {
         ESP_ERROR_CHECK(esp_wifi_init(&cfg));
         // Keep Wi-Fi config in RAM to avoid NVS writes from driver
         ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+        // Set STA mode once during init. Reconfiguring mode repeatedly during
+        // scan flow can destabilize Wi-Fi heap internals on some paths.
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     }
 
     bool wifi_connect_saved_any(uint32_t timeout_ms_per = 12000) {
@@ -254,15 +284,12 @@ class WiFi {
             return;
         }
         if (!(mode == WIFI_MODE_STA || mode == WIFI_MODE_APSTA)) {
-            ESP_LOGW(TAG, "wifi_scan: forcing WIFI_MODE_STA for scanning (was %d)", mode);
-            if ((err = esp_wifi_set_mode(WIFI_MODE_STA)) != ESP_OK) {
-                ESP_LOGE(TAG, "wifi_scan: esp_wifi_set_mode failed: %s", esp_err_to_name(err));
-                return;
-            }
+            ESP_LOGW(TAG,
+                     "wifi_scan: unsupported wifi mode for scan (%d); skip",
+                     mode);
+            *number = 0;
+            return;
         }
-
-        // Starting twice safely returns INVALID_STATE; ignore for robustness
-        (void)esp_wifi_start();
 
         wifi_scan_config_t scan_config = {};
         scan_config.ssid = nullptr;
@@ -315,6 +342,15 @@ class WiFi {
         wifi_init_sta();
         // Disable power save to avoid driver path timing issues during bring-up
         esp_wifi_set_ps(WIFI_PS_NONE);
+        // Start Wi-Fi once during startup so scan path doesn't perform mode
+        // transitions and driver bring-up repeatedly.
+        {
+            esp_err_t start_err = esp_wifi_start();
+            if (start_err != ESP_OK && start_err != ESP_ERR_WIFI_CONN &&
+                start_err != ESP_ERR_WIFI_NOT_STOPPED) {
+                ESP_ERROR_CHECK(start_err);
+            }
+        }
         // Try saved credentials first unless Wi‑Fi is manually disabled.
         if (get_nvs((char *)"wifi_manual_off") != "1") {
             wifi_connect_saved_any();

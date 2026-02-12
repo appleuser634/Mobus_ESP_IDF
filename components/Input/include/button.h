@@ -1,39 +1,24 @@
 #pragma once
 
+#include <array>
+#include <mutex>
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/task.h"
 #include "driver/gpio.h"
+#include "esp_log.h"
+#include "esp_timer.h"
 
 class Button {
    public:
     gpio_num_t gpio_num;
 
     Button(gpio_num_t gpio_n = GPIO_NUM_4) {
-#define GPIO_INPUT_IO_0 GPIO_NUM_46
-#define GPIO_INPUT_IO_1 GPIO_NUM_3
-#define GPIO_INPUT_IO_2 GPIO_NUM_5
-#define GPIO_INPUT_PIN_SEL (1ULL << (gpio_n))
-#define ESP_INTR_FLAG_DEFAULT 0
-
         gpio_num = gpio_n;
-
-        gpio_config_t io_conf = {};
-
-        // interrupt of rising edge
-        io_conf.intr_type = GPIO_INTR_ANYEDGE;
-        // bit mask of the pins, use GPIO4/5 here
-        io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
-        // set as input mode
-        io_conf.mode = GPIO_MODE_INPUT;
-        // enable pull-up mode
-        io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-        io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
-
-        gpio_config(&io_conf);
+        (void)configure_gpio_once(gpio_n);
     }
 
     typedef struct {
@@ -94,5 +79,39 @@ class Button {
 
     void reset_timer() {
         button_state.release_start_sec = esp_timer_get_time();
+    }
+
+   private:
+    static bool configure_gpio_once(gpio_num_t gpio_n) {
+        static std::mutex s_cfg_mutex;
+        static std::array<bool, GPIO_NUM_MAX> s_configured = {};
+
+        const int idx = static_cast<int>(gpio_n);
+        if (idx < 0 || idx >= GPIO_NUM_MAX) {
+            ESP_LOGE("Button", "Invalid gpio number: %d", idx);
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(s_cfg_mutex);
+        if (s_configured[idx]) {
+            return true;
+        }
+
+        gpio_config_t io_conf = {};
+        io_conf.intr_type = GPIO_INTR_ANYEDGE;
+        io_conf.pin_bit_mask = (1ULL << gpio_n);
+        io_conf.mode = GPIO_MODE_INPUT;
+        io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+        io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+
+        const esp_err_t err = gpio_config(&io_conf);
+        if (err != ESP_OK) {
+            ESP_LOGE("Button", "gpio_config(%d) failed: %s", idx,
+                     esp_err_to_name(err));
+            return false;
+        }
+
+        s_configured[idx] = true;
+        return true;
     }
 };

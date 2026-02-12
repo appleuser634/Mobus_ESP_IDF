@@ -395,8 +395,20 @@ struct HttpPostMessageArgs {
 static TaskHandle_t http_post_task_handle = nullptr;
 static constexpr uint32_t kHttpPostTaskStackWords = 8192;
 
+static bool is_retryable_send_error(esp_err_t err) {
+    return (err == ESP_ERR_HTTP_WRITE_DATA || err == ESP_ERR_NO_MEM ||
+            err == ESP_ERR_HTTP_CONNECT || err == ESP_FAIL);
+}
+
 static void send_message_via_api(const std::string &chat_to,
                                  const std::string &message) {
+    const bool mqtt_was_running = mqtt_rt_is_running();
+    if (mqtt_was_running) {
+        ESP_LOGI(TAG, "Pause MQTT before HTTPS send");
+        mqtt_rt_pause();
+        vTaskDelay(pdMS_TO_TICKS(80));
+    }
+
     auto &api = chatapi::shared_client(true);
     api.set_scheme("https");
     const auto creds = chatapi::load_credentials_from_nvs();
@@ -406,11 +418,33 @@ static void send_message_via_api(const std::string &chat_to,
     }
 
     std::string dummy;
-    esp_err_t err = api.send_message(chat_to, message, &dummy);
+    esp_err_t err = ESP_FAIL;
+    constexpr int kMaxAttempts = 3;
+    for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+        err = api.send_message(chat_to, message, &dummy);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "Message sent to %s", chat_to.c_str());
+            break;
+        }
+        ESP_LOGW(TAG,
+                 "send_message attempt %d/%d failed: %s (free=%u largest=%u)",
+                 attempt, kMaxAttempts, esp_err_to_name(err),
+                 static_cast<unsigned>(heap_caps_get_free_size(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        if (!is_retryable_send_error(err) || attempt == kMaxAttempts) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "send_message failed: %s", esp_err_to_name(err));
-    } else {
-        ESP_LOGI(TAG, "Message sent to %s", chat_to.c_str());
+    }
+
+    if (mqtt_was_running) {
+        vTaskDelay(pdMS_TO_TICKS(30));
+        (void)mqtt_rt_resume();
     }
 }
 
