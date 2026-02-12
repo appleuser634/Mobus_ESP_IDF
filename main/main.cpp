@@ -219,6 +219,68 @@ static constexpr uint32_t kOtaMinimalMagic = 0x4F54414Du;    // 'OTAM'
 // Must survive esp_restart(); do not initialize at startup.
 RTC_NOINIT_ATTR uint32_t s_factory_reset_magic;
 RTC_NOINIT_ATTR uint32_t s_ota_minimal_magic;
+int s_last_ota_progress_percent = -1;
+int64_t s_last_ota_progress_draw_us = 0;
+
+void draw_ota_progress_screen(int downloaded_bytes, int total_bytes,
+                              const char* phase) {
+    if (!ensure_sprite_surface(128, 64, 1, "OTAProgress")) return;
+
+    int percent = 0;
+    if (total_bytes > 0 && downloaded_bytes > 0) {
+        percent = (downloaded_bytes * 100) / total_bytes;
+        if (percent > 100) percent = 100;
+    }
+
+    const int64_t now_us = esp_timer_get_time();
+    if (strcmp(phase, "downloading") == 0) {
+        if (percent == s_last_ota_progress_percent &&
+            (now_us - s_last_ota_progress_draw_us) < 250000) {
+            return;
+        }
+        s_last_ota_progress_percent = percent;
+    }
+    s_last_ota_progress_draw_us = now_us;
+
+    sprite.fillRect(0, 0, 128, 64, 0);
+    sprite.setFont(&fonts::Font2);
+    sprite.setTextColor(1, 0);
+    sprite.drawCenterString("OTA Update", 64, 2);
+
+    if (strcmp(phase, "retry") == 0) {
+        sprite.drawCenterString("Retrying...", 64, 18);
+    } else if (strcmp(phase, "validating_failed") == 0) {
+        sprite.drawCenterString("Validate fallback", 64, 18);
+    } else if (strcmp(phase, "rebooting") == 0) {
+        sprite.drawCenterString("Rebooting...", 64, 18);
+    } else if (strcmp(phase, "failed") == 0) {
+        sprite.drawCenterString("Download failed", 64, 18);
+    } else {
+        sprite.drawCenterString("Downloading...", 64, 18);
+    }
+
+    const int bar_x = 10;
+    const int bar_y = 36;
+    const int bar_w = 108;
+    const int bar_h = 12;
+    sprite.drawRect(bar_x, bar_y, bar_w, bar_h, 1);
+    const int fill_w = ((bar_w - 2) * percent) / 100;
+    if (fill_w > 0) {
+        sprite.fillRect(bar_x + 1, bar_y + 1, fill_w, bar_h - 2, 1);
+    }
+
+    char pct[16];
+    snprintf(pct, sizeof(pct), "%d%%", percent);
+    sprite.setTextColor(1, 0);
+    sprite.drawCenterString(pct, 64, 50);
+    push_sprite_safe(0, 0);
+}
+
+void ota_progress_callback(int downloaded_bytes, int total_bytes,
+                           const char* phase, void* user_data) {
+    (void)user_data;
+    draw_ota_progress_screen(downloaded_bytes, total_bytes, phase);
+}
 
 static void handle_factory_reset_if_requested() {
     if (s_factory_reset_magic != kFactoryResetMagic) return;
@@ -822,7 +884,12 @@ void app_main(void) {
             esp_restart();
         }
 
+        s_last_ota_progress_percent = -1;
+        s_last_ota_progress_draw_us = 0;
+        ota_client::set_progress_callback(ota_progress_callback, nullptr);
+        draw_ota_progress_screen(0, 0, "downloading");
         esp_err_t r = ota_client::check_and_update_once();
+        ota_client::set_progress_callback(nullptr, nullptr);
         ESP_LOGI(TAG, "OTA-minimal mode finished: %s", esp_err_to_name(r));
         esp_restart();
     }

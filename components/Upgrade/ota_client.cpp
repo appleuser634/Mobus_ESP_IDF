@@ -31,6 +31,8 @@ static const char* TAG_OTA = "OTAClient";
 static constexpr int kOtaMaxAttempts = 3;
 static constexpr int kRangeChunkSize = 64 * 1024;
 static constexpr int kRangeNoProgressMaxRetries = 5;
+ota_client::progress_callback_t g_progress_cb = nullptr;
+void* g_progress_user_data = nullptr;
 
 extern "C" {
 extern const unsigned char ca_cert_pem_start[] asm("_binary_ca_cert_pem_start");
@@ -73,6 +75,13 @@ inline void delay_with_wdt(int ms_total) {
         const int d = (left > step_ms) ? step_ms : left;
         vTaskDelay(pdMS_TO_TICKS(d));
         left -= d;
+    }
+}
+
+inline void notify_progress(int downloaded_bytes, int total_bytes,
+                            const char* phase) {
+    if (g_progress_cb) {
+        g_progress_cb(downloaded_bytes, total_bytes, phase, g_progress_user_data);
     }
 }
 
@@ -241,6 +250,7 @@ esp_err_t do_ota(const std::string& bin_url_in) {
             }
         }
         ESP_LOGI(TAG_OTA, "HTTP content_length=%lld", (long long)content_len);
+        notify_progress(0, (int)content_len, "downloading");
 
         const esp_partition_t* update_partition = esp_ota_get_next_update_partition(nullptr);
         if (!update_partition) {
@@ -346,6 +356,7 @@ esp_err_t do_ota(const std::string& bin_url_in) {
                     ESP_LOGI(TAG_OTA, "OTA progress: %d KB", progress_kb);
                     last_progress_kb = progress_kb;
                 }
+                notify_progress(read_total, (int)content_len, "downloading");
                 offset += r;
                 feed_task_wdt_best_effort();
                 vTaskDelay(1);
@@ -370,10 +381,12 @@ esp_err_t do_ota(const std::string& bin_url_in) {
         }
 
         if (read_total == 0 || offset < content_len) {
+            notify_progress(read_total, (int)content_len, "failed");
             esp_ota_abort(ota_handle);
             return ESP_FAIL;
         }
         if (err != ESP_OK) {
+            notify_progress(read_total, (int)content_len, "failed");
             esp_ota_abort(ota_handle);
             return err;
         }
@@ -384,8 +397,10 @@ esp_err_t do_ota(const std::string& bin_url_in) {
             if (err == ESP_ERR_OTA_VALIDATE_FAILED) {
                 ESP_LOGW(TAG_OTA,
                          "Validation mmap failed; switching boot slot as unverified");
+                notify_progress(read_total, (int)content_len, "validating_failed");
                 esp_err_t set_err = set_boot_partition_unverified(update_partition);
                 if (set_err == ESP_OK) {
+                    notify_progress(read_total, (int)content_len, "rebooting");
                     ESP_LOGI(TAG_OTA, "Boot slot updated (unverified). Rebooting.");
                     esp_restart();
                 }
@@ -402,6 +417,7 @@ esp_err_t do_ota(const std::string& bin_url_in) {
         }
         ESP_LOGI(TAG_OTA, "OTA write complete; boot partition set to %s; rebooting",
                  update_partition->label);
+        notify_progress((int)content_len, (int)content_len, "rebooting");
         esp_restart();
         return ESP_OK; // not reached
     };
@@ -419,6 +435,7 @@ esp_err_t do_ota(const std::string& bin_url_in) {
     for (int attempt = 1; attempt <= kOtaMaxAttempts; ++attempt) {
         err = download_and_write(url);
         if (err == ESP_OK) return err; // rebooted already
+        notify_progress(0, 0, "retry");
         ESP_LOGW(TAG_OTA, "OTA attempt %d/%d failed: %s", attempt,
                  kOtaMaxAttempts, esp_err_to_name(err));
         delay_with_wdt(1000 * attempt);
@@ -431,6 +448,7 @@ esp_err_t do_ota(const std::string& bin_url_in) {
         for (int attempt = 1; attempt <= kOtaMaxAttempts; ++attempt) {
             err = download_and_write(alt);
             if (err == ESP_OK) return err; // rebooted already
+            notify_progress(0, 0, "retry");
             ESP_LOGW(TAG_OTA, "OTA(HTTP) attempt %d/%d failed: %s", attempt,
                      kOtaMaxAttempts, esp_err_to_name(err));
             delay_with_wdt(1000 * attempt);
@@ -445,6 +463,11 @@ esp_err_t do_ota(const std::string& bin_url_in) {
 }
 
 namespace ota_client {
+
+void set_progress_callback(progress_callback_t cb, void* user_data) {
+    g_progress_cb = cb;
+    g_progress_user_data = user_data;
+}
 
 esp_err_t check_and_update_once() {
     bool wdt_removed_here = false;
