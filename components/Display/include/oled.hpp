@@ -193,6 +193,15 @@ inline const lgfx::IFont *select_ime_font(int input_lang,
     return select_display_font(base_font, utf8_char);
 }
 
+inline const lgfx::IFont *select_chat_input_font(const std::string &utf8_char) {
+    const uint16_t cp = utf8_to_u16_codepoint(utf8_char);
+    const bool is_japanese_block = (cp >= 0x3000u && cp <= 0x30FFu);
+    if (!is_japanese_block) {
+        return &fonts::Font2;
+    }
+    return &fonts::lgfxJapanGothic_12;
+}
+
 inline void wrap_char_set_index(int &select_y_index, int char_set_length) {
     if (char_set_length <= 0) {
         select_y_index = 0;
@@ -557,6 +566,8 @@ class TalkDisplay {
                 back_button.get_button_state();
             Button::button_state_t enter_button_state =
                 enter_button.get_button_state();
+            const bool left_plus_type_delete =
+                joystick_state.left && type_button_state.pushed;
 
             if ((!type_button_state.pushing || back_button_state.pushing) &&
                 tone_playing) {
@@ -564,7 +575,8 @@ class TalkDisplay {
                 tone_playing = false;
             }
 
-            if (type_button_state.push_edge and !back_button_state.pushing) {
+            if (type_button_state.push_edge && !back_button_state.pushing &&
+                !joystick_state.left) {
                 if (!tone_playing) {
                     if (buzzer.start_tone(2300.0f, 0.6f) == ESP_OK) {
                         tone_playing = true;
@@ -572,7 +584,15 @@ class TalkDisplay {
                 }
             }
 
-            if (type_button_state.pushed and !back_button_state.pushing) {
+            if (left_plus_type_delete) {
+                if (message_text != "") {
+                    remove_last_utf8_char(message_text);
+                }
+                input_switch_pos = message_text.size();
+                type_button.clear_button_state();
+                buzzer.stop_tone();
+                tone_playing = false;
+            } else if (type_button_state.pushed and !back_button_state.pushing) {
                 printf("Button pushed!\n");
                 printf("Pushing time:%lld\n", type_button_state.pushing_sec);
                 printf("Push type:%c\n", type_button_state.push_type);
@@ -614,8 +634,6 @@ class TalkDisplay {
             } else if (back_button_state.pushed and
                        !back_button_state.pushed_same_time and
                        !type_button_state.pushing) {
-                break;
-            } else if (joystick_state.left) {
                 break;
             } else if (joystick_state.pushed_right_edge) {
                 input_lang = input_lang * -1;
@@ -712,7 +730,7 @@ class TalkDisplay {
                 if (pos + char_len <= display_text.length()) {
                     std::string ch = display_text.substr(pos, char_len);
 
-                    sprite.setFont(select_display_font(&fonts::Font2, ch));
+                    sprite.setFont(select_chat_input_font(ch));
 
                     sprite.print(ch.c_str());
                     pos += char_len;
@@ -910,6 +928,9 @@ std::vector<std::pair<std::string, std::string>> TalkDisplay::romaji_kana = {
     {"sha", "シャ"},
     {"shu", "シュ"},
     {"sho", "ショ"},
+    {"sya", "シャ"},
+    {"syu", "シュ"},
+    {"syo", "ショ"},
     {"ja", "ジャ"},
     {"ju", "ジュ"},
     {"jo", "ジョ"},
@@ -2122,7 +2143,7 @@ class ContactBook {
                 if (select_index == base_count) {
                     // Add Friend flow: input friend code/ID, then send request
                     std::string friend_code =
-                        wifi_input_info_proxy("Friend Code/ID", "");
+                        wifi_input_info_proxy("Friend Code", "");
                     if (friend_code != "") {
                         sprite.fillRect(0, 0, 128, 64, 0);
                         sprite.setFont(&fonts::Font2);
@@ -2661,7 +2682,7 @@ bool OpenChat::compose_morse_message(std::string &out,
             sprite.print(preview.c_str());
         }
         sprite.setCursor(0, 56);
-        sprite.print("Enter=Send  Back=Exit");
+        sprite.print("Enter=Send Left+Type=Del");
         push_sprite_safe(0, 0);
     };
 
@@ -2686,7 +2707,14 @@ bool OpenChat::compose_morse_message(std::string &out,
             tone_playing = false;
         }
 
-        if (type_state.pushed && !back_state.pushing) {
+        if (joystick_state.left && type_state.pushed) {
+            if (!message_text.empty()) {
+                remove_last_utf8_char(message_text);
+            }
+            preview.clear();
+            type_button.clear_button_state();
+            draw();
+        } else if (type_state.pushed && !back_state.pushing) {
             if (type_state.push_type == 's') {
                 morse_text += short_push_text;
             } else if (type_state.push_type == 'l') {
@@ -2875,31 +2903,93 @@ void OpenChat::open_chat_task(void *pvParameters) {
             sprite.drawCenterString(rooms[selected].label, 64, 0);
             sprite.drawFastHLine(0, 12, 128, 0xFFFF);
 
-            int start = 0;
-            int max_lines = 4;
-            if ((int)messages.size() > max_lines) {
-                start = messages.size() - max_lines;
-            }
-            int y = 16;
-            for (size_t i = start; i < messages.size(); ++i) {
-                const auto &msg = messages[i];
+            constexpr int kBodyTop = 16;
+            constexpr int kBodyBottom = 52;
+            constexpr int kBodyWidth = 128;
+            const int kLineHeight =
+                std::max(12, static_cast<int>(sprite.fontHeight()) + 2);
+            const int max_rows =
+                std::max(1, (kBodyBottom - kBodyTop + 1) / kLineHeight);
+
+            struct DisplayRow {
+                std::string text;
+                bool mine = false;
+            };
+
+            auto wrap_text = [&](const std::string &src,
+                                 int max_width_px) -> std::vector<std::string> {
+                std::vector<std::string> lines;
+                std::string current;
+                for (size_t p = 0; p < src.size();) {
+                    int char_len = utf8_char_length(static_cast<unsigned char>(src[p]));
+                    if (char_len <= 0) char_len = 1;
+                    if (p + static_cast<size_t>(char_len) > src.size()) break;
+                    std::string ch = src.substr(p, static_cast<size_t>(char_len));
+                    std::string cand = current + ch;
+                    if (!current.empty() && sprite.textWidth(cand.c_str()) > max_width_px) {
+                        lines.push_back(current);
+                        current = ch;
+                    } else {
+                        current = cand;
+                    }
+                    p += static_cast<size_t>(char_len);
+                }
+                if (!current.empty()) lines.push_back(current);
+                if (lines.empty()) lines.push_back("");
+                return lines;
+            };
+
+            auto normalize_single_line = [](const std::string &src) -> std::string {
+                std::string out;
+                out.reserve(src.size());
+                for (char c : src) {
+                    if (c == '\r' || c == '\n' || c == '\t') {
+                        out.push_back(' ');
+                    } else {
+                        out.push_back(c);
+                    }
+                }
+                return out;
+            };
+
+            std::vector<DisplayRow> rows;
+            rows.reserve(max_rows);
+            for (int i = static_cast<int>(messages.size()) - 1;
+                 i >= 0 && static_cast<int>(rows.size()) < max_rows; --i) {
+                const auto &msg = messages[static_cast<size_t>(i)];
                 std::string sender =
                     msg.user.empty() ? (msg.short_id.empty() ? std::string("?")
                                                              : msg.short_id)
                                      : msg.user;
-                if (msg.mine) {
+                std::string line =
+                    normalize_single_line(sender + ": " + msg.text);
+                std::vector<std::string> wrapped = wrap_text(line, kBodyWidth);
+                int remain = max_rows - static_cast<int>(rows.size());
+                if (remain <= 0) break;
+                int take = std::min(remain, static_cast<int>(wrapped.size()));
+                // Keep message head lines to avoid showing only the tail part.
+                for (int w = take - 1; w >= 0; --w) {
+                    rows.insert(rows.begin(),
+                                {wrapped[static_cast<size_t>(w)], msg.mine});
+                }
+            }
+
+            int y = kBodyTop;
+            for (size_t r = 0; r < rows.size(); ++r) {
+                if (y + kLineHeight - 1 > kBodyBottom) {
+                    break;
+                }
+                const auto &row = rows[r];
+                if (row.mine) {
                     sprite.setTextColor(0x000000u, 0xFFFFu);
-                    sprite.fillRect(0, y - 2, 128, 12, 0xFFFF);
+                    sprite.fillRect(0, y - 2, 128, kLineHeight, 0xFFFF);
                 } else {
                     sprite.setTextColor(0xFFFFFFu, 0x000000u);
                 }
-                std::string line = sender + ": " + msg.text;
                 sprite.setCursor(0, y);
-                sprite.setTextWrap(true);
-                sprite.print(line.c_str());
                 sprite.setTextWrap(false);
-                y += 12;
-                if (y > 52) break;
+                sprite.print(row.text.c_str());
+                y += kLineHeight;
             }
             sprite.setTextColor(0xFFFFFFu, 0x000000u);
             sprite.setCursor(0, 56);
@@ -6321,21 +6411,117 @@ static void play_morse_message(const std::string &text,
                           const std::string &display) {
         sprite.fillRect(0, 0, 128, 64, 0);
         sprite.setFont(&fonts::Font2);
+        sprite.setTextColor(0xFFFFFFu, 0x000000u);
         if (!header.empty()) {
             sprite.drawCenterString(header.c_str(), cx, 15);
         }
-        sprite.drawCenterString((display + morse_part).c_str(), cx, cy);
+        const std::string line = display + morse_part;
+        int total_w = 0;
+        for (size_t p = 0; p < line.size();) {
+            int char_len = utf8_char_length(static_cast<unsigned char>(line[p]));
+            if (char_len <= 0) char_len = 1;
+            if (p + (size_t)char_len > line.size()) break;
+            std::string ch = line.substr(p, (size_t)char_len);
+            sprite.setFont(select_display_font(&fonts::Font2, ch));
+            total_w += sprite.textWidth(ch.c_str());
+            p += (size_t)char_len;
+        }
+        int x = cx - (total_w / 2);
+        if (x < 0) x = 0;
+        sprite.setCursor(x, cy);
+        sprite.setTextWrap(false);
+        for (size_t p = 0; p < line.size();) {
+            int char_len = utf8_char_length(static_cast<unsigned char>(line[p]));
+            if (char_len <= 0) char_len = 1;
+            if (p + (size_t)char_len > line.size()) break;
+            std::string ch = line.substr(p, (size_t)char_len);
+            sprite.setFont(select_display_font(&fonts::Font2, ch));
+            sprite.print(ch.c_str());
+            p += (size_t)char_len;
+        }
         push_sprite_safe(0, 0);
+    };
+
+    auto lookup_morse = [](char c, std::string &out) -> bool {
+        std::string key;
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (std::isalpha(uc)) {
+            key.assign(1, static_cast<char>(std::toupper(uc)));
+        } else if (std::isdigit(uc)) {
+            key.assign(1, static_cast<char>(uc));
+        } else if (std::isspace(uc)) {
+            key = " ";
+        } else {
+            switch (c) {
+                case '.':
+                case ',':
+                case '?':
+                case '!':
+                case '+':
+                case '-':
+                case '/':
+                case '=':
+                case ';':
+                case ':':
+                    key.assign(1, c);
+                    break;
+                default:
+                    break;
+            }
+        }
+        if (key.empty()) return false;
+        auto it = Game::morse_code_reverse.find(key);
+        if (it == Game::morse_code_reverse.end()) return false;
+        out = it->second;
+        return true;
+    };
+
+    auto kana_to_romaji = []() -> const std::vector<std::pair<std::string, std::string>> & {
+        static const std::vector<std::pair<std::string, std::string>> table = [] {
+            std::unordered_map<std::string, std::string> best;
+            for (const auto &kv : TalkDisplay::romaji_kana) {
+                const std::string &romaji = kv.first;
+                const std::string &kana = kv.second;
+                auto it = best.find(kana);
+                if (it == best.end() || romaji.size() < it->second.size()) {
+                    best[kana] = romaji;
+                }
+            }
+            std::vector<std::pair<std::string, std::string>> out;
+            out.reserve(best.size());
+            for (const auto &kv : best) out.push_back(kv);
+            std::sort(out.begin(), out.end(),
+                      [](const auto &a, const auto &b) {
+                          return a.first.size() > b.first.size();
+                      });
+            return out;
+        }();
+        return table;
     };
 
     std::string display_accum;
 
     for (size_t idx = 0; idx < text.size();) {
-        size_t char_len =
-            utf8_char_length(static_cast<unsigned char>(text[idx]));
-        if (char_len == 0) char_len = 1;
-        std::string raw_char = text.substr(idx, char_len);
-        idx += char_len;
+        std::string raw_char;
+        std::string romaji_token;
+        bool matched_kana = false;
+        for (const auto &kv : kana_to_romaji()) {
+            if (kv.first.empty() || kv.second.empty()) continue;
+            if (idx + kv.first.size() > text.size()) continue;
+            if (text.compare(idx, kv.first.size(), kv.first) != 0) continue;
+            raw_char = kv.first;
+            romaji_token = kv.second;
+            idx += kv.first.size();
+            matched_kana = true;
+            break;
+        }
+        if (!matched_kana) {
+            size_t char_len =
+                utf8_char_length(static_cast<unsigned char>(text[idx]));
+            if (char_len == 0) char_len = 1;
+            raw_char = text.substr(idx, char_len);
+            idx += char_len;
+        }
 
         if (raw_char == "\n" || raw_char == "\r") {
             display_accum.push_back(' ');
@@ -6344,65 +6530,43 @@ static void play_morse_message(const std::string &text,
             continue;
         }
 
-        std::string key;
-        if (char_len == 1) {
-            unsigned char c = static_cast<unsigned char>(raw_char[0]);
-            if (std::isalpha(c)) {
-                key.assign(1, static_cast<char>(std::toupper(c)));
-            } else if (std::isdigit(c)) {
-                key.assign(1, static_cast<char>(c));
-            } else if (std::isspace(c)) {
-                key = " ";
-            } else {
-                switch (c) {
-                    case '.':
-                    case ',':
-                    case '?':
-                    case '!':
-                    case '+':
-                    case '-':
-                    case '/':
-                    case '=':
-                    case ';':
-                    case ':':
-                        key.assign(1, static_cast<char>(c));
-                        break;
-                    default:
-                        key.clear();
-                        break;
+        std::vector<std::string> morse_units;
+        if (!romaji_token.empty()) {
+            for (char rc : romaji_token) {
+                std::string m;
+                if (lookup_morse(rc, m)) {
+                    morse_units.push_back(m);
                 }
             }
+        } else if (raw_char.size() == 1) {
+            std::string m;
+            if (lookup_morse(raw_char[0], m)) morse_units.push_back(m);
         }
 
-        std::string morse_txt;
-        if (!key.empty()) {
-            auto it = Game::morse_code_reverse.find(key);
-            if (it != Game::morse_code_reverse.end()) {
-                morse_txt = it->second;
-            }
-        }
-
-        if (morse_txt.empty()) {
+        if (morse_units.empty()) {
             display_accum += raw_char;
             draw_frame("", display_accum);
             vTaskDelay(letter_gap);
             continue;
         }
 
-        std::string morse_progress;
-        for (char symbol : morse_txt) {
-            morse_progress.push_back(symbol);
-            draw_frame(morse_progress, display_accum);
-            TickType_t tone_ticks = (symbol == '.') ? dot_ticks : dash_ticks;
-            buzzer.start_tone(2300.0f, 0.6f);
-            vTaskDelay(tone_ticks);
-            buzzer.stop_tone();
-            vTaskDelay(intra_symbol_gap);
+        for (const auto &unit : morse_units) {
+            std::string morse_progress;
+            for (char symbol : unit) {
+                morse_progress.push_back(symbol);
+                draw_frame(morse_progress, display_accum);
+                TickType_t tone_ticks =
+                    (symbol == '.') ? dot_ticks : dash_ticks;
+                buzzer.start_tone(2300.0f, 0.6f);
+                vTaskDelay(tone_ticks);
+                buzzer.stop_tone();
+                vTaskDelay(intra_symbol_gap);
+            }
+            vTaskDelay(letter_gap);
         }
 
         display_accum += raw_char;
         draw_frame("", display_accum);
-        vTaskDelay(letter_gap);
     }
 
     buzzer.stop_tone();
@@ -6488,8 +6652,17 @@ class MenuDisplay {
 
         // 開始時間を取得 st=start_time
         long long int st = esp_timer_get_time();
-        // 電波強度の初期値
-        float radioLevel = 0;
+        // 電波強度(0-4 bars)
+        int radioLevel = 0;
+        auto rssi_to_bars = [](int rssi) -> int {
+            // Typical Wi-Fi RSSI scale:
+            // >= -55 excellent, >= -67 good, >= -75 fair, >= -85 weak, else poor
+            if (rssi >= -55) return 4;
+            if (rssi >= -67) return 3;
+            if (rssi >= -75) return 2;
+            if (rssi >= -85) return 1;
+            return 0;
+        };
 
         // 通知の取得はOTA検証が完了するまで少し待つ（フラッシュ書込みと競合を避ける）
         {
@@ -6598,12 +6771,9 @@ class MenuDisplay {
                 if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
                     int rssi = ap.rssi;
                     // ESP_LOGD(TAG, "RSSI:%d", rssi);
-                    radioLevel = 4 - (rssi / -20);
+                    radioLevel = rssi_to_bars(rssi);
                 } else {
                     radioLevel = 0;
-                }
-                if (radioLevel < 1) {
-                    radioLevel = 1;
                 }
 
                 // バッテリー電圧を更新
