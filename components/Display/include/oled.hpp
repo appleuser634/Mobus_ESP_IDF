@@ -19,7 +19,6 @@
 #include <boot_sounds.hpp>
 #include <sound_settings.hpp>
 #include <images.hpp>
-#include <wasm_game_runtime.hpp>
 #include <haptic_motor.hpp>
 #include <joystick_haptics.hpp>
 #include <http_client.hpp>
@@ -376,9 +375,8 @@ StackType_t *allocate_internal_stack(StackType_t *&slot, size_t words,
     }
     return slot;
 }
-}  // namespace
 
-#include "mopping.h"
+}  // namespace
 #include <chat_api.hpp>
 #include <ota_client.hpp>
 #include <mqtt_runtime.h>
@@ -1058,7 +1056,7 @@ class MessageBox {
     static constexpr uint32_t kTaskStackWords = 9216;
     static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
-    static StackType_t *task_stack_;
+    static StackType_t task_stack_[kTaskStackWords];
 
     static void set_active_contact(const std::string &short_id,
                                    const std::string &friend_id) {
@@ -1083,19 +1081,6 @@ class MessageBox {
             ESP_LOGW(TAG, "box_task already running");
             delete arg;
             return;
-        }
-        if (!allocate_internal_stack(task_stack_, kTaskStackWords,
-                                     "MessageBox")) {
-            size_t bytes = kTaskStackWords * sizeof(StackType_t);
-            task_stack_ = static_cast<StackType_t *>(
-                heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-            if (!task_stack_) {
-                delete arg;
-                running_flag = false;
-                return;
-            }
-            ESP_LOGW(TAG, "[OLED] stack alloc in PSRAM (MessageBox, bytes=%u)",
-                     static_cast<unsigned>(bytes));
         }
         task_handle_ = xTaskCreateStaticPinnedToCore(
             &box_task, "box_task", kTaskStackWords, arg, 6, task_stack_,
@@ -1166,6 +1151,7 @@ class MessageBox {
         };
         if (!recreate_message_sprite(lcd.width(), lcd.height())) {
             running_flag = false;
+            task_handle_ = nullptr;
             vTaskDelete(NULL);
             return;
         }
@@ -1623,6 +1609,7 @@ class MessageBox {
                 res = JsonDocument();
                 if (!recreate_message_sprite(lcd.width(), lcd.height())) {
                     running_flag = false;
+                    task_handle_ = nullptr;
                     vTaskDelete(NULL);
                     return;
                 }
@@ -1742,7 +1729,7 @@ std::string MessageBox::active_short_id = "";
 std::string MessageBox::active_friend_id = "";
 TaskHandle_t MessageBox::task_handle_ = nullptr;
 StaticTask_t MessageBox::task_buffer_;
-StackType_t *MessageBox::task_stack_ = nullptr;
+StackType_t MessageBox::task_stack_[MessageBox::kTaskStackWords] = {};
 
 inline std::string resolve_chat_backend_id(const std::string &fallback) {
     return MessageBox::backend_identifier(fallback);
@@ -1780,11 +1767,6 @@ class ContactBook {
             running_flag = false;
         }
     }
-    static void free_stack_pend_cb(void *arg1, uint32_t /*arg2*/) {
-        StackType_t *stack = (StackType_t *)arg1;
-        if (stack) heap_caps_free(stack);
-    }
-
     static void message_menue_task(void *pvParameters) {
         Joystick joystick;
 
@@ -1810,8 +1792,6 @@ class ContactBook {
             running_flag = false;
             task_handle_ = nullptr;
 
-            StackType_t *stack = ContactBook::task_stack_;
-
             UBaseType_t watermark_words = uxTaskGetStackHighWaterMark(nullptr);
             ESP_LOGI(
                 "CONTACT", "stack high watermark: %u words (%u bytes)",
@@ -1824,8 +1804,6 @@ class ContactBook {
                              esp_err_to_name(del_err));
                 }
             }
-            // xTimerPendFunctionCall(free_stack_pend_cb, stack, 0,
-            // portMAX_DELAY);
             vTaskDelete(NULL);
         };
 
@@ -4807,13 +4785,6 @@ class SettingMenu {
             return;
         }
 
-        if (!allocate_internal_stack(task_stack_, kTaskStackWords,
-                                     "SettingMenu")) {
-            ESP_LOGE("SETTING_MENU", "Stack alloc failed");
-            running_flag = false;
-            return;
-        }
-
         running_flag = true;
         task_handle_ = xTaskCreateStaticPinnedToCore(
             &message_menue_task, "message_menue_task", kTaskStackWords, NULL, 6,
@@ -4854,6 +4825,7 @@ class SettingMenu {
         };
         auto finish_task = [&]() {
             running_flag = false;
+            task_handle_ = nullptr;
             if (wdt_registered) {
                 esp_err_t del_err = esp_task_wdt_delete(NULL);
                 if (del_err != ESP_OK) {
@@ -5853,13 +5825,13 @@ class SettingMenu {
    private:
     static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
-    static StackType_t *task_stack_;
+    static StackType_t task_stack_[kTaskStackWords];
 };
 bool SettingMenu::running_flag = false;
 bool SettingMenu::sound_dirty = false;
 TaskHandle_t SettingMenu::task_handle_ = nullptr;
 StaticTask_t SettingMenu::task_buffer_;
-StackType_t *SettingMenu::task_stack_ = nullptr;
+StackType_t SettingMenu::task_stack_[SettingMenu::kTaskStackWords] = {};
 
 class Game {
    public:
@@ -5868,18 +5840,13 @@ class Game {
 
     static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
-    static StackType_t *task_stack_;
+    static StackType_t task_stack_[kTaskStackWords];
     static bool wdt_registered_;
 
     void start_game_task() {
         printf("Start Game Task...");
         if (task_handle_) {
             ESP_LOGW("GAME", "Task already running");
-            return;
-        }
-        if (!allocate_internal_stack(task_stack_, kTaskStackWords, "Game")) {
-            ESP_LOGE("GAME", "Stack alloc failed");
-            running_flag = false;
             return;
         }
         running_flag = true;
@@ -5924,23 +5891,8 @@ class Game {
         bool exit_task = false;
         while (!exit_task) {
             feed_wdt();
-            MenuChoice choice = show_game_menu(joystick, type_button,
-                                               back_button, enter_button);
-            bool exit_requested = false;
-
-            switch (choice) {
-                case MenuChoice::kExit:
-                    exit_requested = true;
-                    break;
-                case MenuChoice::kMopping:
-                    exit_requested = run_mopping_game();
-                    break;
-                case MenuChoice::kMorse:
-                    exit_requested = run_morse_trainer(
-                        joystick, type_button, back_button, enter_button);
-                    break;
-            }
-
+            bool exit_requested = run_morse_trainer(
+                joystick, type_button, back_button, enter_button);
             reset_inputs(joystick, type_button, back_button, enter_button);
             if (exit_requested) {
                 exit_task = true;
@@ -5968,74 +5920,7 @@ class Game {
     };
 
    private:
-    enum class MenuChoice { kMopping = 0, kMorse = 1, kExit = 2 };
-
     static void feed_wdt();
-
-    static MenuChoice show_game_menu(Joystick &joystick, Button &type_button,
-                                     Button &back_button,
-                                     Button &enter_button) {
-        reset_inputs(joystick, type_button, back_button, enter_button);
-
-        const char *items[] = {"Mopping (Wasm)", "Morse Trainer"};
-        int index = 0;
-
-        while (true) {
-            sprite.fillRect(0, 0, 128, 64, 0);
-            sprite.setFont(&fonts::Font2);
-            sprite.setTextColor(0xFFFF, 0x0000);
-            sprite.drawCenterString("Choose Game", 64, 6);
-
-            for (int i = 0; i < 2; ++i) {
-                int y = 24 + i * 18;
-                if (i == index) {
-                    sprite.fillRoundRect(8, y - 4, 112, 18, 3, 0xFFFF);
-                    sprite.setTextColor(0x0000, 0xFFFF);
-                } else {
-                    sprite.setTextColor(0xFFFF, 0x0000);
-                }
-                sprite.drawCenterString(items[i], 64, y);
-            }
-
-            sprite.setTextColor(0xFFFF, 0x0000);
-            push_sprite_safe(0, 0);
-
-            Joystick::joystick_state_t joy = joystick.get_joystick_state();
-            Button::button_state_t type_state = type_button.get_button_state();
-            Button::button_state_t back_state = back_button.get_button_state();
-
-            if (joy.pushed_down_edge) {
-                index = (index + 1) % 2;
-            } else if (joy.pushed_up_edge) {
-                index = (index + 2 - 1) % 2;
-            }
-
-            if (type_state.pushed) {
-                type_button.clear_button_state();
-                return index == 0 ? MenuChoice::kMopping : MenuChoice::kMorse;
-            }
-
-            if (back_state.pushed || joy.left) {
-                back_button.clear_button_state();
-                return MenuChoice::kExit;
-            }
-
-            feed_wdt();
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
-    }
-
-    static bool run_mopping_game() {
-        sprite.fillRect(0, 0, 128, 64, 0);
-        sprite.setFont(&fonts::Font2);
-        sprite.setTextColor(0xFFFF, 0x0000);
-        sprite.drawCenterString("Launching...", 64, 28);
-        push_sprite_safe(0, 0);
-
-        wasm_runtime::GameOptions options;
-        options.sleep_scale = 0.5f;
-        return wasm_runtime::run_game("/spiffs/games/mopping.wasm", options);
-    }
 
     static bool run_morse_trainer(Joystick &joystick, Button &type_button,
                                   Button &back_button, Button &enter_button) {
@@ -6318,7 +6203,7 @@ class Game {
         buzzer.stop_tone();
         buzzer.deinit();
         reset_inputs(joystick, type_button, back_button, enter_button);
-        return false;
+        return true;
     }
 
     static void reset_inputs(Joystick &joystick, Button &type_button,
@@ -6342,7 +6227,7 @@ class Game {
 bool Game::running_flag = false;
 TaskHandle_t Game::task_handle_ = nullptr;
 StaticTask_t Game::task_buffer_;
-StackType_t *Game::task_stack_ = nullptr;
+StackType_t Game::task_stack_[Game::kTaskStackWords] = {};
 bool Game::wdt_registered_ = false;
 
 void Game::feed_wdt() {

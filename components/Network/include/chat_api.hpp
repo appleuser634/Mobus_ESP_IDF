@@ -504,6 +504,8 @@ class ChatApiClient {
         cfg.transport_type = (scheme == "https") ? HTTP_TRANSPORT_OVER_SSL : HTTP_TRANSPORT_OVER_TCP;
         cfg.timeout_ms = request_timeout_ms_;
         cfg.keep_alive_enable = false;
+        cfg.buffer_size = 2048;
+        cfg.buffer_size_tx = 1024;
         if (is_ipv4_literal(host)) {
             cfg.skip_cert_common_name_check = true;
         }

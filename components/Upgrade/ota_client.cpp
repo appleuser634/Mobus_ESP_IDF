@@ -29,7 +29,7 @@ extern "C" esp_err_t esp_crt_bundle_attach(void *conf);
 
 static const char* TAG_OTA = "OTAClient";
 static constexpr int kOtaMaxAttempts = 3;
-static constexpr int kRangeChunkSize = 64 * 1024;
+static constexpr int kRangeChunkSize = 256 * 1024;
 static constexpr int kRangeNoProgressMaxRetries = 5;
 ota_client::progress_callback_t g_progress_cb = nullptr;
 void* g_progress_user_data = nullptr;

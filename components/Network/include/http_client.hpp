@@ -246,6 +246,21 @@ void http_get_message_task(void *pvParameters) {
     std::string chat_from = *(std::string *)pvParameters;  // friend identifier
     delete (std::string *)pvParameters;
 
+    const bool mqtt_was_running = mqtt_rt_is_running();
+    if (mqtt_was_running) {
+        ESP_LOGI(TAG, "Pause MQTT before HTTPS get_messages");
+        mqtt_rt_pause();
+        vTaskDelay(pdMS_TO_TICKS(80));
+    }
+    auto finish_task = [&]() {
+        if (mqtt_was_running) {
+            vTaskDelay(pdMS_TO_TICKS(30));
+            (void)mqtt_rt_resume();
+        }
+        http_get_task_handle = nullptr;
+        vTaskDelete(NULL);
+    };
+
     // Prepare API client and ensure logged in
     auto &api = dev_chat_api();
     api.set_scheme("https");
@@ -284,9 +299,8 @@ void http_get_message_task(void *pvParameters) {
             fill_empty_messages(res);
         }
         res_flag.store(true);
-        http_get_task_handle = nullptr;
-        vTaskDelete(NULL);
-        return;
+        finish_task();
+        return;  // unreachable
     }
 
     // Transform server response into legacy shape used by Display
@@ -302,9 +316,8 @@ void http_get_message_task(void *pvParameters) {
             fill_empty_messages(res);
         }
         res_flag.store(true);
-        http_get_task_handle = nullptr;
-        vTaskDelete(NULL);
-        return;
+        finish_task();
+        return;  // unreachable
     }
     if (status < 200 || status >= 300) {
         ESP_LOGW(TAG, "get_messages non-OK HTTP status=%d", status);
@@ -313,9 +326,8 @@ void http_get_message_task(void *pvParameters) {
             fill_empty_messages(res);
         }
         res_flag.store(true);
-        http_get_task_handle = nullptr;
-        vTaskDelete(NULL);
-        return;
+        finish_task();
+        return;  // unreachable
     }
 
     StaticJsonDocument<3072> out;
@@ -348,8 +360,7 @@ void http_get_message_task(void *pvParameters) {
         deserializeJson(res, outBuf);
     }
     res_flag.store(true);
-    http_get_task_handle = nullptr;
-    vTaskDelete(NULL);
+    finish_task();
 }
 
 static void http_get_friends_task(void *pvParameters) {
