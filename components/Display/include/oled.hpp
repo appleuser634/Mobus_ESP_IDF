@@ -699,6 +699,8 @@ class TalkDisplay {
                 SendAnimation();
 
                 enter_button.clear_button_state();
+                // 送信後は履歴画面へ戻す
+                break;
             }
 
             std::string display_text =
@@ -1167,6 +1169,8 @@ class MessageBox {
             "[BLE] Opening message box (identifier=%s short=%s friend_id=%s)",
             chat_to.c_str(), active_short_id.c_str(), active_friend_id.c_str());
         JsonDocument res;
+        int64_t last_history_poll_us = 0;
+        constexpr int64_t kHistoryPollIntervalUs = 3LL * 1000LL * 1000LL;
         struct MessageViewEntry {
             JsonObject obj;
         };
@@ -1582,6 +1586,67 @@ class MessageBox {
             }
         };
 
+        auto newest_incoming_info = [&](const JsonDocument &doc)
+            -> std::pair<std::string, std::string> {
+            std::string latest_created;
+            std::string latest_id;
+            std::string latest_content;
+            bool found = false;
+            if (!doc["messages"].is<JsonArrayConst>()) {
+                return {"", ""};
+            }
+            for (JsonObjectConst msg : doc["messages"].as<JsonArrayConst>()) {
+                const char *from = msg["from"].as<const char *>();
+                if (!from || my_name == from) continue;
+                const char *created = msg["created_at"].as<const char *>();
+                const char *id = msg["id"].as<const char *>();
+                if (!id) id = msg["message_id"].as<const char *>();
+                const char *content = msg["message"].as<const char *>();
+                const std::string created_s = created ? created : "";
+                const std::string id_s = id ? id : "";
+                if (!found || created_s > latest_created ||
+                    (created_s == latest_created && id_s > latest_id)) {
+                    latest_created = created_s;
+                    latest_id = id_s;
+                    latest_content = content ? content : "";
+                    found = true;
+                }
+            }
+            if (!found) return {"", ""};
+            return {latest_created + "|" + latest_id + "|" + latest_content,
+                    latest_content};
+        };
+
+        auto refresh_history = [&](int ble_timeout_ms, bool animate_on_new)
+            -> bool {
+            JsonDocument refreshed;
+            bool ok = false;
+            if (fetch_messages_via_ble(chat_to, ble_timeout_ms)) {
+                refreshed = res;
+                ok = true;
+            } else {
+                ESP_LOGI(TAG, "[HTTP] Refresh history via Wi-Fi");
+                sprite.deleteSprite();
+                refreshed = http_client.get_message(server_chat_id);
+                (void)recreate_message_sprite(lcd.width(), lcd.height());
+                ok = true;
+            }
+            if (!ok) return false;
+
+            const auto before_info = newest_incoming_info(res);
+            const auto after_info = newest_incoming_info(refreshed);
+            const std::string &before_sig = before_info.first;
+            const std::string &after_sig = after_info.first;
+            const std::string &after_content = after_info.second;
+            res = std::move(refreshed);
+            rebuild_message_view(/*jump_to_bottom=*/false);
+            if (animate_on_new && !after_sig.empty() && after_sig != before_sig) {
+                play_morse_message(after_content.c_str(), morse_header);
+                rebuild_message_view(/*jump_to_bottom=*/true);
+            }
+            return true;
+        };
+
         rebuild_message_view(/*jump_to_bottom=*/true);
 
         while (true) {
@@ -1605,7 +1670,7 @@ class MessageBox {
                 sprite.deleteSprite();
                 res.clear();
                 res = JsonDocument();
-                talk.start_talk_task(chat_to);
+                const bool sent = talk.start_talk_task(chat_to);
                 res = JsonDocument();
                 if (!recreate_message_sprite(lcd.width(), lcd.height())) {
                     running_flag = false;
@@ -1616,22 +1681,23 @@ class MessageBox {
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 joystick.reset_timer();
-                // 再取得（BLE優先）
-                if (!fetch_messages_via_ble(chat_to, 4000)) {
-                    ESP_LOGW(
-                        TAG,
-                        "[BLE] Refresh via BLE failed; using HTTP fallback");
-                    ESP_LOGI(TAG,
-                             "[HTTP] Refresh via Wi-Fi (free=%u largest=%u)",
-                             (unsigned)heap_caps_get_free_size(
-                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-                             (unsigned)heap_caps_get_largest_free_block(
-                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-                    sprite.deleteSprite();
-                    res = http_client.get_message(server_chat_id);
-                    (void)recreate_message_sprite(lcd.width(), lcd.height());
+                // 未取得の一覧を見せないため、再取得完了までローディング表示
+                sprite.fillRect(0, 0, 128, 64, 0);
+                sprite.setFont(&fonts::Font4);
+                sprite.setCursor(10, 20);
+                sprite.print("Loading...");
+                push_sprite_safe(0, 0);
+                // 再取得（BLE優先）。送信直後は必ず履歴画面へ戻り、末尾に追従。
+                (void)refresh_history(4000, /*animate_on_new=*/false);
+                if (sent) {
+                    rebuild_message_view(/*jump_to_bottom=*/true);
                 }
-                rebuild_message_view(/*jump_to_bottom=*/true);
+            }
+
+            const int64_t now_us = esp_timer_get_time();
+            if ((now_us - last_history_poll_us) >= kHistoryPollIntervalUs) {
+                last_history_poll_us = now_us;
+                (void)refresh_history(2000, /*animate_on_new=*/true);
             }
 
             if (offset_y > max_offset_y) offset_y = max_offset_y;
@@ -3252,7 +3318,7 @@ class WiFiSetting {
     }
 
     static void set_wifi_info(uint8_t *ssid = 0) {
-        WiFi wifi;
+        WiFi &wifi = WiFi::shared();
 
         Joystick joystick;
 
@@ -3405,7 +3471,7 @@ class WiFiSetting {
         sprite.print("Scanning...");
         push_sprite_safe(0, 0);
 
-        WiFi wifi;
+        WiFi &wifi = WiFi::shared();
 
         Joystick joystick;
 

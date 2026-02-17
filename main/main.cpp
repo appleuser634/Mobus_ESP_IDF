@@ -406,7 +406,7 @@ void app_main(void) {
         save_nvs((char *)"wifi_manual_off", std::string("0"));
         mqtt_rt_pause();
 
-        WiFi wifi;
+        WiFi& wifi = WiFi::shared();
         wifi.main();
         EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
                                                WIFI_CONNECTED_BIT, pdFALSE,
@@ -490,7 +490,7 @@ void app_main(void) {
     MenuDisplay menu;
     ProfileSetting profile_setting;
 
-    WiFi wifi;
+    WiFi& wifi = WiFi::shared();
     profiler.run_step("Wi-Fi init", [&]() { wifi.main(); });
 
     profiler.run_step("Initialize SNTP", []() { initialize_sntp(); });

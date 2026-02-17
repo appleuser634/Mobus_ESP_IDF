@@ -41,6 +41,8 @@ static esp_event_handler_instance_t s_instance_any_id = nullptr;
 static esp_event_handler_instance_t s_instance_got_ip = nullptr;
 static std::atomic<bool> s_wifi_reconfiguring{false};
 static std::atomic<bool> s_post_connect_task_running{false};
+static std::atomic<bool> s_ble_fallback_active{false};
+static std::atomic<bool> s_wifi_retry_task_running{false};
 
 class WiFi {
    public:
@@ -51,8 +53,116 @@ class WiFi {
 
     wifi_state_t wifi_state = {false, 'w'};
 
+    static WiFi &shared() {
+        static WiFi instance;
+        return instance;
+    }
+
+    static bool is_wifi_manual_off() {
+        return get_nvs((char *)"wifi_manual_off") == "1";
+    }
+
+    static bool is_ble_pairing_forced() {
+        std::string ble_pair = get_nvs((char *)"ble_pair");
+        return ble_pair == "true";
+    }
+
+    static void set_auto_ble_fallback(bool enabled) {
+        save_nvs((char *)"ble_auto_fallback", enabled ? "1" : "0");
+        s_ble_fallback_active.store(enabled);
+    }
+
+    static void ensure_ble_fallback_enabled() {
+        if (is_wifi_manual_off() || is_ble_pairing_forced()) return;
+        bool expected = false;
+        if (!s_ble_fallback_active.compare_exchange_strong(expected, true)) {
+            return;
+        }
+
+        ESP_LOGW(TAG, "Wi-Fi unavailable; switching to BLE fallback");
+        save_nvs((char *)"ble_auto_fallback", "1");
+
+        esp_err_t derr = esp_wifi_disconnect();
+        if (derr != ESP_OK && derr != ESP_ERR_WIFI_NOT_STARTED &&
+            derr != ESP_ERR_WIFI_CONN) {
+            ESP_LOGW(TAG, "esp_wifi_disconnect returned %s",
+                     esp_err_to_name(derr));
+        }
+        esp_err_t serr = esp_wifi_stop();
+        if (serr != ESP_OK && serr != ESP_ERR_WIFI_NOT_STARTED) {
+            ESP_LOGW(TAG, "esp_wifi_stop returned %s", esp_err_to_name(serr));
+        }
+        if (s_wifi_event_group) {
+            xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        }
+
+        mqtt_rt_pause();
+        ble_uart_enable();
+        if (ble_uart_last_err() != 0) {
+            ESP_LOGW(TAG, "BLE fallback enable failed: err=%d",
+                     ble_uart_last_err());
+            mqtt_rt_resume();
+            set_auto_ble_fallback(false);
+            return;
+        }
+
+        bool retry_expected = false;
+        if (s_wifi_retry_task_running.compare_exchange_strong(retry_expected,
+                                                               true)) {
+            BaseType_t ok =
+                xTaskCreate(&wifi_prefer_retry_task, "wifi_prefer_retry", 6144,
+                            nullptr, 5, nullptr);
+            if (ok != pdPASS) {
+                s_wifi_retry_task_running.store(false);
+                ESP_LOGW(TAG, "Failed to start wifi_prefer_retry task");
+            }
+        }
+    }
+
+    static void wifi_prefer_retry_task(void *pvParameters) {
+        (void)pvParameters;
+        constexpr uint32_t kRetryIntervalMs = 20000;
+        constexpr uint32_t kPerTryTimeoutMs = 8000;
+
+        while (s_ble_fallback_active.load()) {
+            vTaskDelay(pdMS_TO_TICKS(kRetryIntervalMs));
+            if (!s_ble_fallback_active.load()) break;
+            if (is_wifi_manual_off() || is_ble_pairing_forced()) continue;
+
+            ESP_LOGI(TAG, "BLE fallback active; retrying Wi-Fi");
+            ble_uart_disable();
+            mqtt_rt_resume();
+
+            esp_err_t start_err = esp_wifi_start();
+            if (start_err != ESP_OK && start_err != ESP_ERR_WIFI_CONN &&
+                start_err != ESP_ERR_WIFI_NOT_STOPPED) {
+                ESP_LOGW(TAG, "esp_wifi_start returned %s",
+                         esp_err_to_name(start_err));
+            }
+
+            bool connected = WiFi::shared().wifi_connect_saved_any(kPerTryTimeoutMs);
+            if (connected) {
+                ESP_LOGI(TAG, "Wi-Fi restored; leaving BLE fallback");
+                set_auto_ble_fallback(false);
+                break;
+            }
+
+            ESP_LOGW(TAG, "Wi-Fi retry failed; back to BLE fallback");
+            mqtt_rt_pause();
+            ble_uart_enable();
+            if (ble_uart_last_err() != 0) {
+                ESP_LOGW(TAG, "BLE re-enable failed during fallback: err=%d",
+                         ble_uart_last_err());
+            }
+        }
+
+        s_wifi_retry_task_running.store(false);
+        vTaskDelete(nullptr);
+    }
+
     static void post_connect_task(void *pvParameters) {
         (void)pvParameters;
+        set_auto_ble_fallback(false);
         if (ble_uart_is_ready()) {
             ESP_LOGI(TAG, "Wi-Fi connected; disabling BLE bridge");
             ble_uart_disable();
@@ -60,6 +170,7 @@ class WiFi {
             save_nvs((char *)"ble_pair", std::string("false"));
             save_nvs((char *)"ble_code", std::string(""));
             save_nvs((char *)"ble_exp_us", std::string("0"));
+            save_nvs((char *)"ble_auto_fallback", std::string("0"));
         }
         s_post_connect_task_running.store(false);
         vTaskDelete(nullptr);
@@ -73,14 +184,13 @@ class WiFi {
             if (s_wifi_event_group) {
                 xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
             }
-            std::string ble_pair = get_nvs((char *)"ble_pair");
-            std::string ble_rst = get_nvs((char *)"ble_wifi_rst");
-            std::string wifi_manual = get_nvs((char *)"wifi_manual_off");
-            bool forced_off =
-                (ble_pair == "true") || (ble_rst == "1") ||
-                (wifi_manual == "1");
+            bool forced_off = is_ble_pairing_forced() || is_wifi_manual_off();
             if (s_wifi_reconfiguring.load()) {
                 ESP_LOGI(TAG, "Wi-Fi reconfiguring; skip auto-reconnect");
+                return;
+            }
+            if (s_ble_fallback_active.load()) {
+                ESP_LOGI(TAG, "BLE fallback active; skip immediate Wi-Fi reconnect");
                 return;
             }
             if (s_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
@@ -96,6 +206,9 @@ class WiFi {
             } else {
                 if (s_wifi_event_group) {
                     xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+                }
+                if (!forced_off) {
+                    ensure_ble_fallback_enabled();
                 }
             }
             ESP_LOGI(TAG, "connect to the AP fail");
@@ -339,6 +452,12 @@ class WiFi {
         ESP_ERROR_CHECK(ret);
 
         ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
+        // ble_wifi_rst は「Wi‑Fi復帰が必要だった」ことを示す一時フラグ。
+        // 起動時に古い値が残っていると誤って再接続抑止されるため掃除する。
+        if (get_nvs((char *)"ble_pair") != "true" &&
+            get_nvs((char *)"ble_wifi_rst") == "1") {
+            save_nvs((char *)"ble_wifi_rst", std::string("0"));
+        }
         wifi_init_sta();
         // Disable power save to avoid driver path timing issues during bring-up
         esp_wifi_set_ps(WIFI_PS_NONE);
@@ -352,8 +471,11 @@ class WiFi {
             }
         }
         // Try saved credentials first unless Wi‑Fi is manually disabled.
-        if (get_nvs((char *)"wifi_manual_off") != "1") {
-            wifi_connect_saved_any();
+        if (!is_wifi_manual_off()) {
+            bool connected = wifi_connect_saved_any();
+            if (!connected) {
+                ensure_ble_fallback_enabled();
+            }
         } else {
             ESP_LOGI(TAG, "Wi-Fi disabled by user; skip auto-connect");
             (void)esp_wifi_stop();

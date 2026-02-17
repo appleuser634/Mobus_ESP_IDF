@@ -32,6 +32,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "esp_heap_caps.h"
 
 #include "esp_http_client.h"
@@ -840,6 +841,10 @@ inline void http_get_notifications_task(void *pvParameters) {
     }
     mqtt_rt_update_user(api_user_id.c_str());
 
+    int last_unread_count = -1;
+    int64_t last_poll_us = 0;
+    constexpr int64_t kUnreadPollIntervalUs = 5LL * 1000LL * 1000LL;
+
     while (1) {
         char buf[1024];
         if (mqtt_rt_pop_message(buf, sizeof(buf))) {
@@ -863,8 +868,23 @@ inline void http_get_notifications_task(void *pvParameters) {
                 notification_effects::signal_new_message();
             } else if (client.has_unread_messages()) {
                 notification_effects::signal_new_message();
+                last_unread_count = client.unread_count();
             }
         }
+
+        const int64_t now_us = esp_timer_get_time();
+        if ((now_us - last_poll_us) >= kUnreadPollIntervalUs) {
+            last_poll_us = now_us;
+            auto &client = HttpClient::shared();
+            if (client.refresh_unread_count() == ESP_OK) {
+                const int current_unread = client.unread_count();
+                if (last_unread_count >= 0 && current_unread > last_unread_count) {
+                    notification_effects::signal_new_message();
+                }
+                last_unread_count = current_unread;
+            }
+        }
+
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 

@@ -19,6 +19,19 @@ StaticTask_t g_task_buffer;
 StackType_t* g_task_stack = nullptr;
 TaskHandle_t g_task_handle = nullptr;
 
+void fade_out_led(uint8_t r, uint8_t g, uint8_t b) {
+    constexpr int kFadeSteps = 12;
+    constexpr int kFadeStepDelayMs = 35;
+    for (int step = kFadeSteps; step >= 0; --step) {
+        uint8_t rr = static_cast<uint8_t>((r * step) / kFadeSteps);
+        uint8_t gg = static_cast<uint8_t>((g * step) / kFadeSteps);
+        uint8_t bb = static_cast<uint8_t>((b * step) / kFadeSteps);
+        neopixel.set_color(rr, gg, bb);
+        vTaskDelay(pdMS_TO_TICKS(kFadeStepDelayMs));
+    }
+    neopixel.set_color(0, 0, 0);
+}
+
 void run_effect(HapticMotor& motor) {
     constexpr int kBlinkCount = 3;
     const uint8_t kPrimaryR = 0;
@@ -37,6 +50,8 @@ void run_effect(HapticMotor& motor) {
     }
 
     neopixel.set_color(kIdleR, kIdleG, kIdleB);
+    vTaskDelay(pdMS_TO_TICKS(120));
+    fade_out_led(kIdleR, kIdleG, kIdleB);
 }
 
 void task_body(void*) {

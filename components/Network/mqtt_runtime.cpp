@@ -41,6 +41,7 @@ static void on_event(void* handler_args, esp_event_base_t, int32_t event_id, voi
     auto* ev = static_cast<esp_mqtt_event_handle_t>(event_data);
     if (!ev) return;
     if (event_id == MQTT_EVENT_CONNECTED) {
+        ESP_LOGI(TAG, "MQTT connected (uri=%s)", S.uri.c_str());
         S.connected = true;
         if (!S.topic.empty()) {
             esp_mqtt_client_subscribe(S.client, S.topic.c_str(), 1);
@@ -52,7 +53,23 @@ static void on_event(void* handler_args, esp_event_base_t, int32_t event_id, voi
             }
         }
     } else if (event_id == MQTT_EVENT_DISCONNECTED) {
+        ESP_LOGW(TAG, "MQTT disconnected");
         S.connected = false;
+    } else if (event_id == MQTT_EVENT_ERROR) {
+        if (ev->error_handle) {
+            ESP_LOGE(
+                TAG,
+                "MQTT error: type=%d tls_esp=0x%x tls_stack=0x%x cert=0x%x "
+                "conn_rc=%d sock_errno=%d",
+                static_cast<int>(ev->error_handle->error_type),
+                static_cast<unsigned>(ev->error_handle->esp_tls_last_esp_err),
+                static_cast<unsigned>(ev->error_handle->esp_tls_stack_err),
+                static_cast<unsigned>(ev->error_handle->esp_tls_cert_verify_flags),
+                static_cast<int>(ev->error_handle->connect_return_code),
+                static_cast<int>(ev->error_handle->esp_transport_sock_errno));
+        } else {
+            ESP_LOGE(TAG, "MQTT error event without error_handle");
+        }
     } else if (event_id == MQTT_EVENT_DATA) {
         std::string payload(ev->data, ev->data_len);
         std::string topic;
@@ -99,6 +116,8 @@ int mqtt_rt_start(void)
     if (S.client) return 0; // already started
     if (S.host.empty()) return -1;
     S.uri = std::string("mqtt://") + S.host + ":" + std::to_string(S.port);
+    ESP_LOGI(TAG, "MQTT start: host=%s port=%d user_id=%s uri=%s",
+             S.host.c_str(), S.port, S.user_id.c_str(), S.uri.c_str());
     esp_mqtt_client_config_t cfg = {};
     cfg.broker.address.uri = S.uri.c_str();
     cfg.network.disable_auto_reconnect = false;
