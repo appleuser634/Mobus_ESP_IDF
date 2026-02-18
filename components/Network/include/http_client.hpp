@@ -247,17 +247,7 @@ void http_get_message_task(void *pvParameters) {
     std::string chat_from = *(std::string *)pvParameters;  // friend identifier
     delete (std::string *)pvParameters;
 
-    const bool mqtt_was_running = mqtt_rt_is_running();
-    if (mqtt_was_running) {
-        ESP_LOGI(TAG, "Pause MQTT before HTTPS get_messages");
-        mqtt_rt_pause();
-        vTaskDelay(pdMS_TO_TICKS(80));
-    }
     auto finish_task = [&]() {
-        if (mqtt_was_running) {
-            vTaskDelay(pdMS_TO_TICKS(30));
-            (void)mqtt_rt_resume();
-        }
         http_get_task_handle = nullptr;
         vTaskDelete(NULL);
     };
@@ -349,9 +339,12 @@ void http_get_message_task(void *pvParameters) {
         } else {
             o["from"] = chat_from.c_str();
         }
+        bool is_read = false;
         if (m.containsKey("is_read")) {
-            o["is_read"] = m["is_read"].as<bool>();
+            is_read = m["is_read"].as<bool>();
+            o["is_read"] = is_read;
         }
+
     }
     // Serialize to buffer then parse into global res to keep type compatibility
     std::string outBuf;
@@ -405,7 +398,30 @@ struct HttpPostMessageArgs {
 };
 
 static TaskHandle_t http_post_task_handle = nullptr;
-static constexpr uint32_t kHttpPostTaskStackWords = 8192;
+static constexpr uint32_t kHttpPostTaskStackWords = 4096;
+static StackType_t *http_post_task_stack = nullptr;
+static StaticTask_t http_post_task_buffer;
+
+static StackType_t *ensure_http_post_stack() {
+    if (http_post_task_stack) return http_post_task_stack;
+    size_t bytes = kHttpPostTaskStackWords * sizeof(StackType_t);
+    http_post_task_stack = static_cast<StackType_t *>(heap_caps_malloc(
+        bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (!http_post_task_stack) {
+        http_post_task_stack = static_cast<StackType_t *>(heap_caps_malloc(
+            bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    }
+    if (!http_post_task_stack) {
+        ESP_LOGE(TAG,
+                 "Failed to alloc http_post stack (bytes=%u free=%u largest=%u)",
+                 static_cast<unsigned>(bytes),
+                 static_cast<unsigned>(heap_caps_get_free_size(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+    }
+    return http_post_task_stack;
+}
 
 static bool is_retryable_send_error(esp_err_t err) {
     return (err == ESP_ERR_HTTP_WRITE_DATA || err == ESP_ERR_NO_MEM ||
@@ -414,13 +430,6 @@ static bool is_retryable_send_error(esp_err_t err) {
 
 static void send_message_via_api(const std::string &chat_to,
                                  const std::string &message) {
-    const bool mqtt_was_running = mqtt_rt_is_running();
-    if (mqtt_was_running) {
-        ESP_LOGI(TAG, "Pause MQTT before HTTPS send");
-        mqtt_rt_pause();
-        vTaskDelay(pdMS_TO_TICKS(80));
-    }
-
     auto &api = chatapi::shared_client(true);
     api.set_scheme("https");
     const auto creds = chatapi::load_credentials_from_nvs();
@@ -454,10 +463,6 @@ static void send_message_via_api(const std::string &chat_to,
         ESP_LOGE(TAG, "send_message failed: %s", esp_err_to_name(err));
     }
 
-    if (mqtt_was_running) {
-        vTaskDelay(pdMS_TO_TICKS(30));
-        (void)mqtt_rt_resume();
-    }
 }
 
 void http_post_message_task(void *pvParameters) {
@@ -510,6 +515,8 @@ class HttpClient {
                 ESP_LOGW(TAG, "esp_netif_init failed: %s", esp_err_to_name(e));
             }
         }
+        // Pre-allocate post stack while heap is relatively healthy.
+        (void)ensure_http_post_stack();
         // ESP_ERROR_CHECK(esp_event_loop_create_default());
 
         /* This helper function configures Wi-Fi or Ethernet, as selected in
@@ -580,13 +587,20 @@ class HttpClient {
             delete args;
             return;
         }
-        BaseType_t ok = xTaskCreatePinnedToCore(
+        if (!ensure_http_post_stack()) {
+            ESP_LOGE(TAG, "http_post_message_task: stack alloc failed");
+            delete args;
+            send_message_via_api(chat_to, message);
+            return;
+        }
+        http_post_task_handle = xTaskCreateStaticPinnedToCore(
             &http_post_message_task, "http_post_message_task",
-            kHttpPostTaskStackWords, args, 5, &http_post_task_handle, 1);
-        if (ok != pdPASS || http_post_task_handle == nullptr) {
+            kHttpPostTaskStackWords, args, 5, http_post_task_stack,
+            &http_post_task_buffer, 1);
+        if (!http_post_task_handle) {
             ESP_LOGE(TAG,
-                     "Failed to create http_post_message_task (stack_words=%u ok=%ld)",
-                     kHttpPostTaskStackWords, static_cast<long>(ok));
+                     "Failed to create http_post_message_task (stack_words=%u)",
+                     kHttpPostTaskStackWords);
             delete args;
             http_post_task_handle = nullptr;
             send_message_via_api(chat_to, message);
@@ -676,6 +690,31 @@ class HttpClient {
         }
         if (status < 200 || status >= 300) {
             ESP_LOGW(TAG, "mark_message_read HTTP status=%d", status);
+            return false;
+        }
+        return true;
+    }
+
+    bool mark_all_messages_read(const std::string &friend_identifier) {
+        if (friend_identifier.empty()) return false;
+        auto &api = dev_chat_api();
+        api.set_scheme("https");
+        const auto creds = chatapi::load_credentials_from_nvs();
+        if (chatapi::ensure_authenticated(api, creds) != ESP_OK) {
+            ESP_LOGW(TAG, "Chat API auth failed; mark-all may fail");
+        }
+
+        esp_err_t err = api.mark_all_as_read(friend_identifier);
+        if (err == ESP_ERR_INVALID_STATE) {
+            if (chatapi::ensure_authenticated(api, creds, false,
+                                              /*force_refresh=*/true) ==
+                ESP_OK) {
+                err = api.mark_all_as_read(friend_identifier);
+            }
+        }
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "mark_all_as_read failed: %s",
+                     esp_err_to_name(err));
             return false;
         }
         return true;
@@ -876,6 +915,15 @@ inline void http_get_notifications_task(void *pvParameters) {
         if ((now_us - last_poll_us) >= kUnreadPollIntervalUs) {
             last_poll_us = now_us;
             auto &client = HttpClient::shared();
+            const size_t free_internal = heap_caps_get_free_size(
+                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            const size_t largest_internal = heap_caps_get_largest_free_block(
+                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (http_get_task_handle != nullptr || free_internal < 12000 ||
+                largest_internal < 6000) {
+                vTaskDelay(pdMS_TO_TICKS(20));
+                continue;
+            }
             if (client.refresh_unread_count() == ESP_OK) {
                 const int current_unread = client.unread_count();
                 if (last_unread_count >= 0 && current_unread > last_unread_count) {

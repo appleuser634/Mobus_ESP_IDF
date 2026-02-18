@@ -19,6 +19,7 @@
 #include "esp_check.h"
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
@@ -43,6 +44,9 @@ class Max98357A {
     float tone_freq = 2300.0f;
     float tone_volume = 0.5f;
     float tone_phase = 0.0f;
+    static constexpr uint32_t kToneTaskStackWords = 4096;
+    StackType_t* tone_task_stack = nullptr;
+    StaticTask_t tone_task_buffer{};
 
     Max98357A() = default;
     Max98357A(int bclk, int lrck, int din, int rate = 44100)
@@ -136,6 +140,8 @@ class Max98357A {
 
         initialized = true;
         is_enabled = true;
+        // Task stack must reside in internal RAM on this target.
+        (void)ensure_tone_task_stack();
         return ESP_OK;
     }
 
@@ -428,9 +434,15 @@ class Max98357A {
         ESP_RETURN_ON_ERROR(enable(), TAG, "enable failed");
         tone_phase = 0.0f;
         tone_running = true;
-        BaseType_t ok = xTaskCreatePinnedToCore(
-            &Max98357A::tone_task_trampoline, "i2s_tone_task", 2048, this, 5, &tone_task_handle, 1);
-        if (ok != pdPASS) {
+        StackType_t* stack = ensure_tone_task_stack();
+        if (!stack) {
+            tone_running = false;
+            return ESP_ERR_NO_MEM;
+        }
+        tone_task_handle = xTaskCreateStaticPinnedToCore(
+            &Max98357A::tone_task_trampoline, "i2s_tone_task",
+            kToneTaskStackWords, this, 5, stack, &tone_task_buffer, 1);
+        if (!tone_task_handle) {
             tone_task_handle = nullptr;
             tone_running = false;
             return ESP_FAIL;
@@ -558,9 +570,25 @@ class Max98357A {
         // Power-down is handled by explicit disable()/deinit() or one-shot APIs.
         heap_caps_free(buf);
         // mark task done
-        TaskHandle_t self = tone_task_handle;
         tone_task_handle = nullptr;
-        vTaskDelete(self);
+        vTaskDelete(nullptr);
+    }
+
+    StackType_t* ensure_tone_task_stack() {
+        if (tone_task_stack) return tone_task_stack;
+        size_t bytes = kToneTaskStackWords * sizeof(StackType_t);
+        tone_task_stack = static_cast<StackType_t*>(heap_caps_malloc(
+            bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        if (!tone_task_stack) {
+            ESP_LOGE(TAG,
+                     "Failed to alloc tone task stack (bytes=%u free=%u largest=%u)",
+                     static_cast<unsigned>(bytes),
+                     static_cast<unsigned>(heap_caps_get_free_size(
+                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                     static_cast<unsigned>(heap_caps_get_largest_free_block(
+                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        }
+        return tone_task_stack;
     }
 };
 

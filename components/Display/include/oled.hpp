@@ -709,7 +709,6 @@ class TalkDisplay {
             // カーソルの点滅制御用
             if (esp_timer_get_time() - t >= 500000) {
                 display_text += "|";
-                printf("Timder!\n");
             }
             if (esp_timer_get_time() - t > 1000000) {
                 t = esp_timer_get_time();
@@ -1170,7 +1169,7 @@ class MessageBox {
             chat_to.c_str(), active_short_id.c_str(), active_friend_id.c_str());
         JsonDocument res;
         int64_t last_history_poll_us = 0;
-        constexpr int64_t kHistoryPollIntervalUs = 3LL * 1000LL * 1000LL;
+        constexpr int64_t kHistoryPollIntervalUs = 8LL * 1000LL * 1000LL;
         struct MessageViewEntry {
             JsonObject obj;
         };
@@ -1504,6 +1503,7 @@ class MessageBox {
         if (my_name.empty()) my_name = get_nvs((char *)"short_id");
         if (my_name.empty()) my_name = "me";
         std::string morse_header = !chat_title.empty() ? chat_title : chat_to;
+        bool mark_all_done = false;
 
         if (res["messages"].is<JsonArray>()) {
             for (JsonObject msg : res["messages"].as<JsonArray>()) {
@@ -1511,16 +1511,6 @@ class MessageBox {
                 if (msg.containsKey("is_read")) {
                     unread = !msg["is_read"].as<bool>();
                 }
-                const char *message_id = msg["id"].as<const char *>();
-                if (!message_id) {
-                    message_id = msg["message_id"].as<const char *>();
-                }
-                std::string message_id_str =
-                    (message_id && message_id[0] != '\0') ? message_id
-                                                          : std::string();
-                const char *created = msg["created_at"].as<const char *>();
-                std::string created_str =
-                    (created && created[0] != '\0') ? created : std::string();
                 if (!unread) continue;
                 const char *from = msg["from"].as<const char *>();
                 if (from && !my_name.empty() && my_name == from) {
@@ -1530,16 +1520,12 @@ class MessageBox {
                 if (!content || content[0] == '\0') {
                     continue;
                 }
-                play_morse_message(content, morse_header);
-                if (!message_id_str.empty() &&
-                    !http_client.mark_message_read(message_id_str)) {
-                    ESP_LOGW(TAG,
-                             "Failed to mark message %s as read; will "
-                             "retry later",
-                             message_id_str.c_str());
-                } else {
-                    msg["is_read"] = true;
+                if (!mark_all_done) {
+                    mark_all_done = http_client.mark_all_messages_read(
+                        server_chat_id);
                 }
+                play_morse_message(content, morse_header);
+                msg["is_read"] = true;
                 vTaskDelay(pdMS_TO_TICKS(200));
             }
         }
@@ -1625,10 +1611,12 @@ class MessageBox {
                 refreshed = res;
                 ok = true;
             } else {
+                if (!wifi_is_connected()) {
+                    ESP_LOGW(TAG, "[HTTP] Skip refresh: Wi-Fi disconnected");
+                    return false;
+                }
                 ESP_LOGI(TAG, "[HTTP] Refresh history via Wi-Fi");
-                sprite.deleteSprite();
                 refreshed = http_client.get_message(server_chat_id);
-                (void)recreate_message_sprite(lcd.width(), lcd.height());
                 ok = true;
             }
             if (!ok) return false;
@@ -1644,10 +1632,13 @@ class MessageBox {
                 play_morse_message(after_content.c_str(), morse_header);
                 rebuild_message_view(/*jump_to_bottom=*/true);
             }
+            last_history_poll_us = esp_timer_get_time();
             return true;
         };
 
         rebuild_message_view(/*jump_to_bottom=*/true);
+        // 初回取得直後に即ポーリングしないよう、基準時刻を現在に揃える
+        last_history_poll_us = esp_timer_get_time();
 
         while (true) {
             sprite.fillRect(0, 0, 128, 64, 0);
@@ -2013,6 +2004,8 @@ class ContactBook {
             // Keep BLE connection alive and fall back to HTTP in parallel.
             // With NimBLE using PSRAM, Wi‑Fi coexists without disabling BLE.
             // HTTP fallback (Wi‑Fi). Ensure Wi‑Fi is connected.
+            int64_t last_connect_try_us = 0;
+            int64_t last_ap_check_us = 0;
             while (true) {
                 feed_wdt();
                 bool connected = false;
@@ -2020,14 +2013,29 @@ class ContactBook {
                     EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
                     connected = bits & WIFI_CONNECTED_BIT;
                 }
-                // Actively check driver state as event bits may be stale
-                wifi_ap_record_t ap = {};
-                if (!connected && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
-                    connected = true;
+                // Event bits can lag; check link state periodically.
+                const int64_t now_us = esp_timer_get_time();
+                if (!connected && (now_us - last_ap_check_us) >= 1000000LL) {
+                    last_ap_check_us = now_us;
+                    wifi_ap_record_t ap = {};
+                    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+                        connected = true;
+                    }
                 }
-                // Try to resume Wi‑Fi driver if stopped
-                if (!connected) {
-                    (void)esp_wifi_start();
+                // Ensure connect is actually requested (start alone is not enough).
+                if (!connected && (now_us - last_connect_try_us) >= 3000000LL) {
+                    last_connect_try_us = now_us;
+                    esp_err_t serr = esp_wifi_start();
+                    if (serr != ESP_OK && serr != ESP_ERR_WIFI_CONN &&
+                        serr != ESP_ERR_WIFI_NOT_STOPPED) {
+                        ESP_LOGW("CONTACT", "esp_wifi_start returned %s",
+                                 esp_err_to_name(serr));
+                    }
+                    esp_err_t cerr = esp_wifi_connect();
+                    if (cerr != ESP_OK && cerr != ESP_ERR_WIFI_CONN) {
+                        ESP_LOGW("CONTACT", "esp_wifi_connect returned %s",
+                                 esp_err_to_name(cerr));
+                    }
                 }
                 if (connected) break;
 
@@ -3903,7 +3911,6 @@ class P2P_Display {
             // カーソルの点滅制御用
             if (esp_timer_get_time() - t >= 500000) {
                 display_text += "|";
-                printf("Timder!\n");
             }
             if (esp_timer_get_time() - t > 1000000) {
                 t = esp_timer_get_time();

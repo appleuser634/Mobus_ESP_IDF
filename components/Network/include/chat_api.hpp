@@ -489,6 +489,7 @@ class ChatApiClient {
     esp_err_t perform_request(const char* method, const char* path,
                               const std::string& body, std::string& out_resp,
                               bool auth, int* out_status) {
+        std::lock_guard<std::mutex> req_lock(request_mutex_);
         auto ctx = snapshot();
         std::string host = ctx.host;
         int port = ctx.port;
@@ -504,8 +505,8 @@ class ChatApiClient {
         cfg.transport_type = (scheme == "https") ? HTTP_TRANSPORT_OVER_SSL : HTTP_TRANSPORT_OVER_TCP;
         cfg.timeout_ms = request_timeout_ms_;
         cfg.keep_alive_enable = false;
-        cfg.buffer_size = 2048;
-        cfg.buffer_size_tx = 1024;
+        cfg.buffer_size = 1024;
+        cfg.buffer_size_tx = 512;
         if (is_ipv4_literal(host)) {
             cfg.skip_cert_common_name_check = true;
         }
@@ -564,6 +565,7 @@ class ChatApiClient {
     }
 
     mutable std::mutex mutex_;
+    mutable std::mutex request_mutex_;
     std::string host_;
     int port_ = 8080;
     std::string token_;
