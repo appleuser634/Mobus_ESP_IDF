@@ -590,7 +590,8 @@ class TalkDisplay {
                 type_button.clear_button_state();
                 buzzer.stop_tone();
                 tone_playing = false;
-            } else if (type_button_state.pushed and !back_button_state.pushing) {
+            } else if (type_button_state.pushed and
+                       !back_button_state.pushing) {
                 printf("Button pushed!\n");
                 printf("Pushing time:%lld\n", type_button_state.pushing_sec);
                 printf("Push type:%c\n", type_button_state.push_type);
@@ -1521,8 +1522,8 @@ class MessageBox {
                     continue;
                 }
                 if (!mark_all_done) {
-                    mark_all_done = http_client.mark_all_messages_read(
-                        server_chat_id);
+                    mark_all_done =
+                        http_client.mark_all_messages_read(server_chat_id);
                 }
                 play_morse_message(content, morse_header);
                 msg["is_read"] = true;
@@ -1603,8 +1604,8 @@ class MessageBox {
                     latest_content};
         };
 
-        auto refresh_history = [&](int ble_timeout_ms, bool animate_on_new)
-            -> bool {
+        auto refresh_history = [&](int ble_timeout_ms,
+                                   bool animate_on_new) -> bool {
             JsonDocument refreshed;
             bool ok = false;
             if (fetch_messages_via_ble(chat_to, ble_timeout_ms)) {
@@ -1616,7 +1617,15 @@ class MessageBox {
                     return false;
                 }
                 ESP_LOGI(TAG, "[HTTP] Refresh history via Wi-Fi");
+                sprite.deleteSprite();
                 refreshed = http_client.get_message(server_chat_id);
+                if (!recreate_message_sprite(lcd.width(), lcd.height())) {
+                    ESP_LOGE(TAG, "[UI] message sprite recreate failed after HTTP");
+                    running_flag = false;
+                    task_handle_ = nullptr;
+                    vTaskDelete(NULL);
+                    return false;
+                }
                 ok = true;
             }
             if (!ok) return false;
@@ -1628,7 +1637,8 @@ class MessageBox {
             const std::string &after_content = after_info.second;
             res = std::move(refreshed);
             rebuild_message_view(/*jump_to_bottom=*/false);
-            if (animate_on_new && !after_sig.empty() && after_sig != before_sig) {
+            if (animate_on_new && !after_sig.empty() &&
+                after_sig != before_sig) {
                 play_morse_message(after_content.c_str(), morse_header);
                 rebuild_message_view(/*jump_to_bottom=*/true);
             }
@@ -1922,7 +1932,27 @@ class ContactBook {
             std::string username;  // login id for contact
             std::string short_id;
             std::string friend_id;
+            int unread_count = 0;
+            bool has_unread = false;
         } contact_t;
+
+        auto parse_unread_count = [](JsonVariantConst node) -> int {
+            int count = 0;
+            JsonVariantConst unread_count = node["unread_count"];
+            if (!unread_count.isNull()) {
+                if (unread_count.is<const char *>()) {
+                    const char *s = unread_count.as<const char *>();
+                    count = s ? atoi(s) : 0;
+                } else {
+                    count = unread_count.as<int>();
+                }
+            } else if (node["unread"].is<int>()) {
+                count = node["unread"].as<int>();
+            } else if (node["has_unread"].is<bool>()) {
+                count = node["has_unread"].as<bool>() ? 1 : 0;
+            }
+            return count < 0 ? 0 : count;
+        };
 
         // Fetch friends list via BLE (if connected) or HTTP( Wi‑Fi )
         std::vector<contact_t> contacts;
@@ -1967,6 +1997,8 @@ class ContactBook {
                                                  ? sid
                                                  : std::string("");
                                 c.friend_id = fid ? fid : std::string("");
+                                c.unread_count = parse_unread_count(f);
+                                c.has_unread = c.unread_count > 0;
                                 if (!c.short_id.empty())
                                     c.identifier = c.short_id;
                                 else if (!c.friend_id.empty())
@@ -2022,7 +2054,8 @@ class ContactBook {
                         connected = true;
                     }
                 }
-                // Ensure connect is actually requested (start alone is not enough).
+                // Ensure connect is actually requested (start alone is not
+                // enough).
                 if (!connected && (now_us - last_connect_try_us) >= 3000000LL) {
                     last_connect_try_us = now_us;
                     esp_err_t serr = esp_wifi_start();
@@ -2093,6 +2126,8 @@ class ContactBook {
                         c.short_id =
                             (sid && strlen(sid) > 0) ? sid : std::string("");
                         c.friend_id = fid ? fid : std::string("");
+                        c.unread_count = parse_unread_count(f);
+                        c.has_unread = c.unread_count > 0;
                         if (!c.short_id.empty())
                             c.identifier = c.short_id;
                         else if (!c.friend_id.empty())
@@ -2162,6 +2197,28 @@ class ContactBook {
                 }
                 if (i < base_count) {
                     sprite.print(contacts[i].display_name.c_str());
+                    if (contacts[i].has_unread) {
+                        const int badge_h = 10;
+                        const int badge_y = y + ((font_height + 3 - badge_h) / 2);
+                        int badge_x = 104;
+                        int badge_w = 20;
+                        char badge_text[5] = {0};
+                        if (contacts[i].unread_count > 99) {
+                            strcpy(badge_text, "99+");
+                            badge_w = 22;
+                            badge_x = 102;
+                        } else {
+                            snprintf(badge_text, sizeof(badge_text), "%d",
+                                     contacts[i].unread_count);
+                        }
+                        const uint16_t badge_bg = (i == select_index) ? 0x0000 : 0xFFFF;
+                        const uint16_t badge_fg = (i == select_index) ? 0xFFFF : 0x0000;
+                        sprite.fillRoundRect(badge_x, badge_y, badge_w, badge_h, 3,
+                                             badge_bg);
+                        sprite.setTextColor(badge_fg, badge_bg);
+                        sprite.drawCenterString(badge_text, badge_x + badge_w / 2,
+                                                badge_y - 2);
+                    }
                 } else if (i == base_count) {
                     sprite.print("+ Add Friend");
                 } else {
@@ -2616,6 +2673,8 @@ class ContactBook {
                         feed_wdt();
                         vTaskDelay(100 / portTICK_PERIOD_MS);
                     }
+                    contacts[select_index].unread_count = 0;
+                    contacts[select_index].has_unread = false;
 
                     if (!recreate_contact_sprite(lcd.width(), lcd.height())) {
                         ESP_LOGE("CONTACT",
@@ -2973,12 +3032,15 @@ void OpenChat::open_chat_task(void *pvParameters) {
                 std::vector<std::string> lines;
                 std::string current;
                 for (size_t p = 0; p < src.size();) {
-                    int char_len = utf8_char_length(static_cast<unsigned char>(src[p]));
+                    int char_len =
+                        utf8_char_length(static_cast<unsigned char>(src[p]));
                     if (char_len <= 0) char_len = 1;
                     if (p + static_cast<size_t>(char_len) > src.size()) break;
-                    std::string ch = src.substr(p, static_cast<size_t>(char_len));
+                    std::string ch =
+                        src.substr(p, static_cast<size_t>(char_len));
                     std::string cand = current + ch;
-                    if (!current.empty() && sprite.textWidth(cand.c_str()) > max_width_px) {
+                    if (!current.empty() &&
+                        sprite.textWidth(cand.c_str()) > max_width_px) {
                         lines.push_back(current);
                         current = ch;
                     } else {
@@ -2991,7 +3053,8 @@ void OpenChat::open_chat_task(void *pvParameters) {
                 return lines;
             };
 
-            auto normalize_single_line = [](const std::string &src) -> std::string {
+            auto normalize_single_line =
+                [](const std::string &src) -> std::string {
                 std::string out;
                 out.reserve(src.size());
                 for (char c : src) {
@@ -5964,8 +6027,8 @@ class Game {
         bool exit_task = false;
         while (!exit_task) {
             feed_wdt();
-            bool exit_requested = run_morse_trainer(
-                joystick, type_button, back_button, enter_button);
+            bool exit_requested = run_morse_trainer(joystick, type_button,
+                                                    back_button, enter_button);
             reset_inputs(joystick, type_button, back_button, enter_button);
             if (exit_requested) {
                 exit_task = true;
@@ -6376,7 +6439,8 @@ static void play_morse_message(const std::string &text,
         const std::string line = display + morse_part;
         int total_w = 0;
         for (size_t p = 0; p < line.size();) {
-            int char_len = utf8_char_length(static_cast<unsigned char>(line[p]));
+            int char_len =
+                utf8_char_length(static_cast<unsigned char>(line[p]));
             if (char_len <= 0) char_len = 1;
             if (p + (size_t)char_len > line.size()) break;
             std::string ch = line.substr(p, (size_t)char_len);
@@ -6389,7 +6453,8 @@ static void play_morse_message(const std::string &text,
         sprite.setCursor(x, cy);
         sprite.setTextWrap(false);
         for (size_t p = 0; p < line.size();) {
-            int char_len = utf8_char_length(static_cast<unsigned char>(line[p]));
+            int char_len =
+                utf8_char_length(static_cast<unsigned char>(line[p]));
             if (char_len <= 0) char_len = 1;
             if (p + (size_t)char_len > line.size()) break;
             std::string ch = line.substr(p, (size_t)char_len);
@@ -6434,26 +6499,28 @@ static void play_morse_message(const std::string &text,
         return true;
     };
 
-    auto kana_to_romaji = []() -> const std::vector<std::pair<std::string, std::string>> & {
-        static const std::vector<std::pair<std::string, std::string>> table = [] {
-            std::unordered_map<std::string, std::string> best;
-            for (const auto &kv : TalkDisplay::romaji_kana) {
-                const std::string &romaji = kv.first;
-                const std::string &kana = kv.second;
-                auto it = best.find(kana);
-                if (it == best.end() || romaji.size() < it->second.size()) {
-                    best[kana] = romaji;
+    auto kana_to_romaji =
+        []() -> const std::vector<std::pair<std::string, std::string>> & {
+        static const std::vector<std::pair<std::string, std::string>> table =
+            [] {
+                std::unordered_map<std::string, std::string> best;
+                for (const auto &kv : TalkDisplay::romaji_kana) {
+                    const std::string &romaji = kv.first;
+                    const std::string &kana = kv.second;
+                    auto it = best.find(kana);
+                    if (it == best.end() || romaji.size() < it->second.size()) {
+                        best[kana] = romaji;
+                    }
                 }
-            }
-            std::vector<std::pair<std::string, std::string>> out;
-            out.reserve(best.size());
-            for (const auto &kv : best) out.push_back(kv);
-            std::sort(out.begin(), out.end(),
-                      [](const auto &a, const auto &b) {
-                          return a.first.size() > b.first.size();
-                      });
-            return out;
-        }();
+                std::vector<std::pair<std::string, std::string>> out;
+                out.reserve(best.size());
+                for (const auto &kv : best) out.push_back(kv);
+                std::sort(out.begin(), out.end(),
+                          [](const auto &a, const auto &b) {
+                              return a.first.size() > b.first.size();
+                          });
+                return out;
+            }();
         return table;
     };
 
@@ -6608,13 +6675,14 @@ class MenuDisplay {
                      "[OLED] MenuDisplay sprite unavailable; running headless");
         }
 
-        // 開始時間を取得 st=start_time
-        long long int st = esp_timer_get_time();
+        int64_t last_status_update_us = esp_timer_get_time();
+        bool needs_redraw = true;
         // 電波強度(0-4 bars)
         int radioLevel = 0;
         auto rssi_to_bars = [](int rssi) -> int {
             // Typical Wi-Fi RSSI scale:
-            // >= -55 excellent, >= -67 good, >= -75 fair, >= -85 weak, else poor
+            // >= -55 excellent, >= -67 good, >= -75 fair, >= -85 weak, else
+            // poor
             if (rssi >= -55) return 4;
             if (rssi >= -67) return 3;
             if (rssi >= -75) return 2;
@@ -6649,10 +6717,7 @@ class MenuDisplay {
         int power_per_pix = (int)(0.12 * power_per);
 
         auto enter_light_sleep = [&](const char *reason, bool force) -> bool {
-            if (!force && !wifi_is_connected() && ble_uart_is_ready()) {
-                ESP_LOGI(TAG, "Skip light sleep (%s): BLE link active", reason);
-                return false;
-            }
+            (void)force;
 
             sprite.fillRect(0, 0, 128, 64, 0);
             push_sprite_safe(0, 0);
@@ -6692,7 +6757,8 @@ class MenuDisplay {
             enter_button.clear_button_state();
             enter_button.reset_timer();
             joystick.reset_timer();
-            st = esp_timer_get_time();
+            last_status_update_us = esp_timer_get_time();
+            needs_redraw = true;
             g_oled_ready = false;
             if (ensure_menu_sprite()) {
                 push_sprite_safe(0, 0);
@@ -6706,24 +6772,10 @@ class MenuDisplay {
                     vTaskDelay(pdMS_TO_TICKS(100));
                     continue;
                 }
+                needs_redraw = true;
             }
-            // 画面上部のステータス表示
-            sprite.drawFastHLine(0, 12, 128, 0xFFFF);
-
-            // 電波状況表示
-            int rx = 4;
-            int ry = 6;
-            int rh = 4;
-            for (int r = radioLevel; 0 < r; r--) {
-                sprite.fillRect(rx, ry, 2, rh, 0xFFFF);
-                rx += 3;
-                ry -= 2;
-                rh += 2;
-            }
-
-            // 経過時間を取得
-            int p_time = (esp_timer_get_time() - st) / 1000000;
-            if (p_time > 3) {
+            const int64_t now_us = esp_timer_get_time();
+            if ((now_us - last_status_update_us) >= 3000000LL) {
                 // 電波強度を更新
                 wifi_ap_record_t ap = {};
                 if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
@@ -6746,57 +6798,15 @@ class MenuDisplay {
 
                 // 通知情報を更新
                 notif_res = http_client.get_notifications();
-                st = esp_timer_get_time();
+                last_status_update_us = now_us;
+                needs_redraw = true;
             }
-
-            // メッセージ受信通知の表示
-            // if (http.notif_flag) {
-            //   sprite.drawRoundRect(50, 0, 20, 8, 2, 0xFFFF);
-            // }
-
-            // printf("Power Per:%d\n", power_per_pix);
-
-            // 電池残量表示
-            sprite.drawRoundRect(110, 0, 14, 8, 2, 0xFFFF);
-            sprite.fillRect(111, 0, power_per_pix, 8, 0xFFFF);
 
             Button::button_state_t type_charge_stat =
                 charge_stat.get_button_state();
-
-            if (type_charge_stat.pushing) {
-                sprite.fillRect(105, 2, 2, 2, 0xFFFF);
-            }
             charge_stat.clear_button_state();
             charge_stat.reset_timer();
-
-            sprite.fillRect(124, 2, 1, 4, 0xFFFF);
-
-            // Menu選択の表示
-            sprite.fillRoundRect(menu_list[cursor_index].display_position_x - 2,
-                                 menu_list[cursor_index].display_position_y - 2,
-                                 34, 34, 5, 0xFFFF);
-
-            // Menu項目を表示させる
             int menu_lists_n = sizeof(menu_list) / sizeof(menu_t);
-            for (int i = 0; i < menu_lists_n; i++) {
-                const unsigned char *icon_image = mail_icon;
-
-                if (i == 1) {
-                    icon_image = setting_icon;
-                } else if (i == 2) {
-                    icon_image = game_icon;
-                }
-
-                if (cursor_index == i) {
-                    sprite.drawBitmap(menu_list[i].display_position_x,
-                                      menu_list[i].display_position_y,
-                                      icon_image, 30, 30, TFT_WHITE, TFT_BLACK);
-                } else {
-                    sprite.drawBitmap(menu_list[i].display_position_x,
-                                      menu_list[i].display_position_y,
-                                      icon_image, 30, 30, TFT_BLACK, TFT_WHITE);
-                }
-            }
 
             Joystick::joystick_state_t joystick_state =
                 joystick.get_joystick_state();
@@ -6841,6 +6851,7 @@ class MenuDisplay {
 
                 // 通知情報を更新
                 notif_res = http_client.get_notifications();
+                needs_redraw = true;
 
                 type_button.clear_button_state();
                 type_button.reset_timer();
@@ -6852,29 +6863,14 @@ class MenuDisplay {
                 if (cursor_index < 0) {
                     cursor_index = menu_lists_n - 1;
                 }
+                needs_redraw = true;
             } else if (joystick_state.pushed_right_edge) {
                 cursor_index += 1;
                 if (cursor_index >= menu_lists_n) {
                     cursor_index = 0;
                 }
+                needs_redraw = true;
             }
-
-            // 通知の表示
-            for (int i = 0; i < notif_res["notifications"].size(); i++) {
-                std::string notification_flag(
-                    notif_res["notifications"][i]["notification_flag"]);
-                if (notification_flag == "true") {
-                    if (cursor_index == 0) {
-                        sprite.fillCircle(37, 25, 4, 0);
-                    } else {
-                        sprite.fillCircle(37, 25, 4, 0xFFFF);
-                    }
-                    break;
-                }
-            }
-
-            push_sprite_safe(0, 0);
-            sprite.fillRect(0, 0, 128, 64, 0);
 
             // esp_task_wdt_reset();
 
@@ -6894,7 +6890,76 @@ class MenuDisplay {
                 }
             }
 
-            vTaskDelay(50 / portTICK_PERIOD_MS);
+            if (needs_redraw) {
+                sprite.fillRect(0, 0, 128, 64, 0);
+                // 画面上部のステータス表示
+                sprite.drawFastHLine(0, 12, 128, 0xFFFF);
+
+                // 電波状況表示
+                int rx = 4;
+                int ry = 6;
+                int rh = 4;
+                for (int r = radioLevel; 0 < r; r--) {
+                    sprite.fillRect(rx, ry, 2, rh, 0xFFFF);
+                    rx += 3;
+                    ry -= 2;
+                    rh += 2;
+                }
+
+                // 電池残量表示
+                sprite.drawRoundRect(110, 0, 14, 8, 2, 0xFFFF);
+                sprite.fillRect(111, 0, power_per_pix, 8, 0xFFFF);
+                if (type_charge_stat.pushing) {
+                    sprite.fillRect(105, 2, 2, 2, 0xFFFF);
+                }
+                sprite.fillRect(124, 2, 1, 4, 0xFFFF);
+
+                // Menu選択の表示
+                sprite.fillRoundRect(
+                    menu_list[cursor_index].display_position_x - 2,
+                    menu_list[cursor_index].display_position_y - 2, 34, 34, 5,
+                    0xFFFF);
+
+                // Menu項目表示
+                for (int i = 0; i < menu_lists_n; i++) {
+                    const unsigned char *icon_image = mail_icon;
+                    if (i == 1) {
+                        icon_image = setting_icon;
+                    } else if (i == 2) {
+                        icon_image = game_icon;
+                    }
+                    if (cursor_index == i) {
+                        sprite.drawBitmap(menu_list[i].display_position_x,
+                                          menu_list[i].display_position_y,
+                                          icon_image, 30, 30, TFT_WHITE,
+                                          TFT_BLACK);
+                    } else {
+                        sprite.drawBitmap(menu_list[i].display_position_x,
+                                          menu_list[i].display_position_y,
+                                          icon_image, 30, 30, TFT_BLACK,
+                                          TFT_WHITE);
+                    }
+                }
+
+                for (int i = 0; i < notif_res["notifications"].size(); i++) {
+                    std::string notification_flag(
+                        notif_res["notifications"][i]["notification_flag"]);
+                    if (notification_flag == "true") {
+                        if (cursor_index == 0) {
+                            sprite.fillCircle(37, 25, 4, 0);
+                        } else {
+                            sprite.fillCircle(37, 25, 4, 0xFFFF);
+                        }
+                        break;
+                    }
+                }
+
+                push_sprite_safe(0, 0);
+                needs_redraw = false;
+                vTaskDelay(pdMS_TO_TICKS(20));
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(40));
+            }
         }
 
         UBaseType_t watermark_words = uxTaskGetStackHighWaterMark(nullptr);

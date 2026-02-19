@@ -34,6 +34,7 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
+#include "esp_task_wdt.h"
 
 #include "esp_http_client.h"
 
@@ -54,6 +55,14 @@ inline std::atomic<bool> &notifications_task_running_flag() {
     static std::atomic<bool> flag{false};
     return flag;
 }
+
+inline void safe_task_wdt_reset_if_registered() {
+    if (esp_task_wdt_status(nullptr) == ESP_OK) {
+        (void)esp_task_wdt_reset();
+    }
+}
+
+static bool is_retryable_fetch_error(esp_err_t err);
 
 /* Root cert for howsmyssl.com, taken from howsmyssl_com_root_cert.pem
 
@@ -271,7 +280,26 @@ void http_get_message_task(void *pvParameters) {
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
                                                         MALLOC_CAP_8BIT),
              (unsigned)uxTaskGetStackHighWaterMark(nullptr));
-    esp_err_t err = api.get_messages(chat_from, 20, response, &status);
+    esp_err_t err = ESP_FAIL;
+    constexpr int kGetMessagesMaxAttempts = 2;
+    for (int attempt = 1; attempt <= kGetMessagesMaxAttempts; ++attempt) {
+        response.clear();
+        status = 0;
+        err = api.get_messages(chat_from, 20, response, &status);
+        if (err == ESP_OK || !is_retryable_fetch_error(err) ||
+            attempt == kGetMessagesMaxAttempts) {
+            break;
+        }
+        ESP_LOGW(TAG,
+                 "get_messages transient error attempt %d/%d: %s "
+                 "(free=%u largest=%u)",
+                 attempt, kGetMessagesMaxAttempts, esp_err_to_name(err),
+                 static_cast<unsigned>(heap_caps_get_free_size(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        vTaskDelay(pdMS_TO_TICKS(120));
+    }
     if (err == ESP_OK && status == 401) {
         ESP_LOGW(TAG, "get_messages unauthorized; refreshing token");
         if (chatapi::ensure_authenticated(api, creds, false,
@@ -392,40 +420,15 @@ static std::atomic<bool> notif_res_flag{false};
 
 void http_get_notifications_task(void *pvParameters);
 
-struct HttpPostMessageArgs {
-    std::string chat_to;
-    std::string message;
-};
-
-static TaskHandle_t http_post_task_handle = nullptr;
-static constexpr uint32_t kHttpPostTaskStackWords = 4096;
-static StackType_t *http_post_task_stack = nullptr;
-static StaticTask_t http_post_task_buffer;
-
-static StackType_t *ensure_http_post_stack() {
-    if (http_post_task_stack) return http_post_task_stack;
-    size_t bytes = kHttpPostTaskStackWords * sizeof(StackType_t);
-    http_post_task_stack = static_cast<StackType_t *>(heap_caps_malloc(
-        bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-    if (!http_post_task_stack) {
-        http_post_task_stack = static_cast<StackType_t *>(heap_caps_malloc(
-            bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    }
-    if (!http_post_task_stack) {
-        ESP_LOGE(TAG,
-                 "Failed to alloc http_post stack (bytes=%u free=%u largest=%u)",
-                 static_cast<unsigned>(bytes),
-                 static_cast<unsigned>(heap_caps_get_free_size(
-                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
-                 static_cast<unsigned>(heap_caps_get_largest_free_block(
-                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
-    }
-    return http_post_task_stack;
-}
-
 static bool is_retryable_send_error(esp_err_t err) {
     return (err == ESP_ERR_HTTP_WRITE_DATA || err == ESP_ERR_NO_MEM ||
             err == ESP_ERR_HTTP_CONNECT || err == ESP_FAIL);
+}
+
+static bool is_retryable_fetch_error(esp_err_t err) {
+    return (err == ESP_ERR_HTTP_FETCH_HEADER || err == ESP_ERR_HTTP_EAGAIN ||
+            err == ESP_ERR_HTTP_CONNECT || err == ESP_ERR_NO_MEM ||
+            err == ESP_FAIL);
 }
 
 static void send_message_via_api(const std::string &chat_to,
@@ -465,21 +468,6 @@ static void send_message_via_api(const std::string &chat_to,
 
 }
 
-void http_post_message_task(void *pvParameters) {
-    auto *args = static_cast<HttpPostMessageArgs *>(pvParameters);
-    if (!args) {
-        ESP_LOGE(TAG, "http_post_message_task received null args");
-        http_post_task_handle = nullptr;
-        vTaskDelete(NULL);
-        return;
-    }
-    HttpPostMessageArgs data = std::move(*args);
-    delete args;
-    send_message_via_api(data.chat_to, data.message);
-    http_post_task_handle = nullptr;
-    vTaskDelete(NULL);
-}
-
 class HttpClient {
    public:
     static HttpClient &shared() {
@@ -515,8 +503,6 @@ class HttpClient {
                 ESP_LOGW(TAG, "esp_netif_init failed: %s", esp_err_to_name(e));
             }
         }
-        // Pre-allocate post stack while heap is relatively healthy.
-        (void)ensure_http_post_stack();
         // ESP_ERROR_CHECK(esp_event_loop_create_default());
 
         /* This helper function configures Wi-Fi or Ethernet, as selected in
@@ -581,30 +567,8 @@ class HttpClient {
 
     void post_message(const std::string &chat_to,
                       const std::string &message) {
-        auto *args = new HttpPostMessageArgs{chat_to, message};
-        if (http_post_task_handle) {
-            ESP_LOGW(TAG, "http_post_message_task already running");
-            delete args;
-            return;
-        }
-        if (!ensure_http_post_stack()) {
-            ESP_LOGE(TAG, "http_post_message_task: stack alloc failed");
-            delete args;
-            send_message_via_api(chat_to, message);
-            return;
-        }
-        http_post_task_handle = xTaskCreateStaticPinnedToCore(
-            &http_post_message_task, "http_post_message_task",
-            kHttpPostTaskStackWords, args, 5, http_post_task_stack,
-            &http_post_task_buffer, 1);
-        if (!http_post_task_handle) {
-            ESP_LOGE(TAG,
-                     "Failed to create http_post_message_task (stack_words=%u)",
-                     kHttpPostTaskStackWords);
-            delete args;
-            http_post_task_handle = nullptr;
-            send_message_via_api(chat_to, message);
-        }
+        // Run in caller task to avoid dedicated post-task stack overflow.
+        send_message_via_api(chat_to, message);
     }
 
     JsonDocument get_message(std::string chat_from) {
@@ -651,6 +615,7 @@ class HttpClient {
         const int timeout_ms = 7000;
         int waited = 0;
         while (!res_flag.load() && waited < timeout_ms) {
+            safe_task_wdt_reset_if_registered();
             vTaskDelay(10 / portTICK_PERIOD_MS);
             waited += 10;
         }
@@ -742,9 +707,30 @@ class HttpClient {
             return out;
         }
 
-        uint32_t wait_ticks =
+        TickType_t remaining_ticks =
             timeout_ms ? pdMS_TO_TICKS(timeout_ms) : portMAX_DELAY;
-        if (ulTaskNotifyTake(pdTRUE, wait_ticks) == 0) {
+        constexpr TickType_t kWaitSliceTicks = pdMS_TO_TICKS(200);
+        const TickType_t wait_slice_ticks =
+            (kWaitSliceTicks > 0) ? kWaitSliceTicks : 1;
+        bool got_notify = false;
+        while (true) {
+            TickType_t wait_ticks = wait_slice_ticks;
+            if (remaining_ticks != portMAX_DELAY &&
+                wait_ticks > remaining_ticks) {
+                wait_ticks = remaining_ticks;
+            }
+            if (ulTaskNotifyTake(pdTRUE, wait_ticks) != 0) {
+                got_notify = true;
+                break;
+            }
+            // Caller may be watched by task WDT during this blocking wait.
+            safe_task_wdt_reset_if_registered();
+            if (remaining_ticks != portMAX_DELAY) {
+                if (remaining_ticks <= wait_ticks) break;
+                remaining_ticks -= wait_ticks;
+            }
+        }
+        if (!got_notify) {
             http_get_friends_waiter = nullptr;
             if (http_get_friends_result) {
                 out.err = http_get_friends_result->err;

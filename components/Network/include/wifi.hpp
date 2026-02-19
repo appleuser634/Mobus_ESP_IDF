@@ -162,6 +162,7 @@ class WiFi {
 
     static void post_connect_task(void *pvParameters) {
         (void)pvParameters;
+        (void)esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
         set_auto_ble_fallback(false);
         if (ble_uart_is_ready()) {
             ESP_LOGI(TAG, "Wi-Fi connected; disabling BLE bridge");
@@ -459,8 +460,9 @@ class WiFi {
             save_nvs((char *)"ble_wifi_rst", std::string("0"));
         }
         wifi_init_sta();
-        // Disable power save to avoid driver path timing issues during bring-up
-        esp_wifi_set_ps(WIFI_PS_NONE);
+        // Prefer modem sleep in normal operation to reduce average current.
+        // OTA/throughput-critical paths can temporarily override to NONE.
+        (void)esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
         // Start Wi-Fi once during startup so scan path doesn't perform mode
         // transitions and driver bring-up repeatedly.
         {
