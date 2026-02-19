@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <vector>
 #include <cctype>
@@ -22,7 +23,24 @@
 #include <haptic_motor.hpp>
 #include <joystick_haptics.hpp>
 #include <http_client.hpp>
+#include <app/contact/actions_service.hpp>
+#include <app/contact/fetch_service.hpp>
+#include <app/contact/menu_usecase.hpp>
+#include <app/contact/menu_view_service.hpp>
+#include <app/setting/bluetooth_pairing_service.hpp>
+#include <app/menu/navigation_usecase.hpp>
+#include <app/menu/status_service.hpp>
+#include <app/setting/boot_sound_service.hpp>
+#include <app/setting/firmware_info_service.hpp>
+#include <app/setting/language_service.hpp>
+#include <app/setting/ota_manifest_service.hpp>
+#include <app/setting/action_router.hpp>
+#include <app/setting/task_runner.hpp>
+#include <app/setting/action_service.hpp>
+#include <app/setting/menu_view_service.hpp>
+#include <app/setting/menu_label_service.hpp>
 #include <nvs_rw.hpp>
+#include <app/contact/domain.hpp>
 #include <headupdaisy_font.hpp>
 #include <misaki_font.hpp>
 #include "esp_attr.h"
@@ -35,6 +53,23 @@
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "ui_strings.hpp"
+#include "ui/contact/book_mvp.hpp"
+#include "ui/common/confirm_dialog.hpp"
+#include "ui/contact/action_runners.hpp"
+#include "ui/contact/pending_mvp.hpp"
+#include "ui/setting/boot_sound_dialog.hpp"
+#include "ui/setting/bluetooth_pairing_mvp.hpp"
+#include "ui/setting/firmware_info_dialog.hpp"
+#include "ui/core/input_adapter.hpp"
+#include "ui/setting/language_dialog.hpp"
+#include "ui/menu/display_mvp.hpp"
+#include "ui/contact/message_box_mvp.hpp"
+#include "ui/setting/menu_mvp.hpp"
+#include "ui/setting/dialog_runners.hpp"
+#include "ui/setting/sound_settings_mvp.hpp"
+#include "ui/common/text_modal.hpp"
+#include "ui/core/screen.hpp"
+#include "ui/common/status_panel.hpp"
 #include "freertos/event_groups.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -489,7 +524,6 @@ class TalkDisplay {
         Joystick joystick;
 
         HttpClient &http_client = HttpClient::shared();
-
         Button type_button(GPIO_NUM_46);
         Button back_button(GPIO_NUM_3);
         Button enter_button(GPIO_NUM_5);
@@ -1171,10 +1205,8 @@ class MessageBox {
         JsonDocument res;
         int64_t last_history_poll_us = 0;
         constexpr int64_t kHistoryPollIntervalUs = 8LL * 1000LL * 1000LL;
-        struct MessageViewEntry {
-            JsonObject obj;
-        };
-        std::vector<MessageViewEntry> message_views;
+        ui::messagebox::ViewState view_state;
+        view_state.chat_to = chat_to;
         const std::string server_chat_id = resolve_chat_backend_id(chat_to);
         auto fetch_messages_via_ble = [&](const std::string &fid,
                                           int timeout_ms) -> bool {
@@ -1504,6 +1536,8 @@ class MessageBox {
         if (my_name.empty()) my_name = get_nvs((char *)"short_id");
         if (my_name.empty()) my_name = "me";
         std::string morse_header = !chat_title.empty() ? chat_title : chat_to;
+        view_state.my_name = my_name;
+        view_state.header_text = chat_title;
         bool mark_all_done = false;
 
         if (res["messages"].is<JsonArray>()) {
@@ -1534,20 +1568,69 @@ class MessageBox {
         // 通知を非表示
         // http.notif_flag = false;
 
-        int font_height = 16;
-        int max_offset_y = 0;
-        int min_offset_y = 0;
-        int offset_y = 0;
+        ui::messagebox::Presenter presenter(view_state);
+        ui::messagebox::Renderer renderer;
+        ui::messagebox::RenderApi render_api;
+        render_api.screen_height = lcd.height();
+        render_api.begin_frame = [&]() { sprite.fillRect(0, 0, 128, 64, 0); };
+        render_api.draw_prefix = [&](int cursor_y, bool incoming, int font_height) {
+            if (incoming) {
+                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                sprite.drawBitmap(0, cursor_y + 2, recv_icon2, 13, 12, TFT_BLACK,
+                                  TFT_WHITE);
+            } else {
+                sprite.setTextColor(0x000000u, 0xFFFFFFu);
+                sprite.fillRect(0, cursor_y, 128, font_height, 0xFFFF);
+                sprite.drawBitmap(0, cursor_y + 2, send_icon2, 13, 12, TFT_WHITE,
+                                  TFT_BLACK);
+            }
+            sprite.setCursor(14, cursor_y);
+        };
+        render_api.draw_text = [&](int, const std::string &message) {
+            size_t pos = 0;
+            while (pos < message.length()) {
+                uint8_t c = static_cast<uint8_t>(message[pos]);
+                size_t char_len = utf8_char_length(c);
+                if (char_len == 0 || pos + char_len > message.size()) {
+                    char_len = 1;
+                }
+                std::string ch = message.substr(pos, char_len);
+                if (ch.size() >= 2 && (uint8_t)ch[0] == 0xE3 &&
+                    ((uint8_t)ch[1] == 0x82 || (uint8_t)ch[1] == 0x83)) {
+                    sprite.setFont(&fonts::lgfxJapanGothic_12);
+                } else {
+                    sprite.setFont(&fonts::Font2);
+                }
+                sprite.print(ch.c_str());
+                pos += char_len;
+            }
+        };
+        render_api.draw_header =
+            [&](const std::string &header_text, const std::string &chat_to_text) {
+                sprite.fillRect(0, 0, 128, 14, 0);
+                sprite.setCursor(0, 0);
+                sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                sprite.setFont(&fonts::Font2);
+                if (!header_text.empty()) {
+                    sprite.print(header_text.c_str());
+                } else {
+                    sprite.print(chat_to_text.c_str());
+                }
+                sprite.drawFastHLine(0, 14, 128, 0xFFFF);
+                sprite.drawFastHLine(0, 15, 128, 0);
+            };
+        render_api.present = [&]() { push_sprite_safe(0, 0); };
 
         auto rebuild_message_view = [&](bool jump_to_bottom) {
-            message_views.clear();
+            view_state.message_views.clear();
             if (res["messages"].is<JsonArray>()) {
                 for (JsonObject msg : res["messages"].as<JsonArray>()) {
-                    message_views.push_back({msg});
+                    view_state.message_views.push_back({msg});
                 }
                 std::stable_sort(
-                    message_views.begin(), message_views.end(),
-                    [](const MessageViewEntry &a, const MessageViewEntry &b) {
+                    view_state.message_views.begin(), view_state.message_views.end(),
+                    [](const ui::messagebox::ViewEntry &a,
+                       const ui::messagebox::ViewEntry &b) {
                         const char *created_a =
                             a.obj["created_at"] | static_cast<const char *>("");
                         const char *created_b =
@@ -1563,13 +1646,14 @@ class MessageBox {
                         return cmp < 0;
                     });
             }
-            min_offset_y = (int)((int)font_height * 2 -
-                                 (int)message_views.size() * font_height);
-            if (min_offset_y > 0) min_offset_y = 0;
-            if (jump_to_bottom || offset_y < min_offset_y) {
-                offset_y = min_offset_y;
-            } else if (offset_y > max_offset_y) {
-                offset_y = max_offset_y;
+            view_state.min_offset_y =
+                (int)((int)view_state.font_height * 2 -
+                      (int)view_state.message_views.size() * view_state.font_height);
+            if (view_state.min_offset_y > 0) view_state.min_offset_y = 0;
+            if (jump_to_bottom || view_state.offset_y < view_state.min_offset_y) {
+                view_state.offset_y = view_state.min_offset_y;
+            } else if (view_state.offset_y > view_state.max_offset_y) {
+                view_state.offset_y = view_state.max_offset_y;
             }
         };
 
@@ -1651,7 +1735,6 @@ class MessageBox {
         last_history_poll_us = esp_timer_get_time();
 
         while (true) {
-            sprite.fillRect(0, 0, 128, 64, 0);
             Joystick::joystick_state_t joystick_state =
                 joystick.get_joystick_state();
             Button::button_state_t type_button_state =
@@ -1659,15 +1742,21 @@ class MessageBox {
             Button::button_state_t back_button_state =
                 back_button.get_button_state();
 
-            // 入力イベント
-            if (back_button_state.pushed) {
+            ui::InputSnapshot input;
+            input.up_edge = joystick_state.pushed_up_edge;
+            input.down_edge = joystick_state.pushed_down_edge;
+            input.left_edge = joystick_state.pushed_left_edge;
+            input.right_edge = joystick_state.pushed_right_edge;
+            input.type_pressed = type_button_state.pushed;
+            input.back_pressed = back_button_state.pushed;
+            input.enter_pressed = false;
+
+            ui::messagebox::Presenter::Command command =
+                presenter.handle_input(input);
+            if (command == ui::messagebox::Presenter::Command::Exit) {
                 break;
-            } else if (joystick_state.pushed_up_edge) {
-                offset_y += font_height;
-            } else if (joystick_state.pushed_down_edge) {
-                offset_y -= font_height;
             }
-            if (type_button_state.pushed) {
+            if (command == ui::messagebox::Presenter::Command::Compose) {
                 sprite.deleteSprite();
                 res.clear();
                 res = JsonDocument();
@@ -1696,88 +1785,14 @@ class MessageBox {
             }
 
             const int64_t now_us = esp_timer_get_time();
-            if ((now_us - last_history_poll_us) >= kHistoryPollIntervalUs) {
+            if (presenter.should_poll(now_us, last_history_poll_us,
+                                      kHistoryPollIntervalUs)) {
                 last_history_poll_us = now_us;
                 (void)refresh_history(2000, /*animate_on_new=*/true);
             }
 
-            if (offset_y > max_offset_y) offset_y = max_offset_y;
-            if (offset_y < min_offset_y) offset_y = min_offset_y;
-
-            // 描画処理
-            int cursor_y = 0;
-            for (size_t i = 0; i < message_views.size(); i++) {
-                JsonObject msg = message_views[i].obj;
-                std::string message = msg["message"].as<std::string>();
-                std::string message_from = msg["from"].as<std::string>();
-
-                // cursor_y = offset_y + sprite.getCursorY() + 20;
-                cursor_y = offset_y + (font_height * (i + 1));
-                const int line_top = cursor_y;
-                const int line_bottom = cursor_y + font_height;
-                if (line_bottom <= 0 || line_top >= lcd.height()) {
-                    continue;
-                }
-                if (line_top < 0 || line_bottom > lcd.height()) {
-                    continue;
-                }
-
-                if (message_from != my_name) {
-                    // Incoming from friend
-                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                    sprite.drawBitmap(0, cursor_y + 2, recv_icon2, 13, 12,
-                                      TFT_BLACK, TFT_WHITE);
-                } else {
-                    // Outgoing (mine)
-                    sprite.setTextColor(0x000000u, 0xFFFFFFu);
-                    sprite.fillRect(0, cursor_y, 128, font_height, 0xFFFF);
-                    sprite.drawBitmap(0, cursor_y + 2, send_icon2, 13, 12,
-                                      TFT_WHITE, TFT_BLACK);
-                }
-
-                sprite.setCursor(14, cursor_y);
-
-                size_t pos = 0;
-                while (pos < message.length()) {
-                    // UTF-8の先頭バイトを調べる
-                    uint8_t c = static_cast<uint8_t>(message[pos]);
-                    size_t char_len = utf8_char_length(c);
-                    if (char_len == 0 || pos + char_len > message.size()) {
-                        char_len = 1;
-                    }
-                    std::string ch = message.substr(pos, char_len);
-
-                    // カタカナ or ASCII 判定（UTF-8 →
-                    // Unicodeへ変換するのが理想）
-                    // 仮にカタカナ判定だけハードコーディングする例：
-                    if (ch.size() >= 2 && (uint8_t)ch[0] == 0xE3 &&
-                        ((uint8_t)ch[1] == 0x82 || (uint8_t)ch[1] == 0x83)) {
-                        sprite.setFont(&fonts::lgfxJapanGothic_12);
-                    } else {
-                        sprite.setFont(&fonts::Font2);
-                    }
-
-                    sprite.print(ch.c_str());
-                    pos += char_len;
-                }
-
-                // sprite.print(message.c_str());
-                //  sprite.drawFastHLine( 0, cursor_y, 128, 0xFFFF);
-            }
-
-            sprite.fillRect(0, 0, 128, 14, 0);
-            sprite.setCursor(0, 0);
-            sprite.setTextColor(0xFFFFFFu, 0x000000u);
-            sprite.setFont(&fonts::Font2);
-            if (chat_title != "") {
-                sprite.print(chat_title.c_str());
-            } else {
-                sprite.print(chat_to.c_str());
-            }
-            sprite.drawFastHLine(0, 14, 128, 0xFFFF);
-            sprite.drawFastHLine(0, 15, 128, 0);
-
-            push_sprite_safe(0, 0);
+            presenter.clamp_offset();
+            renderer.render(view_state, render_api);
 
             // チャタリング防止用に100msのsleep2
             vTaskDelay(10 / portTICK_PERIOD_MS);
@@ -1875,6 +1890,16 @@ class ContactBook {
         };
 
         HttpClient &http_client = HttpClient::shared();
+        ui::StatusPanelApi status_panel_api;
+        status_panel_api.begin_frame = [&]() {
+            sprite.fillRect(0, 0, 128, 64, 0);
+            sprite.setFont(&fonts::Font2);
+            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+        };
+        status_panel_api.draw_center_text = [&](const std::string &line, int y) {
+            sprite.drawCenterString(line.c_str(), 64, y);
+        };
+        status_panel_api.present = [&]() { push_sprite_safe(0, 0); };
 
         auto recreate_contact_sprite = [&](int width, int height) -> bool {
             struct Attempt {
@@ -1925,110 +1950,24 @@ class ContactBook {
         int MAX_CONTACTS = 20;
         int CONTACT_PER_PAGE = 4;
 
-        typedef struct {
-            std::string display_name;  // nickname (fallback to username)
-            std::string
-                identifier;  // preferred identifier (short_id if available)
-            std::string username;  // login id for contact
-            std::string short_id;
-            std::string friend_id;
-            int unread_count = 0;
-            bool has_unread = false;
-        } contact_t;
-
-        auto parse_unread_count = [](JsonVariantConst node) -> int {
-            int count = 0;
-            JsonVariantConst unread_count = node["unread_count"];
-            if (!unread_count.isNull()) {
-                if (unread_count.is<const char *>()) {
-                    const char *s = unread_count.as<const char *>();
-                    count = s ? atoi(s) : 0;
-                } else {
-                    count = unread_count.as<int>();
-                }
-            } else if (node["unread"].is<int>()) {
-                count = node["unread"].as<int>();
-            } else if (node["has_unread"].is<bool>()) {
-                count = node["has_unread"].as<bool>() ? 1 : 0;
-            }
-            return count < 0 ? 0 : count;
-        };
-
         // Fetch friends list via BLE (if connected) or HTTP( Wi‑Fi )
-        std::vector<contact_t> contacts;
+        std::vector<app::contactbook::ContactEntry> contacts;
         bool got_from_ble = false;
         if (!wifi_is_connected() && ble_uart_is_ready()) {
-            // Request friends list from phone app over BLE
-            long long rid = esp_timer_get_time();
-            std::string req = std::string("{ \"id\":\"") + std::to_string(rid) +
-                              "\", \"type\": \"get_friends\" }\n";
-            ble_uart_send(reinterpret_cast<const uint8_t *>(req.c_str()),
-                          req.size());
-
-            // Wait briefly for response; fallback to cached NVS
-            // Allow more time for phone app to prepare friends list
-            const int timeout_ms = 6000;
-            int waited = 0;
-            while (waited < timeout_ms) {
-                std::string js = get_nvs((char *)"ble_contacts");
-                if (!js.empty()) {
-                    DynamicJsonDocument doc(6144);
-                    if (deserializeJson(doc, js) == DeserializationError::Ok) {
-                        JsonArray arr = doc["friends"].as<JsonArray>();
-                        if (!arr.isNull()) {
-                            std::string username = get_nvs((char *)"user_name");
-                            for (JsonObject f : arr) {
-                                contact_t c;
-                                c.username = std::string(
-                                    f["username"].as<const char *>()
-                                        ? f["username"].as<const char *>()
-                                        : "");
-                                const std::string nickname = std::string(
-                                    f["nickname"].as<const char *>()
-                                        ? f["nickname"].as<const char *>()
-                                        : "");
-                                c.display_name =
-                                    nickname.empty() ? c.username : nickname;
-                                const char *sid =
-                                    f["short_id"].as<const char *>();
-                                const char *fid =
-                                    f["friend_id"].as<const char *>();
-                                c.short_id = (sid && strlen(sid) > 0)
-                                                 ? sid
-                                                 : std::string("");
-                                c.friend_id = fid ? fid : std::string("");
-                                c.unread_count = parse_unread_count(f);
-                                c.has_unread = c.unread_count > 0;
-                                if (!c.short_id.empty())
-                                    c.identifier = c.short_id;
-                                else if (!c.friend_id.empty())
-                                    c.identifier = c.friend_id;
-                                else
-                                    c.identifier = c.username;
-                                if (c.username != username &&
-                                    !c.identifier.empty()) {
-                                    contacts.push_back(c);
-                                }
-                            }
-                            got_from_ble = true;
-                            break;
-                        }
-                    }
-                }
-                // Show waiting UI
-                sprite.fillRect(0, 0, 128, 64, 0);
-                sprite.setFont(&fonts::Font2);
-                sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                sprite.drawCenterString("Waiting phone...", 64, 22);
-                sprite.drawCenterString("Back to exit", 64, 40);
-                push_sprite_safe(0, 0);
-                // Allow exit during wait
-                if (back_button.get_button_state().pushed) {
-                    finish_task();
-                    return;
-                }
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                waited += 100;
+            std::string username = get_nvs((char *)"user_name");
+            app::contactbook::FetchLoopHooks hooks;
+            hooks.on_tick = [&]() {
+                ui::render_status_panel(status_panel_api, "Waiting phone...",
+                                        "Back to exit");
+            };
+            hooks.should_cancel = [&]() {
+                return back_button.get_button_state().pushed;
+            };
+            got_from_ble = app::contactbook::fetch_contacts_via_ble(
+                username, contacts, 6000, hooks);
+            if (!got_from_ble && hooks.should_cancel && hooks.should_cancel()) {
+                finish_task();
+                return;
             }
         }
 
@@ -2072,12 +2011,8 @@ class ContactBook {
                 }
                 if (connected) break;
 
-                sprite.fillRect(0, 0, 128, 64, 0);
-                sprite.setFont(&fonts::Font2);
-                sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                sprite.drawCenterString("Connecting Wi-Fi...", 64, 22);
-                sprite.drawCenterString("Press Back to exit", 64, 40);
-                push_sprite_safe(0, 0);
+                ui::render_status_panel(status_panel_api, "Connecting Wi-Fi...",
+                                        "Press Back to exit");
                 if (back_button.get_button_state().pushed) {
                     finish_task();
                     return;
@@ -2088,76 +2023,94 @@ class ContactBook {
             const auto creds = chatapi::load_credentials_from_nvs();
             std::string username = creds.username;
             if (recreate_contact_sprite(lcd.width(), lcd.height())) {
-                sprite.fillRect(0, 0, 128, 64, 0);
-                sprite.setFont(&fonts::Font2);
-                sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                sprite.drawCenterString("Loading contacts...", 64, 24);
-                sprite.drawCenterString("via Wi-Fi", 64, 40);
-                push_sprite_safe(0, 0);
+                ui::render_status_panel(status_panel_api, "Loading contacts...",
+                                        "via Wi-Fi", 24, 40);
             }
             feed_wdt();
-            auto friends_resp = http_client.fetch_friends_blocking(15000);
+            auto friends_resp = app::contactbook::fetch_contacts_via_http(
+                http_client, username, contacts, 15000);
             feed_wdt();
             if (!recreate_contact_sprite(lcd.width(), lcd.height())) {
                 ESP_LOGE("CONTACT", "Sprite recreate failed after HTTP");
                 finish_task();
                 return;
             }
-            if (friends_resp.err == ESP_OK && friends_resp.status >= 200 &&
-                friends_resp.status < 300) {
-                DynamicJsonDocument doc(4096);
-                DeserializationError derr =
-                    deserializeJson(doc, friends_resp.payload);
-                if (derr == DeserializationError::Ok) {
-                    for (JsonObject f : doc["friends"].as<JsonArray>()) {
-                        contact_t c;
-                        c.username =
-                            std::string(f["username"].as<const char *>()
-                                            ? f["username"].as<const char *>()
-                                            : "");
-                        const std::string nickname =
-                            std::string(f["nickname"].as<const char *>()
-                                            ? f["nickname"].as<const char *>()
-                                            : "");
-                        c.display_name =
-                            nickname.empty() ? c.username : nickname;
-                        const char *sid = f["short_id"].as<const char *>();
-                        const char *fid = f["friend_id"].as<const char *>();
-                        c.short_id =
-                            (sid && strlen(sid) > 0) ? sid : std::string("");
-                        c.friend_id = fid ? fid : std::string("");
-                        c.unread_count = parse_unread_count(f);
-                        c.has_unread = c.unread_count > 0;
-                        if (!c.short_id.empty())
-                            c.identifier = c.short_id;
-                        else if (!c.friend_id.empty())
-                            c.identifier = c.friend_id;
-                        else
-                            c.identifier = c.username;
-                        if (c.username != username && !c.identifier.empty()) {
-                            contacts.push_back(c);
-                        }
-                    }
-                } else {
-                    ESP_LOGD("CONTACT", "JSON parse failed: %s", derr.c_str());
-                }
-            } else {
+            if (!(friends_resp.err == ESP_OK && friends_resp.status >= 200 &&
+                  friends_resp.status < 300)) {
                 ESP_LOGW("CONTACT", "Friends fetch failed (err=%s status=%d)",
                          esp_err_to_name(friends_resp.err),
                          friends_resp.status);
             }
         }
 
-        int select_index = 0;
-        int font_height = 13;
-        int margin = 3;
-        int noti_circle_margin = 13;
+        ui::contactbook::ViewState contact_view_state;
+        contact_view_state.select_index = 0;
+        contact_view_state.contact_per_page = CONTACT_PER_PAGE;
+        contact_view_state.font_height = 13;
+        contact_view_state.margin = 3;
+        ui::contactbook::Presenter contact_presenter(contact_view_state);
+        ui::contactbook::Renderer contact_renderer;
+        ui::contactbook::RenderApi contact_render_api;
+        contact_render_api.begin_frame = [&]() {
+            sprite.fillScreen(0);
+            sprite.setFont(&fonts::Font2);
+        };
+        contact_render_api.draw_row =
+            [&](int y, const ui::contactbook::RowData &row, bool selected) {
+                sprite.setCursor(10, y);
+                if (selected) {
+                    sprite.setTextColor(0x000000u, 0xFFFFFFu);
+                    sprite.fillRect(0, y, 128, contact_view_state.font_height + 3,
+                                    0xFFFF);
+                } else {
+                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                }
+                sprite.print(row.label.c_str());
+                if (row.has_unread) {
+                    const int badge_h = 10;
+                    const int badge_y =
+                        y + ((contact_view_state.font_height + 3 - badge_h) / 2);
+                    int badge_x = 104;
+                    int badge_w = 20;
+                    char badge_text[5] = {0};
+                    if (row.unread_count > 99) {
+                        strcpy(badge_text, "99+");
+                        badge_w = 22;
+                        badge_x = 102;
+                    } else {
+                        snprintf(badge_text, sizeof(badge_text), "%d",
+                                 row.unread_count);
+                    }
+                    const uint16_t badge_bg = selected ? 0x0000 : 0xFFFF;
+                    const uint16_t badge_fg = selected ? 0xFFFF : 0x0000;
+                    sprite.fillRoundRect(badge_x, badge_y, badge_w, badge_h, 3,
+                                         badge_bg);
+                    sprite.setTextColor(badge_fg, badge_bg);
+                    sprite.drawCenterString(badge_text, badge_x + badge_w / 2,
+                                            badge_y - 2);
+                }
+            };
+        contact_render_api.present = [&]() { push_sprite_safe(0, 0); };
 
         // 通知の取得
         JsonDocument notif_res = http_client.get_notifications();
 
         MessageBox box;
         (void)box;
+        ui::contactrunners::ActionContext contact_action_ctx{
+            .sprite = sprite,
+            .type_button = type_button,
+            .enter_button = enter_button,
+            .back_button = back_button,
+            .joystick = joystick,
+            .feed_wdt = feed_wdt,
+            .present = [&]() { push_sprite_safe(0, 0); },
+            .wifi_connected = wifi_is_connected,
+            .input_text = [&](const std::string &title,
+                              const std::string &seed) {
+                return wifi_input_info_proxy(title, seed);
+            },
+        };
         while (1) {
             // Joystickの状態を取得
             Joystick::joystick_state_t joystick_state =
@@ -2171,74 +2124,14 @@ class ContactBook {
             Button::button_state_t enter_button_state =
                 enter_button.get_button_state();
 
-            sprite.fillScreen(0);
-
-            sprite.setFont(&fonts::Font2);
-
             int base_count = (int)contacts.size();
-            int last_index =
-                base_count + 1;  // +1: Add Friend, +1: Pending Requests
+            contact_view_state.rows = app::contactbookview::build_rows(contacts);
 
-            int page = select_index / CONTACT_PER_PAGE;
-            int start = page * CONTACT_PER_PAGE;
-            int end = start + CONTACT_PER_PAGE - 1;
-            if (end > last_index) end = last_index;
-
-            for (int i = start; i <= end; i++) {
-                int row = i - start;
-                int y = (font_height + margin) * row;
-                sprite.setCursor(10, y);
-
-                if (i == select_index) {
-                    sprite.setTextColor(0x000000u, 0xFFFFFFu);
-                    sprite.fillRect(0, y, 128, font_height + 3, 0xFFFF);
-                } else {
-                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                }
-                if (i < base_count) {
-                    sprite.print(contacts[i].display_name.c_str());
-                    if (contacts[i].has_unread) {
-                        const int badge_h = 10;
-                        const int badge_y = y + ((font_height + 3 - badge_h) / 2);
-                        int badge_x = 104;
-                        int badge_w = 20;
-                        char badge_text[5] = {0};
-                        if (contacts[i].unread_count > 99) {
-                            strcpy(badge_text, "99+");
-                            badge_w = 22;
-                            badge_x = 102;
-                        } else {
-                            snprintf(badge_text, sizeof(badge_text), "%d",
-                                     contacts[i].unread_count);
-                        }
-                        const uint16_t badge_bg = (i == select_index) ? 0x0000 : 0xFFFF;
-                        const uint16_t badge_fg = (i == select_index) ? 0xFFFF : 0x0000;
-                        sprite.fillRoundRect(badge_x, badge_y, badge_w, badge_h, 3,
-                                             badge_bg);
-                        sprite.setTextColor(badge_fg, badge_bg);
-                        sprite.drawCenterString(badge_text, badge_x + badge_w / 2,
-                                                badge_y - 2);
-                    }
-                } else if (i == base_count) {
-                    sprite.print("+ Add Friend");
-                } else {
-                    sprite.print("Pending Requests");
-                }
-            }
-
-            if (joystick_state.pushed_up_edge) {
-                select_index -= 1;
-            } else if (joystick_state.pushed_down_edge) {
-                select_index += 1;
-            }
-
-            if (select_index < 0) {
-                select_index = 0;
-            } else if (select_index > last_index) {
-                select_index = last_index;
-            }
-
-            push_sprite_safe(0, 0);
+            ui::InputSnapshot nav_input;
+            nav_input.up_edge = joystick_state.pushed_up_edge;
+            nav_input.down_edge = joystick_state.pushed_down_edge;
+            contact_presenter.handle_input(nav_input);
+            contact_renderer.render(contact_view_state, contact_render_api);
 
             // ジョイスティック左を押されたらメニューへ戻る
             // 戻るボタンを押されたらメニューへ戻る
@@ -2247,419 +2140,18 @@ class ContactBook {
             }
 
             if (type_button_state.pushed) {
-                // talk.running_flag = true;
-                // talk.start_talk_task(contacts[i].name);
-                if (select_index == base_count) {
-                    // Add Friend flow: input friend code/ID, then send request
-                    std::string friend_code =
-                        wifi_input_info_proxy("Friend Code", "");
-                    if (friend_code != "") {
-                        sprite.fillRect(0, 0, 128, 64, 0);
-                        sprite.setFont(&fonts::Font2);
-                        sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                        sprite.drawCenterString("Sending request...", 64, 22);
-                        push_sprite_safe(0, 0);
-
-                        bool ok = false;
-                        const char *emsg = nullptr;
-                        if (!wifi_is_connected() && ble_uart_is_ready()) {
-                            long long rid = esp_timer_get_time();
-                            std::string req =
-                                std::string("{ \"id\":\"") +
-                                std::to_string(rid) +
-                                "\", \"type\": \"send_friend_request\", "
-                                "\"code\": \"" +
-                                friend_code + "\" }\n";
-                            ble_uart_send(
-                                reinterpret_cast<const uint8_t *>(req.c_str()),
-                                req.size());
-                            // wait for result in NVS
-                            const int timeout_ms = 3000;
-                            int waited = 0;
-                            while (waited < timeout_ms) {
-                                std::string rid_s =
-                                    get_nvs((char *)"ble_result_id");
-                                if (rid_s == std::to_string(rid)) {
-                                    std::string j =
-                                        get_nvs((char *)"ble_last_result");
-                                    StaticJsonDocument<512> doc;
-                                    if (deserializeJson(doc, j) ==
-                                        DeserializationError::Ok) {
-                                        ok = doc["ok"].as<bool>();
-                                        if (doc["error"])
-                                            emsg =
-                                                doc["error"].as<const char *>();
-                                    }
-                                    break;
-                                }
-                                vTaskDelay(50 / portTICK_PERIOD_MS);
-                                waited += 50;
-                            }
-                        } else {
-                            auto &api = chatapi::shared_client(true);
-                            api.set_scheme("https");
-                            const auto creds =
-                                chatapi::load_credentials_from_nvs();
-                            (void)chatapi::ensure_authenticated(api, creds,
-                                                                false);
-                            std::string resp;
-                            int status = 0;
-                            auto err = api.send_friend_request(friend_code,
-                                                               &resp, &status);
-                            if (err == ESP_OK && status >= 200 && status < 300)
-                                ok = true;
-                            else if (err == ESP_OK && status >= 400) {
-                                StaticJsonDocument<256> edoc;
-                                if (deserializeJson(edoc, resp) ==
-                                        DeserializationError::Ok &&
-                                    edoc["error"]) {
-                                    emsg = edoc["error"].as<const char *>();
-                                }
-                            }
-                        }
-                        sprite.fillRect(0, 0, 128, 64, 0);
-                        sprite.setFont(&fonts::Font2);
-                        if (ok)
-                            sprite.drawCenterString("Request sent!", 64, 22);
-                        else {
-                            sprite.drawCenterString("Error:", 64, 16);
-                            sprite.drawCenterString(emsg ? emsg : "Failed", 64,
-                                                    34);
-                        }
-                        push_sprite_safe(0, 0);
-                        vTaskDelay(1200 / portTICK_PERIOD_MS);
-                    }
-                } else if (select_index == base_count + 1) {
-                    // Pending Requests UI
-                    type_button.clear_button_state();
-                    joystick.reset_timer();
-                    auto &api = chatapi::shared_client(true);
-                    api.set_scheme("https");
-                    const auto creds = chatapi::load_credentials_from_nvs();
-                    (void)chatapi::ensure_authenticated(api, creds, false);
-
-                    // Fetch pending (BLE first)
-                    std::vector<std::pair<std::string, std::string>>
-                        pending;  // {request_id, username}
-                    if (!wifi_is_connected() && ble_uart_is_ready()) {
-                        long long rid = esp_timer_get_time();
-                        std::string req = std::string("{ \"id\":\"") +
-                                          std::to_string(rid) +
-                                          "\", \"type\": \"get_pending\" }\n";
-                        ble_uart_send(
-                            reinterpret_cast<const uint8_t *>(req.c_str()),
-                            req.size());
-                        const int timeout_ms = 2500;
-                        int waited = 0;
-                        while (waited < timeout_ms) {
-                            feed_wdt();
-                            std::string js = get_nvs((char *)"ble_pending");
-                            if (!js.empty()) {
-                                DynamicJsonDocument pdoc(4096);
-                                if (deserializeJson(pdoc, js) ==
-                                    DeserializationError::Ok) {
-                                    for (JsonObject r :
-                                         pdoc["requests"].as<JsonArray>()) {
-                                        std::string rid =
-                                            r["request_id"].as<const char *>()
-                                                ? r["request_id"]
-                                                      .as<const char *>()
-                                                : "";
-                                        std::string uname =
-                                            r["username"].as<const char *>()
-                                                ? r["username"]
-                                                      .as<const char *>()
-                                                : "";
-                                        if (!rid.empty())
-                                            pending.push_back({rid, uname});
-                                    }
-                                    break;
-                                }
-                            }
-                            vTaskDelay(100 / portTICK_PERIOD_MS);
-                            waited += 100;
-                        }
-                    }
-                    if (pending.empty()) {
-                        std::string presp;
-                        if (api.get_pending_requests(presp) == ESP_OK) {
-                            DynamicJsonDocument pdoc(2048);
-                            if (deserializeJson(pdoc, presp) ==
-                                DeserializationError::Ok) {
-                                for (JsonObject r :
-                                     pdoc["requests"].as<JsonArray>()) {
-                                    std::string rid =
-                                        r["request_id"].as<const char *>()
-                                            ? r["request_id"].as<const char *>()
-                                            : "";
-                                    std::string uname =
-                                        r["username"].as<const char *>()
-                                            ? r["username"].as<const char *>()
-                                            : "";
-                                    if (!rid.empty())
-                                        pending.push_back({rid, uname});
-                                }
-                            }
-                        }
-                    }
-
-                    int psel = 0;
-                    while (1) {
-                        sprite.fillRect(0, 0, 128, 64, 0);
-                        sprite.setFont(&fonts::Font2);
-                        sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                        if (pending.empty()) {
-                            sprite.drawCenterString("No pending requests", 64,
-                                                    22);
-                            push_sprite_safe(0, 0);
-                        } else {
-                            const int row_h = 20;
-                            int start = (psel / 3) * 3;
-                            int show = pending.size() - start;
-                            if (show > 3) show = 3;
-                            for (int i = 0; i < show; i++) {
-                                int idx = start + i;
-                                if (idx >= (int)pending.size()) break;
-                                int y = i * row_h;
-                                if (idx == psel) {
-                                    sprite.fillRect(0, y, 128, row_h - 2,
-                                                    0xFFFF);
-                                    sprite.setTextColor(0x0000, 0xFFFF);
-                                } else {
-                                    sprite.setTextColor(0xFFFF, 0x0000);
-                                }
-                                sprite.setCursor(10, y);
-                                std::string line = pending[idx].second;
-                                sprite.print(line.c_str());
-                            }
-                            push_sprite_safe(0, 0);
-                        }
-
-                        // Input
-                        auto js = joystick.get_joystick_state();
-                        auto tbs = type_button.get_button_state();
-                        auto bbs = back_button.get_button_state();
-                        auto ebs = enter_button.get_button_state();
-                        if (js.left || bbs.pushed) break;
-                        if (js.pushed_up_edge && psel > 0) psel -= 1;
-                        if (js.pushed_down_edge &&
-                            psel + 1 < (int)pending.size())
-                            psel += 1;
-
-                        // Accept/Reject dialog
-                        if (!pending.empty() && (tbs.pushed || ebs.pushed)) {
-                            bool accept = tbs.pushed;  // type_button=Accept,
-                                                       // enter_button=Reject
-                            // Clear states before dialog
-                            type_button.clear_button_state();
-                            enter_button.clear_button_state();
-                            back_button.clear_button_state();
-                            joystick.reset_timer();
-                            // Confirm dialog
-                            int selar = 0;  // 0:No 1:Yes
-                            while (1) {
-                                auto js2 = joystick.get_joystick_state();
-                                if (js2.pushed_left_edge || js2.pushed_up_edge)
-                                    selar = 0;
-                                if (js2.pushed_right_edge ||
-                                    js2.pushed_down_edge)
-                                    selar = 1;
-
-                                sprite.fillRect(0, 0, 128, 64, 0);
-                                sprite.setTextColor(0xFFFF, 0x0000);
-                                sprite.drawCenterString(
-                                    accept ? "Accept?" : "Reject?", 64, 14);
-                                uint16_t noFg = (selar == 0) ? 0x0000 : 0xFFFF,
-                                         noBg = (selar == 0) ? 0xFFFF : 0x0000;
-                                uint16_t ysFg = (selar == 1) ? 0x0000 : 0xFFFF,
-                                         ysBg = (selar == 1) ? 0xFFFF : 0x0000;
-                                sprite.fillRoundRect(12, 34, 40, 18, 3, noBg);
-                                sprite.drawRoundRect(12, 34, 40, 18, 3, 0xFFFF);
-                                sprite.setTextColor(noFg, noBg);
-                                sprite.drawCenterString("No", 32, 36);
-                                sprite.fillRoundRect(76, 34, 40, 18, 3, ysBg);
-                                sprite.drawRoundRect(76, 34, 40, 18, 3, 0xFFFF);
-                                sprite.setTextColor(ysFg, ysBg);
-                                sprite.drawCenterString("Yes", 96, 36);
-                                push_sprite_safe(0, 0);
-
-                                auto t2 = type_button.get_button_state();
-                                auto e2 = enter_button.get_button_state();
-                                auto b2 = back_button.get_button_state();
-                                if (b2.pushed || js2.left)
-                                    break;  // cancel dialog
-                                if (t2.pushed || e2.pushed) {
-                                    if (selar == 1) {
-                                        // Send respond
-                                        std::string rid = pending[psel].first;
-                                        bool ok = false;
-                                        if (!wifi_is_connected() &&
-                                            ble_uart_is_ready()) {
-                                            long long crid =
-                                                esp_timer_get_time();
-                                            std::string req =
-                                                std::string("{ \"id\":\"") +
-                                                std::to_string(crid) +
-                                                "\", \"type\": "
-                                                "\"respond_friend_request\", "
-                                                "\"request_id\": \"" +
-                                                rid + "\", \"accept\": " +
-                                                (accept ? "true" : "false") +
-                                                " }\n";
-                                            ble_uart_send(reinterpret_cast<
-                                                              const uint8_t *>(
-                                                              req.c_str()),
-                                                          req.size());
-                                            const int timeout_ms = 2000;
-                                            int waited = 0;
-                                            while (waited < timeout_ms) {
-                                                std::string rid_s = get_nvs(
-                                                    (char *)"ble_result_id");
-                                                if (rid_s ==
-                                                    std::to_string(crid)) {
-                                                    std::string j = get_nvs((
-                                                        char *)"ble_last_"
-                                                               "result");
-                                                    StaticJsonDocument<512> dd;
-                                                    if (deserializeJson(dd,
-                                                                        j) ==
-                                                        DeserializationError::
-                                                            Ok)
-                                                        ok =
-                                                            dd["ok"].as<bool>();
-                                                    break;
-                                                }
-                                                vTaskDelay(50 /
-                                                           portTICK_PERIOD_MS);
-                                                waited += 50;
-                                            }
-                                        } else {
-                                            std::string rresp;
-                                            int rstatus = 0;
-                                            api.respond_friend_request(
-                                                rid, accept, &rresp, &rstatus);
-                                            ok = (rstatus >= 200 &&
-                                                  rstatus < 300);
-                                        }
-                                        // Show outcome
-                                        sprite.fillRect(0, 0, 128, 64, 0);
-                                        sprite.setTextColor(0xFFFF, 0x0000);
-                                        if (ok)
-                                            sprite.drawCenterString("Done", 64,
-                                                                    22);
-                                        else
-                                            sprite.drawCenterString("Failed",
-                                                                    64, 22);
-                                        push_sprite_safe(0, 0);
-                                        vTaskDelay(800 / portTICK_PERIOD_MS);
-                                        // Refresh pending list
-                                        pending.clear();
-                                        // Re-fetch pending (BLE first)
-                                        if (!wifi_is_connected() &&
-                                            ble_uart_is_ready()) {
-                                            long long rid2 =
-                                                esp_timer_get_time();
-                                            std::string req2 =
-                                                std::string("{ \"id\":\"") +
-                                                std::to_string(rid2) +
-                                                "\", \"type\": \"get_pending\" "
-                                                "}\n";
-                                            ble_uart_send(reinterpret_cast<
-                                                              const uint8_t *>(
-                                                              req2.c_str()),
-                                                          req2.size());
-                                            const int timeout_ms = 1500;
-                                            int waited = 0;
-                                            while (waited < timeout_ms) {
-                                                std::string js = get_nvs(
-                                                    (char *)"ble_pending");
-                                                if (!js.empty()) {
-                                                    DynamicJsonDocument pdoc2(
-                                                        2048);
-                                                    if (deserializeJson(pdoc2,
-                                                                        js) ==
-                                                        DeserializationError::
-                                                            Ok) {
-                                                        for (
-                                                            JsonObject r :
-                                                            pdoc2["requests"]
-                                                                .as<JsonArray>()) {
-                                                            std::string rid2s =
-                                                                r["request_id"]
-                                                                        .as<const char
-                                                                                *>()
-                                                                    ? r["reques"
-                                                                        "t_id"]
-                                                                          .as<const char
-                                                                                  *>()
-                                                                    : "";
-                                                            std::string uname2 =
-                                                                r["username"]
-                                                                        .as<const char
-                                                                                *>()
-                                                                    ? r["userna"
-                                                                        "me"]
-                                                                          .as<const char
-                                                                                  *>()
-                                                                    : "";
-                                                            if (!rid2s.empty())
-                                                                pending.push_back(
-                                                                    {rid2s,
-                                                                     uname2});
-                                                        }
-                                                    }
-                                                    break;
-                                                }
-                                                vTaskDelay(100 /
-                                                           portTICK_PERIOD_MS);
-                                                waited += 100;
-                                            }
-                                        }
-                                        if (pending.empty()) {
-                                            std::string presp2;
-                                            if (api.get_pending_requests(
-                                                    presp2) == ESP_OK) {
-                                                StaticJsonDocument<2048> pdoc2;
-                                                if (deserializeJson(pdoc2,
-                                                                    presp2) ==
-                                                    DeserializationError::Ok) {
-                                                    for (JsonObject r :
-                                                         pdoc2["requests"]
-                                                             .as<JsonArray>()) {
-                                                        std::string rid2s =
-                                                            r["request_id"]
-                                                                    .as<const char
-                                                                            *>()
-                                                                ? r["request_"
-                                                                    "id"]
-                                                                      .as<const char
-                                                                              *>()
-                                                                : "";
-                                                        std::string uname2 =
-                                                            r["username"]
-                                                                    .as<const char
-                                                                            *>()
-                                                                ? r["username"]
-                                                                      .as<const char
-                                                                              *>()
-                                                                : "";
-                                                        if (!rid2s.empty())
-                                                            pending.push_back(
-                                                                {rid2s,
-                                                                 uname2});
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    break;  // close dialog regardless of Yes/No
-                                }
-                                vTaskDelay(10 / portTICK_PERIOD_MS);
-                            }
-                        }
-                        vTaskDelay(10 / portTICK_PERIOD_MS);
-                    }
-                } else if (!contacts.empty() && select_index < base_count) {
+                const int select_index = contact_view_state.select_index;
+                const auto selection_kind =
+                    app::contactbook::resolve_selection_kind(select_index,
+                                                             base_count);
+                if (selection_kind == app::contactbook::SelectionKind::AddFriend) {
+                    ui::contactrunners::run_add_friend(contact_action_ctx);
+                } else if (selection_kind ==
+                           app::contactbook::SelectionKind::Pending) {
+                    ui::contactrunners::run_pending_requests(contact_action_ctx);
+                } else if (selection_kind ==
+                           app::contactbook::SelectionKind::Contact &&
+                           !contacts.empty()) {
                     box.running_flag = true;
                     // Set chat title as username for UI, pass identifier for
                     // API
@@ -2673,8 +2165,7 @@ class ContactBook {
                         feed_wdt();
                         vTaskDelay(100 / portTICK_PERIOD_MS);
                     }
-                    contacts[select_index].unread_count = 0;
-                    contacts[select_index].has_unread = false;
+                    app::contactbookview::mark_read(contacts[select_index]);
 
                     if (!recreate_contact_sprite(lcd.width(), lcd.height())) {
                         ESP_LOGE("CONTACT",
@@ -4981,25 +4472,142 @@ class SettingMenu {
         sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
         sprite.createSprite(lcd.width(), lcd.height());
 
-        typedef struct {
-            ui::Key key;
-        } setting_t;
-
-        // Settings list
-        setting_t settings[16] = {
-            {ui::Key::SettingsProfile},    {ui::Key::SettingsWifi},
-            {ui::Key::SettingsBluetooth},  {ui::Key::SettingsLanguage},
-            {ui::Key::SettingsSound},      {ui::Key::SettingsVibration},
-            {ui::Key::SettingsBootSound},  {ui::Key::SettingsRtc},
-            {ui::Key::SettingsOpenChat},   {ui::Key::SettingsComposer},
-            {ui::Key::SettingsAutoUpdate}, {ui::Key::SettingsOtaManifest},
-            {ui::Key::SettingsUpdateNow},  {ui::Key::SettingsFirmwareInfo},
-            {ui::Key::SettingsDevelop},    {ui::Key::SettingsFactoryReset},
+        const std::array<ui::Key, 16> setting_keys = {
+            ui::Key::SettingsProfile,    ui::Key::SettingsWifi,
+            ui::Key::SettingsBluetooth,  ui::Key::SettingsLanguage,
+            ui::Key::SettingsSound,      ui::Key::SettingsVibration,
+            ui::Key::SettingsBootSound,  ui::Key::SettingsRtc,
+            ui::Key::SettingsOpenChat,   ui::Key::SettingsComposer,
+            ui::Key::SettingsAutoUpdate, ui::Key::SettingsOtaManifest,
+            ui::Key::SettingsUpdateNow,  ui::Key::SettingsFirmwareInfo,
+            ui::Key::SettingsDevelop,    ui::Key::SettingsFactoryReset,
         };
 
-        int select_index = 0;
-        int font_height = 13;
-        int margin = 3;
+        ui::settingmenu::ViewState view_state;
+        view_state.item_per_page = ITEM_PER_PAGE;
+        view_state.font_height = 13;
+        view_state.margin = 3;
+        view_state.rows.reserve(setting_keys.size());
+        ui::settingmenu::Presenter presenter(view_state);
+        ui::settingmenu::Renderer renderer;
+        auto reset_controls = [&](bool clear_enter) {
+            type_button.clear_button_state();
+            type_button.reset_timer();
+            back_button.clear_button_state();
+            back_button.reset_timer();
+            if (clear_enter) {
+                enter_button.clear_button_state();
+                enter_button.reset_timer();
+            }
+            joystick.reset_timer();
+        };
+        auto show_status = [&](const std::string &line1,
+                               const std::string &line2, int delay_ms) {
+            ui::StatusPanelApi api{
+                .begin_frame = [&]() { sprite.fillRect(0, 0, 128, 64, 0); },
+                .draw_center_text =
+                    [&](const std::string &text, int y) {
+                        sprite.setFont(&fonts::Font2);
+                        sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                        sprite.drawCenterString(text.c_str(), 64, y);
+                    },
+                .present = [&]() { push_sprite_safe(0, 0); }};
+            ui::render_status_panel(api, line1, line2, 22, 40);
+            vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        };
+        auto run_wifi_action = [&]() {
+            wifi_setting.running_flag = true;
+            wifi_setting.start_wifi_setting_task();
+            app::settingtask::wait_while_running(wifi_setting.running_flag,
+                                                 feed_wdt);
+            type_button.clear_button_state();
+            type_button.reset_timer();
+            joystick.reset_timer();
+        };
+        auto run_vibration_action = [&]() {
+            reset_controls(true);
+            const bool on = app::settingaction::toggle_vibration();
+            show_status(on ? "Vibration: ON" : "Vibration: OFF", "", 900);
+        };
+        auto run_update_now_action = [&]() {
+            mqtt_rt_pause();
+            show_status("Rebooting OTA...", "", 150);
+            mobus_request_ota_minimal_mode();
+        };
+        auto run_auto_update_action = [&]() {
+            bool on = app::settingaction::toggle_auto_update();
+            show_status(on ? "Auto Update: ON" : "Auto Update: OFF", "", 800);
+            if (on) {
+                ota_client::start_background_task();
+            }
+            reset_controls(false);
+        };
+        auto run_develop_action = [&]() {
+            const auto result = app::settingaction::toggle_develop_mode();
+            show_status(result.on ? "Develop: ON" : "Develop: OFF",
+                        result.endpoint, 1200);
+            reset_controls(false);
+        };
+        auto run_profile_action = [&]() {
+            Profile();
+            reset_controls(false);
+        };
+        auto run_rtc_action = [&]() {
+            reset_controls(true);
+            P2P_Display p2p;
+            p2p.morse_p2p();
+            reset_controls(true);
+        };
+        auto run_open_chat_action = [&]() {
+            reset_controls(true);
+            open_chat.running_flag = true;
+            open_chat.start_open_chat_task();
+            app::settingtask::wait_while_running(open_chat.running_flag, feed_wdt);
+            sprite.setFont(&fonts::Font2);
+        };
+        auto run_composer_action = [&]() {
+            Composer comp;
+            comp.running_flag = true;
+            comp.start_composer_task();
+            app::settingtask::wait_while_running(comp.running_flag, feed_wdt);
+            sprite.setFont(&fonts::Font2);
+            reset_controls(false);
+        };
+        ui::settingrunners::DialogContext dialog_ctx{
+            .sprite = sprite,
+            .type_button = type_button,
+            .enter_button = enter_button,
+            .back_button = back_button,
+            .joystick = joystick,
+            .feed_wdt = feed_wdt,
+            .present = [&]() { push_sprite_safe(0, 0); },
+            .delete_sprite = [&]() { sprite.deleteSprite(); },
+            .recreate_sprite = [&]() { sprite.createSprite(lcd.width(), lcd.height()); },
+            .mqtt_pause = mqtt_rt_pause,
+            .mqtt_resume = mqtt_rt_resume,
+            .wifi_connected = wifi_is_connected,
+        };
+        auto run_language_action = [&](ui::Lang lang_now) {
+            ui::settingrunners::run_language(dialog_ctx, lang_now);
+        };
+        auto run_sound_action = [&]() {
+            ui::settingrunners::run_sound(dialog_ctx, SettingMenu::sound_dirty);
+        };
+        auto run_boot_sound_action = [&]() {
+            ui::settingrunners::run_boot_sound(dialog_ctx);
+        };
+        auto run_bluetooth_action = [&]() {
+            ui::settingrunners::run_bluetooth_pairing(dialog_ctx);
+        };
+        auto run_ota_manifest_action = [&]() {
+            ui::settingrunners::run_ota_manifest(dialog_ctx);
+        };
+        auto run_firmware_info_action = [&]() {
+            ui::settingrunners::run_firmware_info(dialog_ctx);
+        };
+        auto run_factory_reset_action = [&]() {
+            ui::settingrunners::run_factory_reset(dialog_ctx);
+        };
 
         while (1) {
             feed_wdt();
@@ -5013,8 +4621,6 @@ class SettingMenu {
                 type_button.get_button_state();
             Button::button_state_t back_button_state =
                 back_button.get_button_state();
-            Button::button_state_t enter_button_state =
-                enter_button.get_button_state();
 
             sprite.fillScreen(0);
 
@@ -5024,128 +4630,31 @@ class SettingMenu {
                           &mobus_fonts::MisakiGothic8())
                     : static_cast<const lgfx::IFont *>(&fonts::Font2);
             sprite.setFont(menu_font);
+            view_state.rows = app::settingmenuview::build_rows(setting_keys, lang);
+            presenter.clamp();
 
-            int last_index = (int)(sizeof(settings) / sizeof(setting_t)) -
-                             1;  // 0-based last index
-            int total_items = last_index + 1;
-            int page = select_index / ITEM_PER_PAGE;
-            int start = page * ITEM_PER_PAGE;
-            int end = start + ITEM_PER_PAGE - 1;
-            if (end > last_index) end = last_index;
+            ui::InputSnapshot list_input{};
+            list_input.up_edge = joystick_state.pushed_up_edge;
+            list_input.down_edge = joystick_state.pushed_down_edge;
+            presenter.handle_input(list_input);
 
-            for (int i = start; i <= end; i++) {
-                int row = i - start;
-                int y = (font_height + margin) * row;
-                sprite.setCursor(10, y);
-
-                if (i == select_index) {
-                    sprite.setTextColor(0x000000u, 0xFFFFFFu);
-                    sprite.fillRect(0, y, 128, font_height + 3, 0xFFFF);
-                } else {
-                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                }
-                // Render name (Develop/Auto Update show ON/OFF)
-                if (settings[i].key == ui::Key::SettingsDevelop) {
-                    std::string dev = get_nvs((char *)"develop_mode");
-                    bool on = (dev == "true");
-                    std::string label =
-                        std::string(ui::text(ui::Key::SettingsDevelop, lang)) +
-                        " [" +
-                        ui::text(on ? ui::Key::LabelOn : ui::Key::LabelOff,
-                                 lang) +
-                        "]";
-                    sprite.print(label.c_str());
-                } else if (settings[i].key == ui::Key::SettingsSound) {
-                    bool on = sound_settings::enabled();
-                    int vol_pct = static_cast<int>(
-                        sound_settings::volume() * 100.0f + 0.5f);
-                    char label[48];
-                    std::snprintf(
-                        label, sizeof(label), "%s [%s, %d%%]",
-                        ui::text(ui::Key::SettingsSound, lang),
-                        ui::text(on ? ui::Key::LabelOn : ui::Key::LabelOff,
-                                 lang),
-                        vol_pct);
-                    sprite.print(label);
-                } else if (settings[i].key == ui::Key::SettingsAutoUpdate) {
-                    std::string au = get_nvs((char *)"ota_auto");
-                    bool on = (au == "true");
-                    std::string label =
-                        std::string(
-                            ui::text(ui::Key::SettingsAutoUpdate, lang)) +
-                        " [" +
-                        ui::text(on ? ui::Key::LabelOn : ui::Key::LabelOff,
-                                 lang) +
-                        "]";
-                    sprite.print(label.c_str());
-                } else if (settings[i].key == ui::Key::SettingsVibration) {
-                    bool on = joystick_haptics_enabled();
-                    std::string label =
-                        std::string(
-                            ui::text(ui::Key::SettingsVibration, lang)) +
-                        " [" +
-                        ui::text(on ? ui::Key::LabelOn : ui::Key::LabelOff,
-                                 lang) +
-                        "]";
-                    sprite.print(label.c_str());
-                } else if (settings[i].key == ui::Key::SettingsOtaManifest) {
-                    // show current (or default) manifest URL
-                    std::string mf = get_nvs((char *)"ota_manifest");
-                    if (mf.empty()) {
-                        mf = "https://mimoc.jp/api/firmware/"
-                             "latest?device=esp32s3&channel=stable";
-                    }
-                    sprite.print(ui::text(ui::Key::SettingsOtaManifest, lang));
-                } else if (settings[i].key == ui::Key::SettingsUpdateNow) {
-                    sprite.print(ui::text(ui::Key::SettingsUpdateNow, lang));
-                } else if (settings[i].key == ui::Key::SettingsBluetooth) {
-                    std::string label =
-                        ui::text(ui::Key::SettingsBluetooth, lang);
-                    bool connected =
-                        !wifi_is_connected() && ble_uart_is_ready();
-                    std::string pairing = get_nvs((char *)"ble_pair");
-                    if (connected)
-                        label += " [" +
-                                 std::string(
-                                     ui::text(ui::Key::LabelConnected, lang)) +
-                                 "]";
-                    else if (pairing == "true")
-                        label +=
-                            " [" +
-                            std::string(ui::text(ui::Key::LabelPairing, lang)) +
-                            "]";
-                    sprite.print(label.c_str());
-                } else if (settings[i].key == ui::Key::SettingsBootSound) {
-                    std::string bs = get_nvs((char *)"boot_sound");
-                    if (bs.empty()) bs = "cute";
-                    std::string shown =
-                        bs == std::string("majestic")
-                            ? "Majestic"
-                            : (bs == std::string("random") ? "Random" : "Cute");
-                    std::string label = std::string(ui::text(
-                                            ui::Key::SettingsBootSound, lang)) +
-                                        " [" + shown + "]";
-                    sprite.print(label.c_str());
-                } else if (settings[i].key == ui::Key::SettingsFirmwareInfo) {
-                    sprite.print(ui::text(ui::Key::SettingsFirmwareInfo, lang));
-                } else {
-                    sprite.print(ui::text(settings[i].key, lang));
-                }
-            }
-
-            if (joystick_state.pushed_up_edge) {
-                select_index -= 1;
-            } else if (joystick_state.pushed_down_edge) {
-                select_index += 1;
-            }
-
-            if (select_index < 0) {
-                select_index = 0;
-            } else if (select_index > last_index) {
-                select_index = last_index;
-            }
-
-            push_sprite_safe(0, 0);
+            ui::settingmenu::RenderApi render_api{
+                .begin_frame = [&]() { sprite.fillScreen(0); },
+                .draw_row =
+                    [&](int y, const ui::settingmenu::RowData &row,
+                        bool selected) {
+                        sprite.setCursor(10, y);
+                        if (selected) {
+                            sprite.setTextColor(0x000000u, 0xFFFFFFu);
+                            sprite.fillRect(0, y, 128, view_state.font_height + 3,
+                                            0xFFFF);
+                        } else {
+                            sprite.setTextColor(0xFFFFFFu, 0x000000u);
+                        }
+                        sprite.print(row.label.c_str());
+                    },
+                .present = [&]() { push_sprite_safe(0, 0); }};
+            renderer.render(view_state, render_api);
 
             // ジョイスティック左を押されたらメニューへ戻る
             // 戻るボタンを押されたらメニューへ戻る
@@ -5153,797 +4662,63 @@ class SettingMenu {
                 break;
             }
 
-            if (type_button_state.pushed &&
-                settings[select_index].key == ui::Key::SettingsWifi) {
-                wifi_setting.running_flag = true;
-                wifi_setting.start_wifi_setting_task();
-                while (wifi_setting.running_flag) {
-                    feed_wdt();
-                    vTaskDelay(100 / portTICK_PERIOD_MS);
-                }
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                joystick.reset_timer();
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key ==
-                           ui::Key::SettingsLanguage) {
-                int sel = (ui::current_lang() == ui::Lang::Ja) ? 1 : 0;
-                type_button.clear_button_state();
-                enter_button.clear_button_state();
-                back_button.clear_button_state();
-                joystick.reset_timer();
-                while (1) {
-                    feed_wdt();
-                    sprite.fillRect(0, 0, 128, 64, 0);
-                    const lgfx::IFont *lang_font =
-                        (lang == ui::Lang::Ja)
-                            ? static_cast<const lgfx::IFont *>(
-                                  &mobus_fonts::MisakiGothic8())
-                            : static_cast<const lgfx::IFont *>(&fonts::Font2);
-                    sprite.setFont(lang_font);
-                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                    sprite.drawCenterString(
-                        ui::text(ui::Key::TitleLanguage, lang), 64, 6);
-                    const char *opts[2] = {
-                        ui::text(ui::Key::LangEnglish, lang),
-                        ui::text(ui::Key::LangJapanese, lang),
-                    };
-                    for (int i = 0; i < 2; i++) {
-                        int y = 24 + i * 16;
-                        if (sel == i) {
-                            sprite.fillRect(8, y - 2, 112, 14, 0xFFFF);
-                            sprite.setTextColor(0x000000u, 0xFFFFFFu);
-                        } else {
-                            sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                        }
-                        sprite.drawCenterString(opts[i], 64, y);
-                    }
-                    push_sprite_safe(0, 0);
-
-                    auto js = joystick.get_joystick_state();
-                    auto tbs = type_button.get_button_state();
-                    auto ebs = enter_button.get_button_state();
-                    auto bbs = back_button.get_button_state();
-
-                    if (js.pushed_up_edge) sel = (sel + 1) % 2;
-                    if (js.pushed_down_edge) sel = (sel + 1) % 2;
-                    if (tbs.pushed || ebs.pushed) {
-                        save_nvs("ui_lang", sel == 0 ? "en" : "ja");
-                        type_button.clear_button_state();
-                        enter_button.clear_button_state();
-                        back_button.clear_button_state();
-                        joystick.reset_timer();
-                        break;
-                    }
-                    if (bbs.pushed || js.left) {
-                        type_button.clear_button_state();
-                        enter_button.clear_button_state();
-                        back_button.clear_button_state();
-                        joystick.reset_timer();
-                        break;
-                    }
-                    vTaskDelay(50 / portTICK_PERIOD_MS);
-                }
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsSound) {
-                type_button.clear_button_state();
-                enter_button.clear_button_state();
-                back_button.clear_button_state();
-                joystick.reset_timer();
-
-                bool enabled = sound_settings::enabled();
-                float volume = sound_settings::volume();
-
-                while (1) {
-                    feed_wdt();
-                    sprite.fillRect(0, 0, 128, 64, 0);
-                    sprite.setFont(&fonts::Font2);
-                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                    sprite.drawCenterString("Sound Settings", 64, 6);
-
-                    char status[32];
-                    std::snprintf(status, sizeof(status), "Status: %s",
-                                  enabled ? "ON" : "OFF");
-                    sprite.drawCenterString(status, 64, 22);
-
-                    int vol_pct = static_cast<int>(volume * 100.0f + 0.5f);
-                    char vol_text[32];
-                    std::snprintf(vol_text, sizeof(vol_text), "Volume: %d%%",
-                                  vol_pct);
-                    sprite.drawCenterString(vol_text, 64, 36);
-
-                    sprite.setFont(&fonts::Font2);
-                    sprite.drawCenterString("Type:Toggle  Up/Down:Vol", 64, 50);
-                    sprite.drawCenterString("Back/Enter:Exit", 64, 58);
-                    push_sprite_safe(0, 0);
-
-                    auto tbs = type_button.get_button_state();
-                    auto ebs = enter_button.get_button_state();
-                    auto bbs = back_button.get_button_state();
-                    auto js = joystick.get_joystick_state();
-
-                    if (tbs.pushed) {
-                        enabled = !enabled;
-                        sound_settings::set_enabled(enabled, false);
-                        SettingMenu::sound_dirty = true;
-                        type_button.clear_button_state();
-                        type_button.reset_timer();
-                    }
-
-                    const float step = 0.05f;
-                    bool volume_changed = false;
-                    if (js.pushed_up_edge || js.pushed_right_edge) {
-                        volume = std::min(1.0f, volume + step);
-                        volume_changed = true;
-                    } else if (js.pushed_down_edge || js.pushed_left_edge) {
-                        volume = std::max(0.0f, volume - step);
-                        volume_changed = true;
-                    }
-                    if (volume_changed) {
-                        sound_settings::set_volume(volume, false);
-                        SettingMenu::sound_dirty = true;
-                        volume = sound_settings::volume();
-                    }
-
-                    if (ebs.pushed || bbs.pushed) {
-                        enter_button.clear_button_state();
-                        back_button.clear_button_state();
-                        break;
-                    }
-
-                    feed_wdt();
-                    vTaskDelay(50 / portTICK_PERIOD_MS);
-                }
-
-                joystick.reset_timer();
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                if (SettingMenu::sound_dirty) {
-                    vTaskDelay(10 / portTICK_PERIOD_MS);
-                }
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key ==
-                           ui::Key::SettingsVibration) {
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                joystick.reset_timer();
-
-                bool on = joystick_haptics_enabled();
-                on = !on;
-                joystick_haptics_set_enabled(on, true);
-
-                sprite.fillRect(0, 0, 128, 64, 0);
-                sprite.setFont(&fonts::Font2);
-                sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                sprite.drawCenterString(on ? "Vibration: ON" : "Vibration: OFF",
-                                        64, 28);
-                push_sprite_safe(0, 0);
-                vTaskDelay(900 / portTICK_PERIOD_MS);
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key ==
-                           ui::Key::SettingsBootSound) {
-                // Simple boot sound selector: Type=cycle, Enter=preview,
-                // Back=save
-                type_button.clear_button_state();
-                enter_button.clear_button_state();
-                back_button.clear_button_state();
-                joystick.reset_timer();
-
-                std::vector<std::string> opts = {"cute", "majestic", "gb",
-                                                 "random"};
-                if (!get_nvs((char *)"song1").empty()) opts.push_back("song1");
-                if (!get_nvs((char *)"song2").empty()) opts.push_back("song2");
-                if (!get_nvs((char *)"song3").empty()) opts.push_back("song3");
-                auto idx_of = [&](const std::string &s) {
-                    for (size_t i = 0; i < opts.size(); ++i)
-                        if (opts[i] == s) return (int)i;
-                    return 0;
-                };
-                std::string cur = get_nvs((char *)"boot_sound");
-                if (cur.empty()) cur = "cute";
-                int idx = idx_of(cur);
-                while (1) {
-                    feed_wdt();
-                    sprite.fillRect(0, 0, 128, 64, 0);
-                    sprite.setFont(&fonts::Font2);
-                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                    sprite.drawCenterString("Boot Sound", 64, 6);
-                    std::string name;
-                    if (opts[idx] == "majestic")
-                        name = "Majestic";
-                    else if (opts[idx] == "gb")
-                        name = "GB Synth";
-                    else if (opts[idx] == "random")
-                        name = "Random";
-                    else if (opts[idx] == "song1")
-                        name = "Song 1";
-                    else if (opts[idx] == "song2")
-                        name = "Song 2";
-                    else if (opts[idx] == "song3")
-                        name = "Song 3";
-                    else
-                        name = "Cute";
-                    sprite.drawCenterString(name.c_str(), 64, 24);
-                    sprite.drawCenterString("Type:Next  Enter:Preview", 64, 40);
-                    sprite.drawCenterString("Back:Save", 64, 52);
-                    push_sprite_safe(0, 0);
-
-                    auto tbs = type_button.get_button_state();
-                    auto ebs = enter_button.get_button_state();
-                    auto bbs = back_button.get_button_state();
-                    if (bbs.pushed || joystick.get_joystick_state().left) {
-                        save_nvs((char *)"boot_sound", opts[idx]);
-                        type_button.clear_button_state();
-                        enter_button.clear_button_state();
-                        back_button.clear_button_state();
-                        break;
-                    }
-                    if (tbs.pushed) {
-                        idx = (idx + 1) % (int)opts.size();
-                        type_button.clear_button_state();
-                    }
-                    if (ebs.pushed) {
-                        auto &sp = audio::speaker();
-                        if (opts[idx] == "majestic")
-                            boot_sounds::play_majestic(sp, 0.5f);
-                        else if (opts[idx] == "gb")
-                            boot_sounds::play_gb(sp, 0.9f);
-                        else if (opts[idx] == "song1")
-                            boot_sounds::play_song(sp, 1, 0.9f);
-                        else if (opts[idx] == "song2")
-                            boot_sounds::play_song(sp, 2, 0.9f);
-                        else if (opts[idx] == "song3")
-                            boot_sounds::play_song(sp, 3, 0.9f);
-                        else if (opts[idx] == "random") {
-                            uint32_t r = (uint32_t)(esp_timer_get_time() & 3);
-                            if (r == 0)
-                                boot_sounds::play_cute(sp, 0.5f);
-                            else if (r == 1)
-                                boot_sounds::play_majestic(sp, 0.5f);
-                            else
-                                boot_sounds::play_gb(sp, 0.9f);
-                        } else
-                            boot_sounds::play_cute(sp, 0.5f);
-                        enter_button.clear_button_state();
-                    }
-                    vTaskDelay(10 / portTICK_PERIOD_MS);
-                }
-                joystick.reset_timer();
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key ==
-                           ui::Key::SettingsBluetooth) {
-                // Simple Bluetooth pairing UI (UI only, no BLE stack)
-                type_button.clear_button_state();
-                joystick.reset_timer();
-
-                // Local state backed by NVS
-                auto nvs_str = [](const char *key) {
-                    return get_nvs((char *)key);
-                };
-                auto nvs_put = [](const char *key, const std::string &v) {
-                    save_nvs((char *)key, v);
-                };
-
-                auto get_wifi_restore_flag = [&]() {
-                    return nvs_str("ble_wifi_rst") == std::string("1");
-                };
-                auto set_wifi_restore_flag = [&](bool enable) {
-                    nvs_put("ble_wifi_rst", enable ? "1" : "0");
-                };
-                auto restore_wifi_if_needed = [&]() {
-                    if (!get_wifi_restore_flag()) return;
-                    ESP_LOGI(TAG, "[BLE] Restoring Wi-Fi after pairing");
-                    set_wifi_restore_flag(false);
-                    esp_err_t err = esp_wifi_start();
-                    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN &&
-                        err != ESP_ERR_WIFI_NOT_STOPPED) {
-                        ESP_LOGW(TAG, "esp_wifi_start returned %s",
-                                 esp_err_to_name(err));
-                    }
-                    err = esp_wifi_connect();
-                    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
-                        ESP_LOGW(TAG, "esp_wifi_connect returned %s",
-                                 esp_err_to_name(err));
-                    }
-                };
-
-                // Helper to generate 6-digit code
-                auto gen_code = []() -> std::string {
-                    uint32_t r = (uint32_t)esp_timer_get_time();
-                    // Very simple PRNG from timer; adequate for UI pairing hint
-                    r = (1103515245u * r + 12345u);
-                    uint32_t n = (r % 900000u) + 100000u;  // 100000-999999
-                    char buf[8];
-                    snprintf(buf, sizeof(buf), "%06u", (unsigned)n);
-                    return std::string(buf);
-                };
-
-                // Initialize state (read once; avoid frequent NVS I/O)
-                bool pairing = (nvs_str("ble_pair") == std::string("true"));
-                long long now_us = esp_timer_get_time();
-                long long exp_us = 0;
-                std::string code = "";
-                {
-                    std::string s = nvs_str("ble_exp_us");
-                    if (!s.empty()) exp_us = std::atoll(s.c_str());
-                    code = nvs_str("ble_code");
-                }
-                if (pairing && exp_us <= now_us) {
-                    pairing = false;
-                    nvs_put("ble_pair", "false");
-                }
-                if (pairing && code.empty()) {
-                    code = gen_code();
-                    nvs_put("ble_code", code);
-                }
-                if (pairing) {
-                    // Ensure BLE is advertising if pairing already ON
-                    ble_uart_enable();
-                }
-
-                int sel = 0;  // 0: Toggle, 1: Refresh Code
-                while (1) {
-                    Joystick::joystick_state_t jst =
-                        joystick.get_joystick_state();
-                    Button::button_state_t tbs = type_button.get_button_state();
-                    Button::button_state_t bbs = back_button.get_button_state();
-                    Button::button_state_t ebs =
-                        enter_button.get_button_state();
-
-                    // Refresh time only (avoid reading from NVS in loop)
-                    now_us = esp_timer_get_time();
-                    long long remain_s =
-                        pairing ? (exp_us - now_us) / 1000000LL : 0;
-                    if (pairing && remain_s <= 0) {
-                        pairing = false;
-                        nvs_put("ble_pair", "false");
-                        ble_uart_disable();
-                        restore_wifi_if_needed();
-                        mqtt_rt_resume();
-                    }
-
-                    // Draw screen
-                    sprite.fillRect(0, 0, 128, 64, 0);
-                    sprite.setFont(&fonts::Font2);
-                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                    sprite.drawCenterString("Bluetooth Pairing", 64, 4);
-
-                    // Status line
-                    char status[32];
-                    snprintf(status, sizeof(status), "Status: %s",
-                             pairing ? "ON" : "OFF");
-                    sprite.setCursor(6, 22);
-                    sprite.print(status);
-
-                    // Code + remain
-                    if (pairing && !code.empty()) {
-                        sprite.setCursor(6, 36);
-                        sprite.print("Code: ");
-                        sprite.print(code.c_str());
-                        sprite.setCursor(6, 50);
-                        char ttl[32];
-                        snprintf(ttl, sizeof(ttl), "Expires: %llds", remain_s);
-                        sprite.print(ttl);
-                    } else {
-                        sprite.setCursor(6, 36);
-                        sprite.print("Press to start pairing");
-                    }
-
-                    // Hint about same account login
-                    // (kept brief due to screen size)
-                    // Example: "Login same account on phone"
-                    push_sprite_safe(0, 0);
-
-                    // Input handling
-                    if (bbs.pushed || jst.left) {
-                        break;  // exit Bluetooth menu
-                    }
-                    if (jst.pushed_left_edge) sel = 0;
-                    if (jst.pushed_right_edge) sel = 1;
-                    if (tbs.pushed || ebs.pushed) {
-                        if (!pairing) {
-                            bool had_wifi = wifi_is_connected();
-                            set_wifi_restore_flag(had_wifi);
-                            if (had_wifi) {
-                                ESP_LOGI(TAG,
-                                         "[BLE] Disabling Wi-Fi for pairing");
-                                esp_err_t derr = esp_wifi_disconnect();
-                                if (derr != ESP_OK &&
-                                    derr != ESP_ERR_WIFI_NOT_STARTED &&
-                                    derr != ESP_ERR_WIFI_CONN) {
-                                    ESP_LOGW(TAG,
-                                             "esp_wifi_disconnect returned %s",
-                                             esp_err_to_name(derr));
-                                }
-                                esp_err_t serr = esp_wifi_stop();
-                                if (serr != ESP_OK &&
-                                    serr != ESP_ERR_WIFI_NOT_STARTED) {
-                                    ESP_LOGW(TAG, "esp_wifi_stop returned %s",
-                                             esp_err_to_name(serr));
-                                }
-                                if (s_wifi_event_group) {
-                                    xEventGroupClearBits(s_wifi_event_group,
-                                                         WIFI_CONNECTED_BIT);
-                                }
-                                constexpr int kMaxWaitIters = 40;
-                                int wait = 0;
-                                while (wifi_is_connected() &&
-                                       wait < kMaxWaitIters) {
-                                    vTaskDelay(50 / portTICK_PERIOD_MS);
-                                    ++wait;
-                                }
-                                if (wifi_is_connected()) {
-                                    ESP_LOGW(
-                                        TAG,
-                                        "[BLE] Wi-Fi still marked connected "
-                                        "after stop; continuing");
-                                }
-                            } else {
-                                set_wifi_restore_flag(false);
-                            }
-                            // Turn on pairing, generate code and 120s window
-                            code = gen_code();
-                            nvs_put("ble_code", code);
-                            long long until =
-                                esp_timer_get_time() + 120LL * 1000000LL;
-                            exp_us = until;
-                            nvs_put("ble_exp_us", std::to_string(until));
-                            nvs_put("ble_pair", "true");
-                            pairing = true;
-                            // Show enabling message, then free sprite to save
-                            // RAM
-                            sprite.fillRect(0, 0, 128, 64, 0);
-                            sprite.setFont(&fonts::Font2);
-                            sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                            sprite.drawCenterString("Enabling BLE...", 64, 26);
-                            push_sprite_safe(0, 0);
-                            // Pause MQTT to free memory before BLE init
-                            mqtt_rt_pause();
-                            // Free sprite buffer (~8KB) to increase largest
-                            // block
-                            sprite.deleteSprite();
-                            ble_uart_enable();
-                            if (ble_uart_last_err() != 0) {
-                                // BLE init failed; roll back and show message
-                                pairing = false;
-                                nvs_put("ble_pair", "false");
-                                restore_wifi_if_needed();
-                                // Recreate sprite to render error
-                                sprite.createSprite(lcd.width(), lcd.height());
-                                sprite.fillRect(0, 0, 128, 64, 0);
-                                sprite.setFont(&fonts::Font2);
-                                sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                                sprite.drawCenterString("BLE Init Failed", 64,
-                                                        22);
-                                sprite.drawCenterString("Check memory/CFG", 64,
-                                                        40);
-                                push_sprite_safe(0, 0);
-                                vTaskDelay(1200 / portTICK_PERIOD_MS);
-                                mqtt_rt_resume();
-                                break;
-                            }
-                            // Success: recreate sprite for UI rendering
-                            sprite.createSprite(lcd.width(), lcd.height());
-                        } else {
-                            // If already on, toggle off
-                            nvs_put("ble_pair", "false");
-                            pairing = false;
-                            ble_uart_disable();
-                            restore_wifi_if_needed();
-                            mqtt_rt_resume();
-                        }
-                        type_button.clear_button_state();
-                        type_button.reset_timer();
-                        enter_button.clear_button_state();
-                        enter_button.reset_timer();
-                        joystick.reset_timer();
-                    }
-
-                    feed_wdt();
-                    vTaskDelay(50 / portTICK_PERIOD_MS);
-                }
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key ==
-                           ui::Key::SettingsOtaManifest) {
-                // Show current manifest URL in a simple modal
-                std::string mf = get_nvs((char *)"ota_manifest");
-                if (mf.empty()) {
-                    mf = "https://mimoc.jp/api/firmware/"
-                         "latest?device=esp32s3&channel=stable";
-                }
-                // Simple wrap: break into chunks that fit the screen width
-                const int max_chars = 21;
-                std::vector<std::string> lines;
-                for (size_t p = 0; p < mf.size(); p += max_chars) {
-                    lines.emplace_back(mf.substr(p, max_chars));
-                    if (lines.size() >= 3) break;  // fit on 64px height
-                }
-                // Clear the triggering button state to avoid instant exit
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                back_button.clear_button_state();
-                back_button.reset_timer();
-                while (1) {
-                    feed_wdt();
-                    Joystick::joystick_state_t js =
-                        joystick.get_joystick_state();
-                    Button::button_state_t tb = type_button.get_button_state();
-                    Button::button_state_t bb = back_button.get_button_state();
-                    sprite.fillRect(0, 0, 128, 64, 0);
-                    sprite.setFont(&fonts::Font2);
-                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                    sprite.drawCenterString("OTA Manifest", 64, 4);
-                    int y = 22;
-                    for (auto &l : lines) {
-                        sprite.drawCenterString(l.c_str(), 64, y);
-                        y += 14;
-                    }
-                    push_sprite_safe(0, 0);
-                    if (bb.pushed || js.left || tb.pushed) {
-                        break;
-                    }
-                    feed_wdt();
-                    vTaskDelay(50 / portTICK_PERIOD_MS);
-                }
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                joystick.reset_timer();
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key ==
-                           ui::Key::SettingsUpdateNow) {
-                // Reboot into OTA-minimal mode (only Wi-Fi + OTA tasks)
-                mqtt_rt_pause();
-                sprite.fillRect(0, 0, 128, 64, 0);
-                sprite.setFont(&fonts::Font2);
-                sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                sprite.drawCenterString("Rebooting OTA...", 64, 26);
-                push_sprite_safe(0, 0);
-                vTaskDelay(150 / portTICK_PERIOD_MS);
-                mobus_request_ota_minimal_mode();
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key ==
-                           ui::Key::SettingsAutoUpdate) {
-                // Toggle auto OTA ON/OFF
-                std::string au = get_nvs((char *)"ota_auto");
-                bool on = (au == "true");
-                on = !on;
-                save_nvs((char *)"ota_auto",
-                         on ? std::string("true") : std::string("false"));
-                // Feedback
-                sprite.fillRect(0, 0, 128, 64, 0);
-                sprite.setFont(&fonts::Font2);
-                sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                sprite.drawCenterString(
-                    on ? "Auto Update: ON" : "Auto Update: OFF", 64, 22);
-                push_sprite_safe(0, 0);
-                vTaskDelay(800 / portTICK_PERIOD_MS);
-                // Start/stop background task accordingly (best-effort)
-                if (on) {
-                    ota_client::start_background_task();
-                }
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                joystick.reset_timer();
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key ==
-                           ui::Key::SettingsFirmwareInfo) {
-                // Consume the button press before entering the info loop to
-                // avoid instant exit
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                back_button.clear_button_state();
-                back_button.reset_timer();
-                vTaskDelay(pdMS_TO_TICKS(120));
-                // Show version and partitions until user exits
-                while (1) {
-                    // Fetch info
-                    const esp_app_desc_t *app = esp_app_get_description();
-                    const esp_partition_t *running =
-                        esp_ota_get_running_partition();
-                    const esp_partition_t *boot = esp_ota_get_boot_partition();
-                    const char *ver = app ? app->version : "unknown";
-                    const char *run_label = running ? running->label : "-";
-                    const char *boot_label = boot ? boot->label : "-";
-
-                    sprite.fillRect(0, 0, 128, 64, 0);
-                    sprite.setFont(&fonts::Font2);
-                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                    sprite.drawCenterString("Firmware Info", 64, 0);
-
-                    char line[64];
-                    snprintf(line, sizeof(line), "Ver: %s", ver);
-                    sprite.drawString(line, 2, 16);
-                    if (running) {
-                        snprintf(line, sizeof(line), "Run: %s @%06lx",
-                                 run_label, (unsigned long)running->address);
-                    } else {
-                        snprintf(line, sizeof(line), "Run: -");
-                    }
-                    sprite.drawString(line, 2, 28);
-                    if (boot) {
-                        snprintf(line, sizeof(line), "Boot:%s @%06lx",
-                                 boot_label, (unsigned long)boot->address);
-                    } else {
-                        snprintf(line, sizeof(line), "Boot: -");
-                    }
-                    sprite.drawString(line, 2, 40);
-
-                    // Show short hint
-                    sprite.drawString("Back=Exit", 2, 54);
-                    push_sprite_safe(0, 0);
-
-                    // Exit when back or type pressed
-                    Button::button_state_t tbs = type_button.get_button_state();
-                    Button::button_state_t bbs = back_button.get_button_state();
-                    if (tbs.pushed || bbs.pushed) {
-                        type_button.clear_button_state();
-                        type_button.reset_timer();
-                        back_button.clear_button_state();
-                        back_button.reset_timer();
-                        break;
-                    }
-                    vTaskDelay(100 / portTICK_PERIOD_MS);
-                }
-                joystick.reset_timer();
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsDevelop) {
-                // Toggle develop mode ON/OFF
-                std::string dev = get_nvs((char *)"develop_mode");
-                bool on = (dev == "true");
-                on = !on;
-                save_nvs((char *)"develop_mode",
-                         on ? std::string("true") : std::string("false"));
-                if (on) {
-                    save_nvs((char *)"server_scheme", std::string("http"));
-                    save_nvs((char *)"server_host",
-                             std::string("192.168.2.184"));
-                    save_nvs((char *)"server_port", std::string("8080"));
-                    save_nvs((char *)"mqtt_host", std::string("192.168.2.184"));
-                    save_nvs((char *)"mqtt_port", std::string("1883"));
-                } else {
-                    save_nvs((char *)"server_scheme", std::string("https"));
-                    save_nvs((char *)"server_host", std::string("mimoc.jp"));
-                    save_nvs((char *)"server_port", std::string("443"));
-                    save_nvs((char *)"mqtt_host", std::string("mimoc.jp"));
-                    save_nvs((char *)"mqtt_port", std::string("1883"));
-                }
-                // Feedback screen
-                sprite.fillRect(0, 0, 128, 64, 0);
-                sprite.setFont(&fonts::Font2);
-                sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                sprite.drawCenterString(on ? "Develop: ON" : "Develop: OFF", 64,
-                                        22);
-                sprite.drawCenterString(
-                    on ? "http://192.168.2.184" : "https://mimoc.jp", 64, 40);
-                push_sprite_safe(0, 0);
-                vTaskDelay(1200 / portTICK_PERIOD_MS);
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                joystick.reset_timer();
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsProfile) {
-                Profile();
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                joystick.reset_timer();
-
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key == ui::Key::SettingsRtc) {
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                back_button.clear_button_state();
-                back_button.reset_timer();
-                enter_button.clear_button_state();
-                enter_button.reset_timer();
-                joystick.reset_timer();
-
-                P2P_Display p2p;
-                p2p.morse_p2p();
-
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                back_button.clear_button_state();
-                back_button.reset_timer();
-                enter_button.clear_button_state();
-                enter_button.reset_timer();
-                joystick.reset_timer();
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key ==
-                           ui::Key::SettingsOpenChat) {
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                enter_button.clear_button_state();
-                back_button.clear_button_state();
-                joystick.reset_timer();
-
-                open_chat.running_flag = true;
-                open_chat.start_open_chat_task();
-                while (open_chat.running_flag) {
-                    vTaskDelay(100 / portTICK_PERIOD_MS);
-                }
-                sprite.setFont(&fonts::Font2);
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key ==
-                           ui::Key::SettingsComposer) {
-                Composer comp;
-                comp.running_flag = true;
-                comp.start_composer_task();
-                while (comp.running_flag) {
-                    vTaskDelay(100 / portTICK_PERIOD_MS);
-                }
-                sprite.setFont(&fonts::Font2);
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                joystick.reset_timer();
-            } else if (type_button_state.pushed &&
-                       settings[select_index].key ==
-                           ui::Key::SettingsFactoryReset) {
-                // Confirmation dialog
-                type_button.clear_button_state();
-                type_button.reset_timer();
-                back_button.clear_button_state();
-                back_button.reset_timer();
-                joystick.reset_timer();
-                int sel = 0;  // 0: No, 1: Yes
-                while (1) {
-                    // Read input
-                    Joystick::joystick_state_t jst =
-                        joystick.get_joystick_state();
-                    Button::button_state_t tbs = type_button.get_button_state();
-                    Button::button_state_t bbs = back_button.get_button_state();
-
-                    if (jst.pushed_left_edge) sel = 0;
-                    if (jst.pushed_right_edge) sel = 1;
-
-                    sprite.fillRect(0, 0, 128, 64, 0);
-                    sprite.setFont(&fonts::Font2);
-                    sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                    sprite.drawCenterString("Factory Reset?", 64, 10);
-
-                    // Draw buttons
-                    // No button (left)
-                    uint16_t noFg = (sel == 0) ? 0x0000 : 0xFFFF;
-                    uint16_t noBg = (sel == 0) ? 0xFFFF : 0x0000;
-                    sprite.fillRoundRect(12, 34, 40, 18, 3, noBg);
-                    sprite.drawRoundRect(12, 34, 40, 18, 3, 0xFFFF);
-                    sprite.setTextColor(noFg, noBg);
-                    sprite.drawCenterString("No", 12 + 20, 36);
-
-                    // Yes button (right)
-                    uint16_t ysFg = (sel == 1) ? 0x0000 : 0xFFFF;
-                    uint16_t ysBg = (sel == 1) ? 0xFFFF : 0x0000;
-                    sprite.fillRoundRect(76, 34, 40, 18, 3, ysBg);
-                    sprite.drawRoundRect(76, 34, 40, 18, 3, 0xFFFF);
-                    sprite.setTextColor(ysFg, ysBg);
-                    sprite.drawCenterString("Yes", 76 + 20, 36);
-
-                    push_sprite_safe(0, 0);
-
-                    if (bbs.pushed) {
-                        // Cancel and return to settings list
-                        break;
-                    }
-                    if (tbs.pushed) {
-                        if (sel == 1) {
-                            // Proceed with reset
-                            sprite.fillRect(0, 0, 128, 64, 0);
-                            sprite.setTextColor(0xFFFFFFu, 0x000000u);
-                            sprite.drawCenterString("Resetting...", 64, 22);
-                            sprite.drawCenterString("Erasing NVS", 64, 40);
-                            push_sprite_safe(0, 0);
-                            sprite.fillRect(0, 0, 128, 64, 0);
-                            sprite.drawCenterString("Rebooting...", 64, 30);
-                            push_sprite_safe(0, 0);
-                            vTaskDelay(200 / portTICK_PERIOD_MS);
-                            mobus_request_factory_reset();
-                        }
-                        // If No selected or after failure, exit dialog
-                        break;
-                    }
-
-                    // debounce
-                    vTaskDelay(10 / portTICK_PERIOD_MS);
-                }
+            ui::Key selected_key = app::settingmenuview::selected_key_or_default(
+                view_state, ui::Key::SettingsProfile);
+            const auto action =
+                app::settingmenuaction::resolve(selected_key,
+                                                type_button_state.pushed);
+            switch (action) {
+                case app::settingmenuaction::Action::Wifi:
+                    run_wifi_action();
+                    break;
+                case app::settingmenuaction::Action::Language:
+                    run_language_action(lang);
+                    break;
+                case app::settingmenuaction::Action::Sound:
+                    run_sound_action();
+                    break;
+                case app::settingmenuaction::Action::Vibration:
+                    run_vibration_action();
+                    break;
+                case app::settingmenuaction::Action::BootSound:
+                    run_boot_sound_action();
+                    break;
+                case app::settingmenuaction::Action::Bluetooth:
+                    run_bluetooth_action();
+                    break;
+                case app::settingmenuaction::Action::OtaManifest:
+                    run_ota_manifest_action();
+                    break;
+                case app::settingmenuaction::Action::UpdateNow:
+                    run_update_now_action();
+                    break;
+                case app::settingmenuaction::Action::AutoUpdate:
+                    run_auto_update_action();
+                    break;
+                case app::settingmenuaction::Action::FirmwareInfo:
+                    run_firmware_info_action();
+                    break;
+                case app::settingmenuaction::Action::Develop:
+                    run_develop_action();
+                    break;
+                case app::settingmenuaction::Action::Profile:
+                    run_profile_action();
+                    break;
+                case app::settingmenuaction::Action::Rtc:
+                    run_rtc_action();
+                    break;
+                case app::settingmenuaction::Action::OpenChat:
+                    run_open_chat_action();
+                    break;
+                case app::settingmenuaction::Action::Composer:
+                    run_composer_action();
+                    break;
+                case app::settingmenuaction::Action::FactoryReset:
+                    run_factory_reset_action();
+                    break;
+                case app::settingmenuaction::Action::None:
+                default:
+                    break;
             }
 
             vTaskDelay(1);
@@ -6601,7 +5376,6 @@ static void play_morse_message(const std::string &text,
 }
 
 class MenuDisplay {
-#define NAME_LENGTH_MAX 8
    public:
     static constexpr uint32_t kTaskStackWords = 4288;
 
@@ -6630,24 +5404,11 @@ class MenuDisplay {
     // static HttpClient http;
 
     static void menu_task(void *pvParameters) {
-        struct menu_t {
-            char menu_name[NAME_LENGTH_MAX];
-            int display_position_x;
-            int display_position_y;
-        };
-
-        struct menu_t menu_list[3] = {
-            {"Talk", 9, 22}, {"Box", 51, 22}, {"Game", 93, 22}};
-
-        int cursor_index = 0;
-
         HttpClient &http_client = HttpClient::shared();
 
         Joystick joystick;
-
         PowerMonitor power;
 
-        // メニューから遷移する機能のインスタンス
         Game game;
         ContactBook contactBook;
         SettingMenu settingMenu;
@@ -6659,6 +5420,13 @@ class MenuDisplay {
         Button charge_stat(GPIO_NUM_8);
 
         lcd.setRotation(2);
+
+        ui::menu::ViewState view_state;
+        ui::menu::Presenter presenter(view_state);
+        ui::menu::Renderer renderer;
+
+        const int icon_pos_x[3] = {9, 51, 93};
+        const int icon_pos_y[3] = {22, 22, 22};
 
         auto ensure_menu_sprite = [&]() -> bool {
             if (!ensure_sprite_surface(lcd.width(), lcd.height(), 8,
@@ -6677,18 +5445,6 @@ class MenuDisplay {
 
         int64_t last_status_update_us = esp_timer_get_time();
         bool needs_redraw = true;
-        // 電波強度(0-4 bars)
-        int radioLevel = 0;
-        auto rssi_to_bars = [](int rssi) -> int {
-            // Typical Wi-Fi RSSI scale:
-            // >= -55 excellent, >= -67 good, >= -75 fair, >= -85 weak, else
-            // poor
-            if (rssi >= -55) return 4;
-            if (rssi >= -67) return 3;
-            if (rssi >= -75) return 2;
-            if (rssi >= -85) return 1;
-            return 0;
-        };
 
         // 通知の取得はOTA検証が完了するまで少し待つ（フラッシュ書込みと競合を避ける）
         {
@@ -6707,14 +5463,12 @@ class MenuDisplay {
 
         // バッテリー電圧の取得
         PowerMonitor::power_state_t power_state = power.get_power_state();
-        // reduce console traffic to avoid stressing VFS/stdio during UI init
-        // ESP_LOGD(TAG, "Power Voltage:%d", power_state.power_voltage);
-
-        if (power_state.power_voltage > 140) {
-            power_state.power_voltage = 140;
-        }
-        float power_per = power_state.power_voltage / 1.4;
-        int power_per_pix = (int)(0.12 * power_per);
+        const int clamped_voltage =
+            app::menu::clamp_power_voltage(power_state.power_voltage);
+        view_state.power_per_pix = app::menu::power_voltage_to_pixel(clamped_voltage);
+        view_state.radio_level = 0;
+        view_state.menu_count = 3;
+        view_state.has_notification = app::menu::has_notification(notif_res);
 
         auto enter_light_sleep = [&](const char *reason, bool force) -> bool {
             (void)force;
@@ -6779,25 +5533,21 @@ class MenuDisplay {
                 // 電波強度を更新
                 wifi_ap_record_t ap = {};
                 if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
-                    int rssi = ap.rssi;
-                    // ESP_LOGD(TAG, "RSSI:%d", rssi);
-                    radioLevel = rssi_to_bars(rssi);
+                    view_state.radio_level = app::menu::rssi_to_bars(ap.rssi);
                 } else {
-                    radioLevel = 0;
+                    view_state.radio_level = 0;
                 }
 
                 // バッテリー電圧を更新
                 power_state = power.get_power_state();
-                // ESP_LOGD(TAG, "Power Voltage:%d", power_state.power_voltage);
-
-                if (power_state.power_voltage > 140) {
-                    power_state.power_voltage = 140;
-                }
-                power_per = power_state.power_voltage / 1.4;
-                power_per_pix = (int)(0.12 * power_per);
+                const int updated_voltage =
+                    app::menu::clamp_power_voltage(power_state.power_voltage);
+                view_state.power_per_pix =
+                    app::menu::power_voltage_to_pixel(updated_voltage);
 
                 // 通知情報を更新
                 notif_res = http_client.get_notifications();
+                view_state.has_notification = app::menu::has_notification(notif_res);
                 last_status_update_us = now_us;
                 needs_redraw = true;
             }
@@ -6806,7 +5556,6 @@ class MenuDisplay {
                 charge_stat.get_button_state();
             charge_stat.clear_button_state();
             charge_stat.reset_timer();
-            int menu_lists_n = sizeof(menu_list) / sizeof(menu_t);
 
             Joystick::joystick_state_t joystick_state =
                 joystick.get_joystick_state();
@@ -6822,25 +5571,35 @@ class MenuDisplay {
             Button::button_state_t enter_button_state =
                 enter_button.get_button_state();
 
-            if (type_button_state.pushed) {
+            ui::InputSnapshot input{};
+            input.left_edge = joystick_state.pushed_left_edge;
+            input.right_edge = joystick_state.pushed_right_edge;
+            input.type_pressed = type_button_state.pushed;
+            input.enter_pressed = enter_button_state.pushed;
+
+            if (presenter.handle_input(input)) {
+                needs_redraw = true;
+            }
+
+            app::menu::MenuAction action = presenter.resolve_action(input);
+            if (action != app::menu::MenuAction::None) {
                 // ESP_LOGD(TAG, "Button pushed! time=%lld type=%c",
                 // type_button_state.pushing_sec, type_button_state.push_type);
-
-                if (cursor_index == 0) {
+                if (action == app::menu::MenuAction::OpenContactBook) {
                     contactBook.running_flag = true;
                     contactBook.start_message_menue_task();
                     while (contactBook.running_flag) {
                         vTaskDelay(100 / portTICK_PERIOD_MS);
                     }
                     sprite.setFont(&fonts::Font4);
-                } else if (cursor_index == 1) {
+                } else if (action == app::menu::MenuAction::OpenSettings) {
                     settingMenu.running_flag = true;
                     settingMenu.start_message_menue_task();
                     while (settingMenu.running_flag) {
                         vTaskDelay(100 / portTICK_PERIOD_MS);
                     }
                     sprite.setFont(&fonts::Font4);
-                } else if (cursor_index == 2) {
+                } else if (action == app::menu::MenuAction::OpenGame) {
                     game.running_flag = true;
                     game.start_game_task();
                     while (game.running_flag) {
@@ -6851,25 +5610,12 @@ class MenuDisplay {
 
                 // 通知情報を更新
                 notif_res = http_client.get_notifications();
+                view_state.has_notification = app::menu::has_notification(notif_res);
                 needs_redraw = true;
 
                 type_button.clear_button_state();
                 type_button.reset_timer();
                 joystick.reset_timer();
-            }
-
-            if (joystick_state.pushed_left_edge) {
-                cursor_index -= 1;
-                if (cursor_index < 0) {
-                    cursor_index = menu_lists_n - 1;
-                }
-                needs_redraw = true;
-            } else if (joystick_state.pushed_right_edge) {
-                cursor_index += 1;
-                if (cursor_index >= menu_lists_n) {
-                    cursor_index = 0;
-                }
-                needs_redraw = true;
             }
 
             // esp_task_wdt_reset();
@@ -6878,83 +5624,77 @@ class MenuDisplay {
             int button_free_time = type_button_state.release_sec / 1000000;
             int joystick_free_time = joystick_state.release_sec / 1000000;
 
-            if (button_free_time >= 30 and joystick_free_time >= 30) {
+            view_state.charging = type_charge_stat.pushing;
+            const bool idle_timeout = app::menu::is_idle_timeout(
+                button_free_time, joystick_free_time);
+            const bool should_sleep = app::menu::should_enter_sleep(
+                button_free_time, joystick_free_time, input.enter_pressed);
+            if (idle_timeout) {
                 printf("button_free_time:%d\n", button_free_time);
                 printf("joystick_free_time:%d\n", joystick_free_time);
-                if (enter_light_sleep("idle timeout", false)) {
-                    continue;
-                }
-            } else if (enter_button_state.pushed) {
-                if (enter_light_sleep("enter button", true)) {
+            }
+            if (should_sleep) {
+                const char *sleep_reason =
+                    idle_timeout ? "idle timeout" : "enter button";
+                if (enter_light_sleep(sleep_reason, !idle_timeout)) {
                     continue;
                 }
             }
 
             if (needs_redraw) {
-                sprite.fillRect(0, 0, 128, 64, 0);
-                // 画面上部のステータス表示
-                sprite.drawFastHLine(0, 12, 128, 0xFFFF);
-
-                // 電波状況表示
-                int rx = 4;
-                int ry = 6;
-                int rh = 4;
-                for (int r = radioLevel; 0 < r; r--) {
-                    sprite.fillRect(rx, ry, 2, rh, 0xFFFF);
-                    rx += 3;
-                    ry -= 2;
-                    rh += 2;
-                }
-
-                // 電池残量表示
-                sprite.drawRoundRect(110, 0, 14, 8, 2, 0xFFFF);
-                sprite.fillRect(111, 0, power_per_pix, 8, 0xFFFF);
-                if (type_charge_stat.pushing) {
-                    sprite.fillRect(105, 2, 2, 2, 0xFFFF);
-                }
-                sprite.fillRect(124, 2, 1, 4, 0xFFFF);
-
-                // Menu選択の表示
-                sprite.fillRoundRect(
-                    menu_list[cursor_index].display_position_x - 2,
-                    menu_list[cursor_index].display_position_y - 2, 34, 34, 5,
-                    0xFFFF);
-
-                // Menu項目表示
-                for (int i = 0; i < menu_lists_n; i++) {
-                    const unsigned char *icon_image = mail_icon;
-                    if (i == 1) {
-                        icon_image = setting_icon;
-                    } else if (i == 2) {
-                        icon_image = game_icon;
-                    }
-                    if (cursor_index == i) {
-                        sprite.drawBitmap(menu_list[i].display_position_x,
-                                          menu_list[i].display_position_y,
-                                          icon_image, 30, 30, TFT_WHITE,
-                                          TFT_BLACK);
-                    } else {
-                        sprite.drawBitmap(menu_list[i].display_position_x,
-                                          menu_list[i].display_position_y,
-                                          icon_image, 30, 30, TFT_BLACK,
-                                          TFT_WHITE);
-                    }
-                }
-
-                for (int i = 0; i < notif_res["notifications"].size(); i++) {
-                    std::string notification_flag(
-                        notif_res["notifications"][i]["notification_flag"]);
-                    if (notification_flag == "true") {
-                        if (cursor_index == 0) {
-                            sprite.fillCircle(37, 25, 4, 0);
-                        } else {
-                            sprite.fillCircle(37, 25, 4, 0xFFFF);
-                        }
-                        break;
-                    }
-                }
-
-                push_sprite_safe(0, 0);
+                const ui::menu::RenderApi render_api{
+                    .begin_frame =
+                        [&]() {
+                            sprite.fillRect(0, 0, 128, 64, 0);
+                        },
+                    .draw_status =
+                        [&](int radio_level, int battery_pix, bool charging) {
+                            sprite.drawFastHLine(0, 12, 128, 0xFFFF);
+                            int rx = 4;
+                            int ry = 6;
+                            int rh = 4;
+                            for (int r = radio_level; r > 0; --r) {
+                                sprite.fillRect(rx, ry, 2, rh, 0xFFFF);
+                                rx += 3;
+                                ry -= 2;
+                                rh += 2;
+                            }
+                            sprite.drawRoundRect(110, 0, 14, 8, 2, 0xFFFF);
+                            sprite.fillRect(111, 0, battery_pix, 8, 0xFFFF);
+                            if (charging) {
+                                sprite.fillRect(105, 2, 2, 2, 0xFFFF);
+                            }
+                            sprite.fillRect(124, 2, 1, 4, 0xFFFF);
+                        },
+                    .draw_selection =
+                        [&](int x, int y, int w, int h, int r) {
+                            sprite.fillRoundRect(x, y, w, h, r, 0xFFFF);
+                        },
+                    .draw_menu_icon =
+                        [&](int index, bool selected) {
+                            const unsigned char *icon_image = mail_icon;
+                            if (index == 1) {
+                                icon_image = setting_icon;
+                            } else if (index == 2) {
+                                icon_image = game_icon;
+                            }
+                            if (selected) {
+                                sprite.drawBitmap(icon_pos_x[index],
+                                                  icon_pos_y[index], icon_image,
+                                                  30, 30, TFT_WHITE, TFT_BLACK);
+                            } else {
+                                sprite.drawBitmap(icon_pos_x[index],
+                                                  icon_pos_y[index], icon_image,
+                                                  30, 30, TFT_BLACK, TFT_WHITE);
+                            }
+                        },
+                    .draw_notification =
+                        [&](bool selected_menu) {
+                            sprite.fillCircle(37, 25, 4,
+                                              selected_menu ? 0 : 0xFFFF);
+                        },
+                    .present = [&]() { push_sprite_safe(0, 0); }};
+                renderer.render(view_state, render_api);
                 needs_redraw = false;
                 vTaskDelay(pdMS_TO_TICKS(20));
             } else {
