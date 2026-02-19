@@ -11,17 +11,17 @@
 | タスク名 | 定義位置 | 起動契機 | スタック/優先度/コア | 主な挙動 |
 | --- | --- | --- | --- | --- |
 | `ota_mark_valid` | `main/main.cpp:764` | ブート時に遅延OTA検証 | 4096 words ≒ 16KB / prio5 / 任意 | 8秒待機→OTA状態確認→必要に応じWi-Fi停止/再開→`vTaskDelete` |
-| `notification_effects::task_body` | `components/Notiff/src/notification_effects.cpp:42` | `notification_effects::init()` or `signal_new_message()` | 4096 words ≒ 16KB / prio6 / 任意 | 通知待機→ハプティクス＋LED演出→常駐 |
-| `check_notification_task` | `components/Notiff/include/notification.hpp:70` | `Notification::check_notification()`（現状未使用） | 4096 words ≒ 16KB / prio5 / core0 | `notif_flag`ポーリング→3秒周期ディレイ→常駐 |
+| `notification_effects::task_body` | `components/notification/src/notification_effects.cpp:42` | `notification_effects::init()` or `signal_new_message()` | 4096 words ≒ 16KB / prio6 / 任意 | 通知待機→ハプティクス＋LED演出→常駐 |
+| `check_notification_task` | `components/notification/include/notification.hpp:70` | `Notification::check_notification()`（現状未使用） | 4096 words ≒ 16KB / prio5 / core0 | `notif_flag`ポーリング→3秒周期ディレイ→常駐 |
 | `notification_task` | 同上:84 | `Notification::recv_notification()` | 4096 words ≒ 16KB / prio20 / core0 | サウンド＋OLED表示→完了後`notify_task_handle=nullptr`→`vTaskDelete` |
-| `http_post_message_task` | `components/Network/include/http_client.hpp:482` | `HttpClient::post_message()` | 8192 words ≒ 32KB / prio5 / core1 | チャット送信→APIフォールバック→`vTaskDelete` |
+| `http_post_message_task` | `components/network/include/http_client.hpp:482` | `HttpClient::post_message()` | 8192 words ≒ 32KB / prio5 / core1 | チャット送信→APIフォールバック→`vTaskDelete` |
 | `http_get_message_task` | 同:233 | `HttpClient::get_message()` | 6192 words ≒ 25KB / prio5 / 任意 | API認証→メッセージ取得→結果格納→`vTaskDelete` |
 | `http_get_friends_task` | 同:345 | `HttpClient::fetch_friends_blocking()` | 6144 words ≒ 25KB / prio5 / 任意 | 友だち一覧取得→待機タスクへNotify→`vTaskDelete` |
 | `http_get_notifications_task` | 同:377 | `HttpClient::start_notifications()` | 6000 words ≒ 24KB / prio5 / core0 | Wi-Fi待機→MQTT購読→通知発火→常駐 |
-| `set_rtc` | `components/Network/include/ntp.hpp:60` | `start_rtc_task()` | 4048 words ≒ 16KB / prio6 / core0 | Wi-Fiイベント待機→SNTP同期→1分周期更新 |
-| `ota_bg_task` | `components/Upgrade/ota_client.cpp:336` | `ota_client::start_background_task()` | 8192 words ≒ 32KB / prio5 / core0 | `ota_auto`確認→OTA実行→6時間周期ループ |
-| `Max98357A::tone_task_main` | `components/Audio/include/max98357a.hpp:447` | `Max98357A::start_tone()` | 2048 words ≒ 8KB / prio5 / core1 | DMAバッファで連続トーン→停止処理→`vTaskDelete(self)` |
-| `MessageBox::box_task` | `components/Display/include/oled.hpp:917` | `MessageBox::start_box_task()` | 9216 words ≒ 37KB / prio6 / core1 | メッセージUI→終了時にフラグ/HW解放→`vTaskDelete` |
+| `set_rtc` | `components/network/include/ntp.hpp:60` | `start_rtc_task()` | 4048 words ≒ 16KB / prio6 / core0 | Wi-Fiイベント待機→SNTP同期→1分周期更新 |
+| `ota_bg_task` | `components/ota_update/ota_client.cpp:336` | `ota_client::start_background_task()` | 8192 words ≒ 32KB / prio5 / core0 | `ota_auto`確認→OTA実行→6時間周期ループ |
+| `Max98357A::tone_task_main` | `components/audio/include/max98357a.hpp:447` | `Max98357A::start_tone()` | 2048 words ≒ 8KB / prio5 / core1 | DMAバッファで連続トーン→停止処理→`vTaskDelete(self)` |
+| `MessageBox::box_task` | `components/display/include/oled.hpp:917` | `MessageBox::start_box_task()` | 9216 words ≒ 37KB / prio6 / core1 | メッセージUI→終了時にフラグ/HW解放→`vTaskDelete` |
 | `ContactBook::message_menue_task` | 同:1544 | `ContactBook::start_message_menue_task()` | 4096 words ≒ 16KB / prio6 / core1 | 連絡先UI＋WDT管理→終了で`vTaskDelete` |
 | `OpenChat::open_chat_task` | 同:2803 | `OpenChat::start_open_chat_task()` | 9216 words ≒ 37KB / prio6 / core1 | MQTT常時受信UI→退出で`vTaskDelete` |
 | `WiFiSetting::wifi_setting_task` | 同:2829 | `WiFiSetting::start_wifi_setting_task()` | 8096 words ≒ 32KB / prio6 / core1 | APスキャンUI→終了でハンドル解放 |
@@ -84,6 +84,6 @@ stateDiagram-v2
 
 ## 備考
 
-- `components/Notiff/include/notification.hpp`内タスクは旧実装で現状未使用。復活させる場合は同時実行数やWDTの扱いを再確認する。
+- `components/notification/include/notification.hpp`内タスクは旧実装で現状未使用。復活させる場合は同時実行数やWDTの扱いを再確認する。
 - 常駐系（`set_rtc`、`http_get_notifications_task` 等）だけで内部RAM消費が大きく、UIタスクが最大全開になるとピークが200KB超に達する。スタックハイウォータマークのログを活用し、削減できるタスクから順次調整するのが有効。
 - OTA関連はワンショットの`ota_mark_valid`と常駐の`ota_bg_task`の2種がある。ファーム更新ポリシーを見直す際は両方を意識すること。

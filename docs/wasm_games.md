@@ -89,7 +89,7 @@ Bits fire once per edge (debounced) and are cleared automatically.
 ## Adding New Games
 
 - Place the compiled `.wasm` under `fs/games/` so it is bundled into SPIFFS.
-- Add a wrapper similar to [`mopping.h`](../components/Display/include/mopping.h) or call `run_game("/spiffs/games/<name>.wasm")` directly.
+- Add a wrapper similar to [`mopping.h`](../components/display/include/mopping.h) or call `run_game("/spiffs/games/<name>.wasm")` directly.
 - Extend `host_draw_sprite` (in `wasm_game_runtime.cpp`) to expose additional sprite IDs or utilities as needed.
 - Update the UI/menu to launch the new game.
 
