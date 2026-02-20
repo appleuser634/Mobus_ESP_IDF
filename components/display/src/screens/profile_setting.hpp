@@ -6,7 +6,9 @@
 class ProfileSetting {
    public:
     static constexpr uint32_t kProfileTaskStackWords = 16384;
-    static constexpr uint32_t kAuthTaskStackWords = 16384;
+    // Login/register path used about 4k words in observed watermark logs.
+    // Keep headroom while reducing internal RAM pressure during onboarding.
+    static constexpr uint32_t kAuthTaskStackWords = 8192;
     struct AuthTaskArgs {
         bool signup = false;
         std::string login_id;

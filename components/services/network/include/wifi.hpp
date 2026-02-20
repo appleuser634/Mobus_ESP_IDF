@@ -2,6 +2,7 @@
 
 #include <string.h>
 #include <atomic>
+#include <mutex>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -34,6 +35,7 @@ extern EventGroupHandle_t s_wifi_event_group;
  * - we failed to connect after the maximum amount of retries */
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
+#define WIFI_SCAN_DONE_BIT BIT2
 
 static int s_retry_num = 0;
 static bool s_handlers_registered = false;
@@ -44,6 +46,7 @@ static std::atomic<bool> s_post_connect_task_running{false};
 static std::atomic<bool> s_ble_fallback_active{false};
 static std::atomic<bool> s_wifi_retry_task_running{false};
 static std::atomic<bool> s_wifi_driver_ready{false};
+static std::mutex s_wifi_op_mutex;
 
 constexpr char kBleAutoFallbackKey[] = "ble_auto_fb";
 constexpr char kBleAutoDeferOnceKey[] = "ble_auto_dfr1";
@@ -105,6 +108,17 @@ class WiFi {
         ESP_LOGI(TAG, "Factory setup mode key '%s'='%s'", kFactorySetupModeKey,
                  v.c_str());
         return v == "1";
+    }
+
+    static void ensure_event_handlers_registered() {
+        if (s_handlers_registered) return;
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(
+            WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL,
+            &s_instance_any_id));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(
+            IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL,
+            &s_instance_got_ip));
+        s_handlers_registered = true;
     }
 
     static void ensure_ble_fallback_enabled() {
@@ -269,10 +283,16 @@ class WiFi {
                     ESP_LOGW(TAG, "Failed to start wifi_post_connect task");
                 }
             }
+        } else if (event_base == WIFI_EVENT &&
+                   event_id == WIFI_EVENT_SCAN_DONE) {
+            if (s_wifi_event_group) {
+                xEventGroupSetBits(s_wifi_event_group, WIFI_SCAN_DONE_BIT);
+            }
         }
     }
 
     void wifi_set_sta(std::string WIFI_SSID = "", std::string WIFI_PASS = "") {
+        std::lock_guard<std::mutex> wifi_lock(s_wifi_op_mutex);
         s_wifi_reconfiguring.store(true);
         if (!s_wifi_event_group) {
             s_wifi_event_group = xEventGroupCreate();
@@ -282,15 +302,7 @@ class WiFi {
         }
         s_retry_num = 0;
 
-        if (!s_handlers_registered) {
-            ESP_ERROR_CHECK(esp_event_handler_instance_register(
-                WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL,
-                &s_instance_any_id));
-            ESP_ERROR_CHECK(esp_event_handler_instance_register(
-                IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL,
-                &s_instance_got_ip));
-            s_handlers_registered = true;
-        }
+        ensure_event_handlers_registered();
 
         wifi_config_t wifi_config = {};
 
@@ -328,7 +340,7 @@ class WiFi {
         memcpy(wifi_config.sta.password, WIFI_PASS.c_str(), pass_len);
         wifi_config.sta.password[pass_len] = '\0';
 
-        // If we are already running, disconnect and stop before applying new config
+        // If already running, disconnect before applying new config.
         if (wifi_was_started) {
             esp_err_t err = esp_wifi_disconnect();
             if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED &&
@@ -336,20 +348,18 @@ class WiFi {
                 ESP_LOGW(TAG, "esp_wifi_disconnect returned %s",
                          esp_err_to_name(err));
             }
-            err = esp_wifi_stop();
-            if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
-                ESP_LOGW(TAG, "esp_wifi_stop returned %s", esp_err_to_name(err));
-            }
         }
 
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-        esp_err_t start_err = esp_wifi_start();
-        if (start_err == ESP_ERR_WIFI_CONN ||
-            start_err == ESP_ERR_WIFI_NOT_STOPPED) {
-            start_err = ESP_OK;
+        if (!wifi_was_started) {
+            esp_err_t start_err = esp_wifi_start();
+            if (start_err == ESP_ERR_WIFI_CONN ||
+                start_err == ESP_ERR_WIFI_NOT_STOPPED) {
+                start_err = ESP_OK;
+            }
+            ESP_ERROR_CHECK(start_err);
         }
-        ESP_ERROR_CHECK(start_err);
 
         ESP_LOGI(TAG, "wifi_init_sta finished.");
 
@@ -457,6 +467,7 @@ class WiFi {
     wifi_state_t get_wifi_state() { return wifi_state; }
 
     static void wifi_scan(uint16_t *number, wifi_ap_record_t *ap_info) {
+        std::lock_guard<std::mutex> wifi_lock(s_wifi_op_mutex);
         if (number == nullptr || ap_info == nullptr) {
             ESP_LOGE(TAG, "wifi_scan: invalid args (number/ap_info is null)");
             return;
@@ -465,6 +476,7 @@ class WiFi {
             ESP_LOGW(TAG, "wifi_scan: caller provided zero AP slots");
             return;
         }
+        ensure_event_handlers_registered();
 
         ESP_LOGI(TAG, "wifi_scan: requested slots=%u", *number);
 
@@ -488,10 +500,23 @@ class WiFi {
         scan_config.bssid = nullptr;
         scan_config.channel = 0;        // all channels
         scan_config.show_hidden = false; // do not show hidden by default
+        if (!s_wifi_event_group) {
+            s_wifi_event_group = xEventGroupCreate();
+        }
+        xEventGroupClearBits(s_wifi_event_group, WIFI_SCAN_DONE_BIT);
 
-        err = esp_wifi_scan_start(&scan_config, true /* block until done */);
+        err = esp_wifi_scan_start(&scan_config, false /* non-blocking */);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "wifi_scan: scan_start failed: %s", esp_err_to_name(err));
+            *number = 0;
+            return;
+        }
+        EventBits_t bits = xEventGroupWaitBits(
+            s_wifi_event_group, WIFI_SCAN_DONE_BIT, pdTRUE, pdTRUE,
+            pdMS_TO_TICKS(10000));
+        if ((bits & WIFI_SCAN_DONE_BIT) == 0) {
+            ESP_LOGW(TAG, "wifi_scan: timeout waiting scan done");
+            (void)esp_wifi_scan_stop();
             *number = 0;
             return;
         }

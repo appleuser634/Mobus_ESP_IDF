@@ -494,16 +494,7 @@ class HttpClient {
                          esp_err_to_name(ret));
             }
         }
-        static bool s_netif_ok = false;
-        if (!s_netif_ok) {
-            esp_err_t e = esp_netif_init();
-            if (e == ESP_OK) {
-                s_netif_ok = true;
-            } else {
-                ESP_LOGW(TAG, "esp_netif_init failed: %s", esp_err_to_name(e));
-            }
-        }
-        // ESP_ERROR_CHECK(esp_event_loop_create_default());
+        // Network stack is initialized by WiFi component.
 
         /* This helper function configures Wi-Fi or Ethernet, as selected in
          * menuconfig. Read "Establishing Wi-Fi or Ethernet Connection" section

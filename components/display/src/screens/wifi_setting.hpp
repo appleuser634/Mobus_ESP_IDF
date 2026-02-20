@@ -43,6 +43,12 @@ class WiFiSetting {
         uint16_t count = DEFAULT_SCAN_LIST_SIZE;
         wifi_ap_record_t tmp[DEFAULT_SCAN_LIST_SIZE] = {};
         wifi.wifi_scan(&count, tmp);
+        if (count > DEFAULT_SCAN_LIST_SIZE) {
+            count = DEFAULT_SCAN_LIST_SIZE;
+        }
+        for (uint16_t i = 0; i < count; ++i) {
+            tmp[i].ssid[32] = '\0';
+        }
         scan_cache_count_ = count;
         memset(scan_cache_, 0, sizeof(scan_cache_));
         if (count > 0) {
@@ -55,9 +61,10 @@ class WiFiSetting {
     static std::string char_to_string_ssid(uint8_t *uint_ssid) {
         if (uint_ssid == nullptr) return std::string("");
         char char_ssid[33] = {0};
-        // ensure null-terminated copy up to 32 bytes
-        snprintf(char_ssid, sizeof(char_ssid), "%s",
-                 reinterpret_cast<const char *>(uint_ssid));
+        const char *src = reinterpret_cast<const char *>(uint_ssid);
+        const size_t len = strnlen(src, sizeof(char_ssid) - 1);
+        memcpy(char_ssid, src, len);
+        char_ssid[len] = '\0';
         return std::string(char_ssid);
     }
 
@@ -312,18 +319,13 @@ class WiFiSetting {
     }
 
     static void run_wifi_setting_flow(bool auto_exit_on_connected = false) {
-        lcd.init();
-        lcd.setRotation(2);
-
-        if (sprite.getBuffer() == nullptr) {
-            sprite.setColorDepth(8);
-            sprite.setFont(&fonts::Font2);
-            sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
-            sprite.createSprite(lcd.width(), lcd.height());
-        } else {
-            sprite.setFont(&fonts::Font2);
-            sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
+        if (!ensure_sprite_surface(128, 64, 8,
+                                   "WiFiSetting::run_wifi_setting_flow")) {
+            ESP_LOGE(TAG, "Wi-Fi setting flow aborted: sprite unavailable");
+            return;
         }
+        sprite.setFont(&fonts::Font2);
+        sprite.setTextWrap(true);  // 右端到達時のカーソル折り返しを禁止
 
         sprite.fillRect(0, 0, 128, 64, 0);
         sprite.setCursor(30, 20);
@@ -357,19 +359,28 @@ class WiFiSetting {
 
         uint16_t ssid_n = 0;
         wifi_ap_record_t ap_info[DEFAULT_SCAN_LIST_SIZE] = {};
-        if (scan_cache_valid_) {
-            ssid_n = scan_cache_count_;
-            if (ssid_n > DEFAULT_SCAN_LIST_SIZE) {
-                ssid_n = DEFAULT_SCAN_LIST_SIZE;
-            }
-            if (ssid_n > 0) {
-                memcpy(ap_info, scan_cache_,
-                       sizeof(wifi_ap_record_t) * ssid_n);
-            }
-            ESP_LOGI(TAG, "Using cached Wi-Fi scan results: %u entries", ssid_n);
-        } else {
+        ssid_n = DEFAULT_SCAN_LIST_SIZE;
+        wifi.wifi_scan(&ssid_n, ap_info);
+        if (ssid_n > DEFAULT_SCAN_LIST_SIZE) {
             ssid_n = DEFAULT_SCAN_LIST_SIZE;
-            wifi.wifi_scan(&ssid_n, ap_info);
+        }
+        for (uint16_t i = 0; i < ssid_n; ++i) {
+            ap_info[i].ssid[32] = '\0';
+        }
+
+        // Prefer fresh scan results; fall back to cache only on scan failure/empty.
+        if (ssid_n == 0 && scan_cache_valid_ && scan_cache_count_ > 0) {
+            uint16_t cached_n = scan_cache_count_;
+            if (cached_n > DEFAULT_SCAN_LIST_SIZE) {
+                cached_n = DEFAULT_SCAN_LIST_SIZE;
+            }
+            memcpy(ap_info, scan_cache_, sizeof(wifi_ap_record_t) * cached_n);
+            for (uint16_t i = 0; i < cached_n; ++i) {
+                ap_info[i].ssid[32] = '\0';
+            }
+            ssid_n = cached_n;
+            ESP_LOGW(TAG, "Wi-Fi scan returned 0; using cache (%u entries)", ssid_n);
+        } else {
             scan_cache_count_ = ssid_n;
             memset(scan_cache_, 0, sizeof(scan_cache_));
             if (ssid_n > 0) {
@@ -413,7 +424,6 @@ class WiFiSetting {
             if (menu_cmd == ui::wifi::WifiMenuCommand::Exit) break;
 
             if (type_button_state.pushed) {
-                sprite.setColorDepth(8);
                 sprite.setFont(&fonts::Font2);
                 type_button.clear_button_state();
                 type_button.reset_timer();
