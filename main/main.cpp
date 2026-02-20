@@ -456,6 +456,22 @@ void app_main(void) {
         auto task = +[](void*) {
             // Give system a moment to initialize (Wi‑Fi, heap, etc.)
             vTaskDelay(pdMS_TO_TICKS(8000));
+            if (get_nvs((char *)kFactorySetupModeKey) == "1") {
+                ESP_LOGI(TAG,
+                         "Skip deferred OTA validation in factory setup mode");
+                vTaskDelete(nullptr);
+                return;
+            }
+            if (s_wifi_event_group) {
+                EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
+                if ((bits & WIFI_CONNECTED_BIT) == 0) {
+                    ESP_LOGI(TAG,
+                             "Skip deferred OTA validation without Wi-Fi "
+                             "connection");
+                    vTaskDelete(nullptr);
+                    return;
+                }
+            }
             const esp_partition_t* running = esp_ota_get_running_partition();
             if (!running) {
                 vTaskDelete(nullptr);
@@ -490,9 +506,6 @@ void app_main(void) {
     // Rollback disabled: no pending verify flow, nothing to do.
 #endif
     };
-
-    profiler.run_step("Deferred OTA validation setup",
-                      start_deferred_ota_validation);
 
     auto& speaker = audio::speaker();
     // Boot sound: always play cute at startup.
@@ -538,6 +551,8 @@ void app_main(void) {
             // is initialized before running profile setup screens.
             profiler.run_step("BLE-only boot display init",
                               [&]() { oled.BootDisplay(); });
+            profiler.run_step("Preload Wi-Fi scan cache",
+                              []() { WiFiSetting::preload_scan_cache(); });
             ESP_LOGW(TAG,
                      "BLE-only boot: launch profile setup (user_name missing)");
             profiler.run_step("Ensure user profile", [&]() {
@@ -550,6 +565,9 @@ void app_main(void) {
             vTaskDelay(1000 / portTICK_PERIOD_MS);
         }
     }
+
+    profiler.run_step("Deferred OTA validation setup",
+                      start_deferred_ota_validation);
 
     profiler.run_step("Start RTC task", []() { start_rtc_task(); });
 

@@ -346,6 +346,9 @@ class ProfileSetting {
                 break;
             }
 
+            if (!ensure_wifi_connected(lang)) {
+                continue;
+            }
             show_message("Auth Failed", "Check creds & net", 1200, lang);
         }
     }
@@ -452,6 +455,11 @@ class ProfileSetting {
     }
 
     static bool ensure_wifi_connected(ui::Lang lang) {
+        auto is_wifi_connected = []() -> bool {
+            if (!s_wifi_event_group) return false;
+            EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
+            return (bits & WIFI_CONNECTED_BIT) != 0;
+        };
         auto wait_wifi_connected = [](uint32_t timeout_ms) -> bool {
             if (!s_wifi_event_group) return false;
             EventBits_t bits =
@@ -461,15 +469,22 @@ class ProfileSetting {
         };
 
         while (1) {
-            if (wait_wifi_connected(0)) return true;
+            if (is_wifi_connected() || wait_wifi_connected(0)) return true;
 
-            WiFiSetting::running_flag = true;
-            WiFiSetting::run_wifi_setting_flow(true);
-            WiFiSetting::running_flag = false;
+            bool opened_wifi_flow = false;
+            if (!is_wifi_connected()) {
+                opened_wifi_flow = true;
+                ESP_LOGI(TAG,
+                         "[Profile] ensure_wifi_connected: open Wi-Fi setup flow");
+                WiFiSetting::running_flag = true;
+                WiFiSetting::run_wifi_setting_flow(true);
+                WiFiSetting::running_flag = false;
+            }
 
             // Give IP event handler a short window to set event bits after UI
             // flow returns.
             if (wait_wifi_connected(1500)) return true;
+            if (!opened_wifi_flow && is_wifi_connected()) return true;
 
             if (!prompt_wifi_retry_or_back(lang)) {
                 return false;

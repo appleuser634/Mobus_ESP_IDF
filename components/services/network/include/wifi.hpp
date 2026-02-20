@@ -461,9 +461,12 @@ class WiFi {
             ESP_LOGE(TAG, "wifi_scan: invalid args (number/ap_info is null)");
             return;
         }
+        if (*number == 0) {
+            ESP_LOGW(TAG, "wifi_scan: caller provided zero AP slots");
+            return;
+        }
 
-        // Clear caller-provided buffer up to its capacity
-        memset(ap_info, 0, sizeof(wifi_ap_record_t) * (*number));
+        ESP_LOGI(TAG, "wifi_scan: requested slots=%u", *number);
 
         // Ensure Wi‑Fi is started and in a mode that supports scanning
         wifi_mode_t mode = WIFI_MODE_NULL;
@@ -515,6 +518,7 @@ class WiFi {
             return;
         }
         *number = to_copy;
+        ESP_LOGI(TAG, "wifi_scan: completed, records=%u", *number);
     }
 
     BootResult main(void) {

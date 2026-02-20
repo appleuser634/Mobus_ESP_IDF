@@ -38,6 +38,20 @@ class WiFiSetting {
         }
     }
 
+    static void preload_scan_cache() {
+        WiFi &wifi = WiFi::shared();
+        uint16_t count = DEFAULT_SCAN_LIST_SIZE;
+        wifi_ap_record_t tmp[DEFAULT_SCAN_LIST_SIZE] = {};
+        wifi.wifi_scan(&count, tmp);
+        scan_cache_count_ = count;
+        memset(scan_cache_, 0, sizeof(scan_cache_));
+        if (count > 0) {
+            memcpy(scan_cache_, tmp, sizeof(wifi_ap_record_t) * count);
+        }
+        scan_cache_valid_ = true;
+        ESP_LOGI(TAG, "Wi-Fi scan cache preloaded: %u entries", count);
+    }
+
     static std::string char_to_string_ssid(uint8_t *uint_ssid) {
         if (uint_ssid == nullptr) return std::string("");
         char char_ssid[33] = {0};
@@ -316,6 +330,16 @@ class WiFiSetting {
         sprite.print("Scanning...");
         push_sprite_safe(0, 0);
 
+        auto is_connected_bit_set = []() -> bool {
+            if (!s_wifi_event_group) return false;
+            EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
+            return (bits & WIFI_CONNECTED_BIT) != 0;
+        };
+        if (auto_exit_on_connected && is_connected_bit_set()) {
+            ESP_LOGI(TAG, "Wi-Fi already connected; skip scan in auto-exit flow");
+            return;
+        }
+
         WiFi &wifi = WiFi::shared();
 
         Joystick joystick;
@@ -331,19 +355,36 @@ class WiFiSetting {
             save_nvs((char *)"wifi_manual_off", off ? "1" : "0");
         };
 
-        uint16_t ssid_n = DEFAULT_SCAN_LIST_SIZE;
-        wifi_ap_record_t ap_info[DEFAULT_SCAN_LIST_SIZE];
-        wifi.wifi_scan(&ssid_n, ap_info);
+        uint16_t ssid_n = 0;
+        wifi_ap_record_t ap_info[DEFAULT_SCAN_LIST_SIZE] = {};
+        if (scan_cache_valid_) {
+            ssid_n = scan_cache_count_;
+            if (ssid_n > DEFAULT_SCAN_LIST_SIZE) {
+                ssid_n = DEFAULT_SCAN_LIST_SIZE;
+            }
+            if (ssid_n > 0) {
+                memcpy(ap_info, scan_cache_,
+                       sizeof(wifi_ap_record_t) * ssid_n);
+            }
+            ESP_LOGI(TAG, "Using cached Wi-Fi scan results: %u entries", ssid_n);
+        } else {
+            ssid_n = DEFAULT_SCAN_LIST_SIZE;
+            wifi.wifi_scan(&ssid_n, ap_info);
+            scan_cache_count_ = ssid_n;
+            memset(scan_cache_, 0, sizeof(scan_cache_));
+            if (ssid_n > 0) {
+                memcpy(scan_cache_, ap_info, sizeof(wifi_ap_record_t) * ssid_n);
+            }
+            scan_cache_valid_ = true;
+        }
+        if (ssid_n == 0) {
+            ESP_LOGW(TAG, "Wi-Fi scan returned 0 APs; use manual input (Other)");
+        }
 
         ui::wifi::WifiMenuViewState menu_state;
         menu_state.selected = 0;
         int font_height = 13;
         int margin = 3;
-        auto is_connected_bit_set = []() -> bool {
-            if (!s_wifi_event_group) return false;
-            EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
-            return (bits & WIFI_CONNECTED_BIT) != 0;
-        };
 
         while (true) {
             if (auto_exit_on_connected && is_connected_bit_set()) {
@@ -474,11 +515,17 @@ class WiFiSetting {
     static TaskHandle_t task_handle_;
     static StaticTask_t task_buffer_;
     static StackType_t *task_stack_;
+    static bool scan_cache_valid_;
+    static uint16_t scan_cache_count_;
+    static wifi_ap_record_t scan_cache_[DEFAULT_SCAN_LIST_SIZE];
 };
 bool WiFiSetting::running_flag = false;
 TaskHandle_t WiFiSetting::task_handle_ = nullptr;
 StaticTask_t WiFiSetting::task_buffer_;
 StackType_t *WiFiSetting::task_stack_ = nullptr;
+bool WiFiSetting::scan_cache_valid_ = false;
+uint16_t WiFiSetting::scan_cache_count_ = 0;
+wifi_ap_record_t WiFiSetting::scan_cache_[DEFAULT_SCAN_LIST_SIZE] = {};
 
 // Define proxy after WiFiSetting is fully defined
 inline std::string wifi_input_info_proxy(std::string input_type,
