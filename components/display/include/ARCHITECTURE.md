@@ -1,29 +1,35 @@
 # Display Component Architecture
 
-このドキュメントは、`components/display/include` 配下の責務境界を固定するためのガイドです。
+このドキュメントは、`components` 配下の表示関連責務境界を固定するためのガイドです。
 挙動は変更せず、保守性を上げる目的でフォルダを整理しています。
 
 ## フォルダ責務
 
-- `app/core/`
+- `display/`
+  - 外部公開する最小ヘッダ（`Oled`/`MenuDisplay`/`ProfileSetting`/描画コンテキストAPI）。
+- `components/application/include/app/core/`
   - UI非依存の共通アプリケーション境界（IFや抽象）。
-- `app/menu/`
+- `components/application/include/app/menu/`
   - ホームメニュー画面の遷移・状態変換ルール。
-- `app/contact/`
+- `components/application/include/app/contact/`
   - ContactBookのドメインモデル、取得処理、操作ユースケース。
-- `app/setting/`
+- `components/application/include/app/setting/`
   - SettingMenuのアクション判定、設定値読み書き、表示用ラベル生成。
 
-- `ui/core/`
+- `components/ui/include/ui/core/`
   - 画面共通の入力スナップショット・Presenter/Renderer基底。
-- `ui/common/`
+- `components/ui/include/ui/common/`
   - 複数画面で再利用する汎用ダイアログ/モーダル描画モデル。
-- `ui/menu/`
+- `components/ui/include/ui/menu/`
   - ホームメニュー専用MVP。
-- `ui/contact/`
+- `components/ui/include/ui/contact/`
   - ContactBook/MessageBox/PendingのMVP。
-- `ui/setting/`
+- `components/ui/include/ui/setting/`
   - SettingMenuおよび設定サブダイアログのMVP。
+- `components/drivers/`
+  - 入力/触覚/オーディオ/電源/LEDなどのハードウェアI/O実装。
+- `components/services/`
+  - ネットワーク/通知/NVS/OTA/BLE/Provisioningなどの外部連携実装。
 
 ## ファイル単位の責務
 
@@ -31,6 +37,8 @@
   - メニューカーソル移動、選択アクション解決、スリープ判定の純粋ロジック。
 - `app/menu/status_service.hpp`
   - RSSI/電圧/通知情報の表示向け変換。
+- `app/menu/effects_service.hpp`
+  - Menu画面の副作用実行（遷移/スリープ）を抽象化。
 
 - `app/contact/domain.hpp`
   - ContactBookエンティティ生成とフィルタ条件。
@@ -86,8 +94,16 @@
   - BLEペアリング表示/入力。
 - `ui/setting/firmware_info_dialog.hpp`
   - ファーム情報表示ダイアログ。
+- `ui/open_chat/open_chat_mvp.hpp`
+  - OpenChatの部屋選択/モールス入力コンポーザのMVP。
+- `ui/wifi/setting_mvp.hpp`
+  - Wi-Fi設定の入力/選択MVP。
+- `ui/talk/input_mvp.hpp`
+  - Talk入力（モールス・削除・変換）のMVP。
 - `ui/common/confirm_dialog.hpp`
   - Yes/No確認ダイアログ。
+- `ui/common/choice_dialog_mvp.hpp`
+  - 汎用選択ダイアログ（上下移動・決定・戻る）のMVP。
 - `ui/common/text_modal.hpp`
   - 汎用テキストモーダル。
 - `ui/common/status_panel.hpp`
@@ -98,3 +114,38 @@
   - Presenter/Renderer基底インターフェース。
 - `ui/core/render_context.hpp`
   - 画面サイズコンテキスト。
+
+- `src/runtime/bridge_entry.hpp`
+  - `main/display_mvp_bridge.inc` から参照する表示実装の入口ヘッダ。
+- `src/runtime/prelude.hpp`
+  - 描画/フォント/入力ユーティリティと共通基盤。
+- `src/screens/talk_display.hpp`
+  - Talk系の旧実装。
+- `src/screens/message_box.hpp`
+  - MessageBox系フロー。
+- `src/screens/contact_book.hpp`
+  - ContactBook系フロー。
+- `src/screens/open_chat_wifi_p2p.hpp`
+  - OpenChat/WiFi/P2P系の集約ヘッダ。
+- `src/screens/open_chat.hpp`
+  - OpenChatタスク実装。
+- `src/screens/wifi_setting.hpp`
+  - WiFi設定タスク実装。
+- `src/screens/p2p_display.hpp`
+  - P2P表示・送受信実装。
+- `src/screens/composer_setting_game.hpp`
+  - Composer/Setting/Game系の集約ヘッダ。
+- `src/screens/composer.hpp`
+  - Composerタスク実装。
+- `src/screens/setting_menu.hpp`
+  - SettingMenuタスク実装。
+- `src/screens/game.hpp`
+  - Gameタスク実装とモールス再生補助。
+- `src/screens/menu_profile_oled.hpp`
+  - Menu/Profile/Oledの集約ヘッダ。
+- `src/screens/menu_display.hpp`
+  - MenuDisplayタスク実装。
+- `src/screens/profile_setting.hpp`
+  - ProfileSettingタスク実装。
+- `src/screens/oled_view.hpp`
+  - Oled表示クラス実装。

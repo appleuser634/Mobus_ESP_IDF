@@ -35,6 +35,8 @@
 // Demo utilities removed to avoid unused warnings
 
 namespace {
+constexpr size_t kNvsMaxKeyLen = 15;
+
 inline std::mutex& nvs_mutex() {
     static std::mutex m;
     return m;
@@ -94,6 +96,18 @@ inline esp_err_t nvs_get_str_internal(nvs_handle_t handle, const char *key,
 }  // namespace
 
 inline void save_nvs(const char *key, const std::string &record) {
+    if (!key) {
+        ESP_LOGE("NVS", "Invalid null key");
+        return;
+    }
+    const size_t key_len = strnlen(key, kNvsMaxKeyLen + 1);
+    if (key_len == 0 || key_len > kNvsMaxKeyLen) {
+        ESP_LOGE("NVS", "Invalid key length: key='%s' len=%u (max=%u)", key,
+                 static_cast<unsigned>(key_len),
+                 static_cast<unsigned>(kNvsMaxKeyLen));
+        return;
+    }
+
     std::lock_guard<std::mutex> lock(nvs_mutex());
     // Initialize NVS once; avoid erasing flash while other subsystems use it
     static bool s_nvs_ok = false;
@@ -139,6 +153,18 @@ inline void save_nvs(const char *key, const std::string &record) {
 }
 
 inline std::string get_nvs(const char *key) {
+    if (!key) {
+        ESP_LOGE("NVS", "Invalid null key");
+        return std::string("");
+    }
+    const size_t key_len = strnlen(key, kNvsMaxKeyLen + 1);
+    if (key_len == 0 || key_len > kNvsMaxKeyLen) {
+        ESP_LOGE("NVS", "Invalid key length: key='%s' len=%u (max=%u)", key,
+                 static_cast<unsigned>(key_len),
+                 static_cast<unsigned>(kNvsMaxKeyLen));
+        return std::string("");
+    }
+
     std::lock_guard<std::mutex> lock(nvs_mutex());
     // Initialize NVS once; avoid erasing flash while other subsystems use it
     static bool s_nvs_ok = false;

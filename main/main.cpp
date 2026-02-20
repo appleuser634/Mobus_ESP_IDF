@@ -51,7 +51,7 @@ void check_heap() {
 
 namespace {
 
-constexpr bool kMemoryProfilerEnabled = true;
+constexpr bool kMemoryProfilerEnabled = false;
 
 struct HeapSnapshot {
     size_t free_internal = 0;
@@ -199,10 +199,15 @@ static const char* TAG = "Mobus v3.14";
 #include <http_client.hpp>
 #include <notification_effects.hpp>
 #include <neopixel.hpp>
-#include <oled.hpp>
+#include <display/menu_display.hpp>
+#include <display/display_context.hpp>
+#include <display/oled_screen.hpp>
+#include <display/profile_setting.hpp>
 #include <ntp.hpp>
 #include <max98357a.h>
 #include "esp_attr.h"
+
+#include "display_mvp_bridge.inc"
 
 extern "C" void mobus_request_factory_reset();
 extern "C" void mobus_request_ota_minimal_mode();
@@ -218,8 +223,6 @@ int64_t s_last_ota_progress_draw_us = 0;
 
 void draw_ota_progress_screen(int downloaded_bytes, int total_bytes,
                               const char* phase) {
-    if (!ensure_sprite_surface(128, 64, 1, "OTAProgress")) return;
-
     int percent = 0;
     if (total_bytes > 0 && downloaded_bytes > 0) {
         percent = (downloaded_bytes * 100) / total_bytes;
@@ -235,39 +238,7 @@ void draw_ota_progress_screen(int downloaded_bytes, int total_bytes,
         s_last_ota_progress_percent = percent;
     }
     s_last_ota_progress_draw_us = now_us;
-
-    sprite.fillRect(0, 0, 128, 64, 0);
-    sprite.setFont(&fonts::Font2);
-    sprite.setTextColor(1, 0);
-    sprite.drawCenterString("OTA Update", 64, 2);
-
-    if (strcmp(phase, "retry") == 0) {
-        sprite.drawCenterString("Retrying...", 64, 18);
-    } else if (strcmp(phase, "validating_failed") == 0) {
-        sprite.drawCenterString("Validate fallback", 64, 18);
-    } else if (strcmp(phase, "rebooting") == 0) {
-        sprite.drawCenterString("Rebooting...", 64, 18);
-    } else if (strcmp(phase, "failed") == 0) {
-        sprite.drawCenterString("Download failed", 64, 18);
-    } else {
-        sprite.drawCenterString("Downloading...", 64, 18);
-    }
-
-    const int bar_x = 10;
-    const int bar_y = 36;
-    const int bar_w = 108;
-    const int bar_h = 12;
-    sprite.drawRect(bar_x, bar_y, bar_w, bar_h, 1);
-    const int fill_w = ((bar_w - 2) * percent) / 100;
-    if (fill_w > 0) {
-        sprite.fillRect(bar_x + 1, bar_y + 1, fill_w, bar_h - 2, 1);
-    }
-
-    char pct[16];
-    snprintf(pct, sizeof(pct), "%d%%", percent);
-    sprite.setTextColor(1, 0);
-    sprite.drawCenterString(pct, 64, 50);
-    push_sprite_safe(0, 0);
+    display_render_ota_progress(percent, phase);
 }
 
 void ota_progress_callback(int downloaded_bytes, int total_bytes,
@@ -283,13 +254,13 @@ static void handle_factory_reset_if_requested() {
     ESP_LOGW(TAG, "[FactoryReset] requested; erasing NVS and rebooting");
 
     (void)nvs_flash_deinit();
-    (void)nvs_flash_init();
-    const esp_err_t erase_default = nvs_flash_erase();
-    const esp_err_t erase_labeled = nvs_flash_erase_partition("nvs");
-    if (erase_default != ESP_OK && erase_labeled != ESP_OK) {
-        ESP_LOGE(TAG, "[FactoryReset] erase failed: default=%s labeled=%s",
-                 esp_err_to_name(erase_default),
-                 esp_err_to_name(erase_labeled));
+    esp_err_t erase_err = nvs_flash_erase_partition("nvs");
+    if (erase_err != ESP_OK) {
+        // Fallback for environments where labeled erase may be unavailable.
+        erase_err = nvs_flash_erase();
+    }
+    if (erase_err != ESP_OK) {
+        ESP_LOGE(TAG, "[FactoryReset] erase failed: %s", esp_err_to_name(erase_err));
     }
     (void)nvs_flash_init();
     vTaskDelay(pdMS_TO_TICKS(200));
@@ -327,8 +298,6 @@ void app_main();
 }
 
 void check_notification() {
-    Oled oled;
-    (void)oled;  // suppress unused warning
     auto& buzzer = audio::speaker();
     buzzer.init();
     HapticMotor& haptic = HapticMotor::instance();

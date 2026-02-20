@@ -22,6 +22,7 @@
 #include "nvs_flash.h"
 #include "http_client.hpp"
 #include "notification_bridge.hpp"
+#include "display/oled_screen.hpp"
 
 #pragma once
 
