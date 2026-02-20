@@ -339,6 +339,7 @@ class ProfileSetting {
                 if (!password.empty()) {
                     save_nvs((char *)"password", password);
                 }
+                save_nvs((char *)"fr_setup_mode", std::string("0"));
                 show_message(ui::text(ui::Key::GreetingLine1, lang),
                              ui::text(ui::Key::GreetingLine2, lang), 1200,
                              lang);

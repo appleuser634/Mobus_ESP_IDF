@@ -43,9 +43,25 @@ static std::atomic<bool> s_wifi_reconfiguring{false};
 static std::atomic<bool> s_post_connect_task_running{false};
 static std::atomic<bool> s_ble_fallback_active{false};
 static std::atomic<bool> s_wifi_retry_task_running{false};
+static std::atomic<bool> s_wifi_driver_ready{false};
+
+constexpr char kBleAutoFallbackKey[] = "ble_auto_fb";
+constexpr char kBleAutoDeferOnceKey[] = "ble_auto_dfr1";
+constexpr char kFactorySetupModeKey[] = "fr_setup_mode";
+static_assert(sizeof(kBleAutoFallbackKey) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kBleAutoDeferOnceKey) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kFactorySetupModeKey) - 1 <= 15, "NVS key too long");
 
 class WiFi {
    public:
+    enum class BootResult : uint8_t {
+        kConnected = 0,
+        kBleFallbackActive,
+        kBleDeferred,
+        kManualOff,
+        kInitError,
+    };
+
     typedef struct {
         bool connected;  // true or false
         char state;      // "w"aiting or "f"ail or "s"uccess
@@ -68,11 +84,35 @@ class WiFi {
     }
 
     static void set_auto_ble_fallback(bool enabled) {
-        save_nvs((char *)"ble_auto_fallback", enabled ? "1" : "0");
+        save_nvs((char *)kBleAutoFallbackKey, enabled ? "1" : "0");
         s_ble_fallback_active.store(enabled);
     }
 
+    static bool consume_ble_auto_defer_once() {
+        if (get_nvs((char *)kBleAutoDeferOnceKey) != "1") return false;
+        save_nvs((char *)kBleAutoDeferOnceKey, std::string("0"));
+        return true;
+    }
+
+    static bool is_factory_setup_mode() {
+        std::string v = get_nvs((char *)kFactorySetupModeKey);
+        if (v != "1" && get_nvs("user_name").empty()) {
+            // NVS reset boot path: if user profile is missing, force setup mode.
+            save_nvs((char *)kFactorySetupModeKey, std::string("1"));
+            v = "1";
+            ESP_LOGW(TAG, "Factory setup mode auto-enabled (user_name missing)");
+        }
+        ESP_LOGI(TAG, "Factory setup mode key '%s'='%s'", kFactorySetupModeKey,
+                 v.c_str());
+        return v == "1";
+    }
+
     static void ensure_ble_fallback_enabled() {
+        if (is_factory_setup_mode()) {
+            ESP_LOGW(TAG, "Factory setup mode active: suppress BLE fallback");
+            set_auto_ble_fallback(false);
+            return;
+        }
         if (is_wifi_manual_off() || is_ble_pairing_forced()) return;
         bool expected = false;
         if (!s_ble_fallback_active.compare_exchange_strong(expected, true)) {
@@ -80,18 +120,8 @@ class WiFi {
         }
 
         ESP_LOGW(TAG, "Wi-Fi unavailable; switching to BLE fallback");
-        save_nvs((char *)"ble_auto_fallback", "1");
+        save_nvs((char *)kBleAutoFallbackKey, "1");
 
-        esp_err_t derr = esp_wifi_disconnect();
-        if (derr != ESP_OK && derr != ESP_ERR_WIFI_NOT_STARTED &&
-            derr != ESP_ERR_WIFI_CONN) {
-            ESP_LOGW(TAG, "esp_wifi_disconnect returned %s",
-                     esp_err_to_name(derr));
-        }
-        esp_err_t serr = esp_wifi_stop();
-        if (serr != ESP_OK && serr != ESP_ERR_WIFI_NOT_STARTED) {
-            ESP_LOGW(TAG, "esp_wifi_stop returned %s", esp_err_to_name(serr));
-        }
         if (s_wifi_event_group) {
             xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
         }
@@ -124,21 +154,26 @@ class WiFi {
         constexpr uint32_t kRetryIntervalMs = 20000;
         constexpr uint32_t kPerTryTimeoutMs = 8000;
 
+        if (is_factory_setup_mode()) {
+            set_auto_ble_fallback(false);
+            s_wifi_retry_task_running.store(false);
+            vTaskDelete(nullptr);
+            return;
+        }
+
         while (s_ble_fallback_active.load()) {
             vTaskDelay(pdMS_TO_TICKS(kRetryIntervalMs));
             if (!s_ble_fallback_active.load()) break;
+            if (is_factory_setup_mode()) {
+                ESP_LOGW(TAG, "Factory setup mode active: stop BLE retry loop");
+                set_auto_ble_fallback(false);
+                break;
+            }
             if (is_wifi_manual_off() || is_ble_pairing_forced()) continue;
 
             ESP_LOGI(TAG, "BLE fallback active; retrying Wi-Fi");
             ble_uart_disable();
             mqtt_rt_resume();
-
-            esp_err_t start_err = esp_wifi_start();
-            if (start_err != ESP_OK && start_err != ESP_ERR_WIFI_CONN &&
-                start_err != ESP_ERR_WIFI_NOT_STOPPED) {
-                ESP_LOGW(TAG, "esp_wifi_start returned %s",
-                         esp_err_to_name(start_err));
-            }
 
             bool connected = WiFi::shared().wifi_connect_saved_any(kPerTryTimeoutMs);
             if (connected) {
@@ -171,7 +206,6 @@ class WiFi {
             save_nvs((char *)"ble_pair", std::string("false"));
             save_nvs((char *)"ble_code", std::string(""));
             save_nvs((char *)"ble_exp_us", std::string("0"));
-            save_nvs((char *)"ble_auto_fallback", std::string("0"));
         }
         s_post_connect_task_running.store(false);
         vTaskDelete(nullptr);
@@ -208,8 +242,12 @@ class WiFi {
                 if (s_wifi_event_group) {
                     xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
                 }
-                if (!forced_off) {
+                if (!forced_off && !is_factory_setup_mode()) {
                     ensure_ble_fallback_enabled();
+                } else if (is_factory_setup_mode()) {
+                    ESP_LOGW(TAG,
+                             "Factory setup mode active: skip BLE fallback on "
+                             "disconnect");
                 }
             }
             ESP_LOGI(TAG, "connect to the AP fail");
@@ -266,24 +304,29 @@ class WiFi {
             wifi_was_started = true;
         }
 
-        if (WIFI_SSID == "" && WIFI_PASS == "") {
-            ESP_ERROR_CHECK(esp_wifi_get_config(WIFI_IF_STA, &wifi_config));
-        } else {
-            // Safe copy with bounds to avoid overflow and keep NUL-termination
-            size_t ssid_len = WIFI_SSID.size();
-            if (ssid_len >= sizeof(wifi_config.sta.ssid)) {
-                ssid_len = sizeof(wifi_config.sta.ssid) - 1;
+        if (WIFI_SSID.empty()) {
+            ESP_LOGW(TAG, "wifi_set_sta skipped: empty SSID");
+            s_wifi_reconfiguring.store(false);
+            if (s_wifi_event_group) {
+                xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
             }
-            memcpy(wifi_config.sta.ssid, WIFI_SSID.c_str(), ssid_len);
-            wifi_config.sta.ssid[ssid_len] = '\0';
-
-            size_t pass_len = WIFI_PASS.size();
-            if (pass_len >= sizeof(wifi_config.sta.password)) {
-                pass_len = sizeof(wifi_config.sta.password) - 1;
-            }
-            memcpy(wifi_config.sta.password, WIFI_PASS.c_str(), pass_len);
-            wifi_config.sta.password[pass_len] = '\0';
+            return;
         }
+
+        // Safe copy with bounds to avoid overflow and keep NUL-termination
+        size_t ssid_len = WIFI_SSID.size();
+        if (ssid_len >= sizeof(wifi_config.sta.ssid)) {
+            ssid_len = sizeof(wifi_config.sta.ssid) - 1;
+        }
+        memcpy(wifi_config.sta.ssid, WIFI_SSID.c_str(), ssid_len);
+        wifi_config.sta.ssid[ssid_len] = '\0';
+
+        size_t pass_len = WIFI_PASS.size();
+        if (pass_len >= sizeof(wifi_config.sta.password)) {
+            pass_len = sizeof(wifi_config.sta.password) - 1;
+        }
+        memcpy(wifi_config.sta.password, WIFI_PASS.c_str(), pass_len);
+        wifi_config.sta.password[pass_len] = '\0';
 
         // If we are already running, disconnect and stop before applying new config
         if (wifi_was_started) {
@@ -346,23 +389,55 @@ class WiFi {
         // }
     }
 
-    void wifi_init_sta() {
-        ESP_ERROR_CHECK(esp_netif_init());
+    bool wifi_init_sta() {
+        esp_err_t err = esp_netif_init();
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGE(TAG, "esp_netif_init failed: %s", esp_err_to_name(err));
+            s_wifi_driver_ready.store(false);
+            return false;
+        }
 
-        ESP_ERROR_CHECK(esp_event_loop_create_default());
+        err = esp_event_loop_create_default();
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGE(TAG, "esp_event_loop_create_default failed: %s",
+                     esp_err_to_name(err));
+            s_wifi_driver_ready.store(false);
+            return false;
+        }
         esp_netif_create_default_wifi_sta();
 
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-        ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+        err = esp_wifi_init(&cfg);
+        if (err != ESP_OK && err != ESP_ERR_WIFI_INIT_STATE) {
+            ESP_LOGE(TAG, "esp_wifi_init failed: %s", esp_err_to_name(err));
+            s_wifi_driver_ready.store(false);
+            return false;
+        }
         // Keep Wi-Fi config in RAM to avoid NVS writes from driver
-        ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+        err = esp_wifi_set_storage(WIFI_STORAGE_RAM);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "esp_wifi_set_storage failed: %s", esp_err_to_name(err));
+            s_wifi_driver_ready.store(false);
+            return false;
+        }
         // Set STA mode once during init. Reconfiguring mode repeatedly during
         // scan flow can destabilize Wi-Fi heap internals on some paths.
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        err = esp_wifi_set_mode(WIFI_MODE_STA);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "esp_wifi_set_mode failed: %s", esp_err_to_name(err));
+            s_wifi_driver_ready.store(false);
+            return false;
+        }
+        s_wifi_driver_ready.store(true);
+        return true;
     }
 
     bool wifi_connect_saved_any(uint32_t timeout_ms_per = 12000) {
         auto creds = get_wifi_credentials();
+        if (creds.empty()) {
+            ESP_LOGI(TAG, "No saved Wi-Fi credentials");
+            return false;
+        }
         for (auto &p : creds) {
             ESP_LOGI(TAG, "Trying Wi-Fi SSID:%s", p.first.c_str());
             wifi_set_sta(p.first, p.second);
@@ -442,7 +517,7 @@ class WiFi {
         *number = to_copy;
     }
 
-    void main(void) {
+    BootResult main(void) {
         // Initialize NVS
         esp_err_t ret = nvs_flash_init();
         if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
@@ -459,7 +534,26 @@ class WiFi {
             get_nvs((char *)"ble_wifi_rst") == "1") {
             save_nvs((char *)"ble_wifi_rst", std::string("0"));
         }
-        wifi_init_sta();
+        if (!wifi_init_sta()) {
+            if (consume_ble_auto_defer_once()) {
+                ESP_LOGW(TAG, "Wi-Fi init failed; defer BLE auto-start once");
+                set_auto_ble_fallback(false);
+                return BootResult::kBleDeferred;
+            } else {
+                if (is_factory_setup_mode()) {
+                    ESP_LOGW(TAG,
+                             "Wi-Fi init failed in factory setup mode; keep BLE "
+                             "disabled");
+                    set_auto_ble_fallback(false);
+                    return BootResult::kBleDeferred;
+                }
+                ESP_LOGW(TAG, "Wi-Fi init failed; enabling BLE fallback only");
+                set_auto_ble_fallback(true);
+                mqtt_rt_pause();
+                ble_uart_enable();
+                return BootResult::kInitError;
+            }
+        }
         // Prefer modem sleep in normal operation to reduce average current.
         // OTA/throughput-critical paths can temporarily override to NONE.
         (void)esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
@@ -476,11 +570,28 @@ class WiFi {
         if (!is_wifi_manual_off()) {
             bool connected = wifi_connect_saved_any();
             if (!connected) {
-                ensure_ble_fallback_enabled();
+                if (consume_ble_auto_defer_once()) {
+                    ESP_LOGW(TAG, "No Wi-Fi credentials; defer BLE auto-start once");
+                    return BootResult::kBleDeferred;
+                } else {
+                    if (is_factory_setup_mode()) {
+                        ESP_LOGW(TAG,
+                                 "Factory setup mode active: keep BLE disabled "
+                                 "until profile setup completes");
+                        set_auto_ble_fallback(false);
+                        return BootResult::kBleDeferred;
+                    }
+                    ensure_ble_fallback_enabled();
+                    return BootResult::kBleFallbackActive;
+                }
+            } else {
+                return BootResult::kConnected;
             }
         } else {
             ESP_LOGI(TAG, "Wi-Fi disabled by user; skip auto-connect");
             (void)esp_wifi_stop();
+            return BootResult::kManualOff;
         }
+        return BootResult::kConnected;
     }
 };

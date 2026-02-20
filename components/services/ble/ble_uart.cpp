@@ -14,9 +14,10 @@
 
 #include "sdkconfig.h"
 #include "esp_log.h"
-#include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
 
 // Detect header availability
 #if defined(__has_include)
@@ -44,25 +45,23 @@ static void handle_frame_from_phone(const std::string& frame);
 // Shared state across implementations
 static bool g_stack_inited = false;
 static bool g_net_suspended_for_ble = false;
-static bool g_resume_wifi_on_disable = false;
 static int g_last_err = 0;
 static std::string g_cached_messages;
+extern EventGroupHandle_t s_wifi_event_group;
 
 // Network helpers used to free/recover memory around BLE usage
 static void shutdown_network_stack() {
-    // Minimal pause: stop Wi‑Fi driver only to free RAM.
-    // Keep esp_netif and driver initialized to resume quickly.
-    (void)esp_wifi_stop();
+    // No-op: avoid touching Wi-Fi driver during BLE fallback transitions.
 }
 
 static void restart_network_stack() {
-    // Resume Wi‑Fi driver if it was only stopped
-    (void)esp_wifi_start();
+    // No-op: avoid touching Wi-Fi driver during BLE fallback transitions.
 }
 
 static bool wifi_has_link() {
-    wifi_ap_record_t ap = {};
-    return esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+    if (!s_wifi_event_group) return false;
+    EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
+    return (bits & BIT0) != 0;
 }
 
 // Define shared frame handler outside of BLE implementation branches so
@@ -372,15 +371,6 @@ extern "C" void ble_uart_enable(void) {
         host_sync_cb();
         return;
     }
-    // If Wi‑Fi is running (even without link), stop it to avoid coex/heap issues.
-    wifi_mode_t mode = WIFI_MODE_NULL;
-    if (esp_wifi_get_mode(&mode) == ESP_OK && mode != WIFI_MODE_NULL) {
-        (void)esp_wifi_stop();
-        g_resume_wifi_on_disable = true;
-    }
-    // Keep Wi‑Fi/network running so HTTP APIs continue to work while BLE is active.
-    // On ESP32-S3 with NimBLE there is enough memory; disabling network causes
-    // app features (friends list fetch, MQTT, etc.) to fail.
 
     // Release Classic BT memory (host+controller) once.
     static bool s_bt_mem_released = false;
@@ -402,10 +392,6 @@ extern "C" void ble_uart_enable(void) {
             g_last_err = err;
             ESP_LOGE(GATTS_TAG, "nimble_port_init failed: %s", esp_err_to_name(err));
             if (g_net_suspended_for_ble) { restart_network_stack(); g_net_suspended_for_ble = false; }
-            if (g_resume_wifi_on_disable) {
-                restart_network_stack();
-                g_resume_wifi_on_disable = false;
-            }
             return;
         }
     }
@@ -446,10 +432,6 @@ extern "C" void ble_uart_disable(void) {
         g_stack_inited = false;
     }
     if (g_net_suspended_for_ble) { restart_network_stack(); g_net_suspended_for_ble = false; }
-    if (g_resume_wifi_on_disable) {
-        restart_network_stack();
-        g_resume_wifi_on_disable = false;
-    }
 }
 
 extern "C" int ble_uart_is_ready(void) {
@@ -499,7 +481,6 @@ void ble_uart_clear_cached_messages() { g_cached_messages.clear(); }
 #include "esp_gatts_api.h"
 #include "esp_gatt_common_api.h"
 #include "esp_bt_main.h"
-#include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 

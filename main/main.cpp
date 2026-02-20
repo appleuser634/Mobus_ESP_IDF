@@ -12,6 +12,7 @@
 #include "esp_system.h"
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
+#include "esp_rom_sys.h"
 #include "esp_random.h"
 #include "esp_spiffs.h"
 #include "esp_wifi.h"
@@ -215,11 +216,24 @@ extern "C" void mobus_request_ota_minimal_mode();
 namespace {
 static constexpr uint32_t kFactoryResetMagic = 0x46525354u;  // 'FRST'
 static constexpr uint32_t kOtaMinimalMagic = 0x4F54414Du;    // 'OTAM'
+static constexpr uint32_t kPostResetBootMagic = 0x50525342u;  // 'PRSB'
+static constexpr uint32_t kDeferBleOnceMagic = 0x44424F31u;   // 'DBO1'
 // Must survive esp_restart(); do not initialize at startup.
 RTC_NOINIT_ATTR uint32_t s_factory_reset_magic;
 RTC_NOINIT_ATTR uint32_t s_ota_minimal_magic;
+RTC_NOINIT_ATTR uint32_t s_post_reset_boot_magic;
+RTC_NOINIT_ATTR uint32_t s_defer_ble_once_magic;
 int s_last_ota_progress_percent = -1;
 int64_t s_last_ota_progress_draw_us = 0;
+
+void ensure_stable_log_sink() {
+    static bool installed = false;
+    if (installed) return;
+    // Use ROM-backed vprintf so early/high-priority logs do not depend on
+    // UART VFS internal state.
+    esp_log_set_vprintf(esp_rom_vprintf);
+    installed = true;
+}
 
 void draw_ota_progress_screen(int downloaded_bytes, int total_bytes,
                               const char* phase) {
@@ -262,7 +276,16 @@ static void handle_factory_reset_if_requested() {
     if (erase_err != ESP_OK) {
         ESP_LOGE(TAG, "[FactoryReset] erase failed: %s", esp_err_to_name(erase_err));
     }
+    // Next boot: skip network-heavy init to avoid unstable driver paths
+    // immediately after NVS erase.
+    s_post_reset_boot_magic = kPostResetBootMagic;
+    // Also defer BLE auto-start once on the first normal boot after safe boot.
+    s_defer_ble_once_magic = kDeferBleOnceMagic;
     (void)nvs_flash_init();
+    save_nvs((char *)kFactorySetupModeKey, std::string("1"));
+    ESP_LOGW(TAG, "[FactoryReset] set %s=1", kFactorySetupModeKey);
+    ESP_LOGW(TAG, "[FactoryReset] %s readback='%s'", kFactorySetupModeKey,
+             get_nvs((char *)kFactorySetupModeKey).c_str());
     vTaskDelay(pdMS_TO_TICKS(200));
     esp_restart();
 }
@@ -364,8 +387,29 @@ void check_notification() {
 }
 
 void app_main(void) {
+    ensure_stable_log_sink();
     printf("Hello world!!!!\n");
     handle_factory_reset_if_requested();
+    if (get_nvs((char *)kFactorySetupModeKey) != "1" &&
+        get_nvs("user_name").empty()) {
+        save_nvs((char *)kFactorySetupModeKey, std::string("1"));
+        ESP_LOGW(TAG, "Auto-enable %s=1 (user_name missing)",
+                 kFactorySetupModeKey);
+    }
+    const bool post_reset_boot = (s_post_reset_boot_magic == kPostResetBootMagic);
+    if (post_reset_boot) {
+        s_post_reset_boot_magic = 0;
+        save_nvs((char *)kFactorySetupModeKey, std::string("1"));
+        ESP_LOGW(TAG, "Post-reset safe boot: skip Wi-Fi/BLE/SNTP startup");
+        ESP_LOGW(TAG, "Post-reset safe boot: force %s=1", kFactorySetupModeKey);
+    } else if (s_defer_ble_once_magic == kDeferBleOnceMagic) {
+        s_defer_ble_once_magic = 0;
+        save_nvs((char *)kBleAutoDeferOnceKey, std::string("1"));
+        save_nvs((char *)kFactorySetupModeKey, std::string("1"));
+        ESP_LOGW(TAG, "Post-reset first normal boot: defer BLE auto-start once");
+        ESP_LOGW(TAG, "Post-reset first normal boot: force %s=1",
+                 kFactorySetupModeKey);
+    }
     const bool ota_minimal_mode = (s_ota_minimal_magic == kOtaMinimalMagic);
     if (ota_minimal_mode) {
         s_ota_minimal_magic = 0;
@@ -460,15 +504,59 @@ void app_main(void) {
     ProfileSetting profile_setting;
 
     WiFi& wifi = WiFi::shared();
-    profiler.run_step("Wi-Fi init", [&]() { wifi.main(); });
+    WiFi::BootResult wifi_boot_result = WiFi::BootResult::kInitError;
+    bool ble_only_boot = false;
+    bool network_connected = false;
+    if (!post_reset_boot) {
+        profiler.run_step("Wi-Fi init", [&]() { wifi_boot_result = wifi.main(); });
+        network_connected = (wifi_boot_result == WiFi::BootResult::kConnected);
+        ble_only_boot =
+            (wifi_boot_result == WiFi::BootResult::kBleFallbackActive ||
+             wifi_boot_result == WiFi::BootResult::kBleDeferred ||
+             wifi_boot_result == WiFi::BootResult::kInitError);
+        if (network_connected) {
+            profiler.run_step("Initialize SNTP", []() { initialize_sntp(); });
+        } else {
+            ESP_LOGW(TAG,
+                     "Network not connected at boot (state=%d); skip SNTP",
+                     static_cast<int>(wifi_boot_result));
+        }
+    } else {
+        ESP_LOGI(TAG, "Post-reset safe boot active: network init skipped");
+        profiler.report_summary();
+        // In post-reset safe boot, skip the rest of app bring-up entirely,
+        // then reboot once into normal boot path.
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_restart();
+        return;
+    }
 
-    profiler.run_step("Initialize SNTP", []() { initialize_sntp(); });
+    std::string user_name = get_nvs("user_name");
+    if (ble_only_boot) {
+        if (user_name.empty()) {
+            // BLE-only path skips the normal boot UI branch, so ensure display
+            // is initialized before running profile setup screens.
+            profiler.run_step("BLE-only boot display init",
+                              [&]() { oled.BootDisplay(); });
+            ESP_LOGW(TAG,
+                     "BLE-only boot: launch profile setup (user_name missing)");
+            profiler.run_step("Ensure user profile", [&]() {
+                profile_setting.profile_setting_task();
+            });
+        }
+        ESP_LOGW(TAG, "BLE-only boot active: skip app heavy initialization");
+        profiler.report_summary();
+        while (1) {
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+        }
+    }
+
     profiler.run_step("Start RTC task", []() { start_rtc_task(); });
 
     // Deep Sleep Config
     const gpio_num_t ext_wakeup_pin_0 = GPIO_NUM_3;
 
-    printf("Enabling EXT0 wakeup on pin GPIO%d\n", ext_wakeup_pin_0);
+    ESP_LOGI(TAG, "Enabling EXT0 wakeup on pin GPIO%d", ext_wakeup_pin_0);
     esp_sleep_enable_ext0_wakeup(ext_wakeup_pin_0, 1);
 
     rtc_gpio_pullup_dis(ext_wakeup_pin_0);
@@ -495,7 +583,8 @@ void app_main(void) {
         profiler.run_step("Boot display", [&]() { oled.BootDisplay(); });
         profiler.run_step("Boot LED animation", boot_led_animation);
 
-    } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
+    } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER && !post_reset_boot &&
+               network_connected) {
         HttpClient& http_client = HttpClient::shared();
         esp_err_t unread_err = http_client.refresh_unread_count();
         if (unread_err != ESP_OK) {
@@ -527,9 +616,8 @@ void app_main(void) {
     // Provisioning provisioning;
     // provisioning.main();
 
-    std::string user_name = get_nvs("user_name");
     profiler.run_step("Ensure user profile", [&]() {
-        if (user_name == "") {
+        if (user_name.empty()) {
             profile_setting.profile_setting_task();
         }
     });

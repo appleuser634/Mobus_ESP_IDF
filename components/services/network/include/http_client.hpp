@@ -511,7 +511,7 @@ class HttpClient {
          * function.
          */
         // ESP_ERROR_CHECK(example_connect());
-        ESP_LOGI(TAG, "Connected to AP, begin http example");
+        ESP_LOGI(TAG, "HttpClient initialized");
     }
 
     esp_err_t refresh_unread_count() {

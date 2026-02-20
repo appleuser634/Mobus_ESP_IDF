@@ -25,7 +25,6 @@
 #include "freertos/task.h"
 #include "esp_system.h"
 #include "esp_log.h"
-#include "esp_heap_caps.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include <vector>
@@ -42,39 +41,9 @@ inline std::mutex& nvs_mutex() {
     return m;
 }
 
-struct InternalBuf {
-    char *data = nullptr;
-    size_t size = 0;
-};
-
-inline InternalBuf make_internal_copy(const char *src, size_t len) {
-    InternalBuf buf;
-    buf.data = static_cast<char *>(
-        heap_caps_malloc(len + 1, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-    if (!buf.data) return buf;
-    buf.size = len + 1;
-    if (len > 0) {
-        memcpy(buf.data, src, len);
-    }
-    buf.data[len] = '\0';
-    return buf;
-}
-
-inline void free_internal(InternalBuf &buf) {
-    if (buf.data) {
-        free(buf.data);
-        buf.data = nullptr;
-        buf.size = 0;
-    }
-}
-
 inline esp_err_t nvs_set_str_internal(nvs_handle_t handle, const char *key,
                                       const std::string &value) {
-    InternalBuf buf = make_internal_copy(value.c_str(), value.size());
-    if (!buf.data) return ESP_ERR_NO_MEM;
-    esp_err_t err = nvs_set_str(handle, key, buf.data);
-    free_internal(buf);
-    return err;
+    return nvs_set_str(handle, key, value.c_str());
 }
 
 inline esp_err_t nvs_get_str_internal(nvs_handle_t handle, const char *key,
@@ -82,15 +51,16 @@ inline esp_err_t nvs_get_str_internal(nvs_handle_t handle, const char *key,
     size_t required_size = 0;
     esp_err_t err = nvs_get_str(handle, key, nullptr, &required_size);
     if (err != ESP_OK) return err;
-    InternalBuf buf = make_internal_copy("", required_size ? required_size - 1 : 0);
-    if (!buf.data) return ESP_ERR_NO_MEM;
-    err = nvs_get_str(handle, key, buf.data, &required_size);
+    std::string tmp;
+    tmp.resize(required_size > 0 ? required_size : 1, '\0');
+    err = nvs_get_str(handle, key, tmp.data(), &required_size);
     if (err == ESP_OK) {
-        size_t len = required_size;
-        if (len > 0 && buf.data[len - 1] == '\0') len -= 1;
-        out.assign(buf.data, len);
+        if (required_size > 0 && tmp[required_size - 1] == '\0') {
+            out.assign(tmp.data(), required_size - 1);
+        } else {
+            out.assign(tmp.data(), required_size);
+        }
     }
-    free_internal(buf);
     return err;
 }
 }  // namespace
@@ -223,11 +193,11 @@ inline static esp_err_t nvs_open_storage(nvs_handle_t* out)
 {
     // Ensure NVS ready
     esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
+    if (err != ESP_OK) {
+        ESP_LOGW("NVS", "nvs_flash_init failed in nvs_open_storage: %s",
+                 esp_err_to_name(err));
+        return err;
     }
-    ESP_ERROR_CHECK(err);
     return nvs_open("storage", NVS_READWRITE, out);
 }
 
