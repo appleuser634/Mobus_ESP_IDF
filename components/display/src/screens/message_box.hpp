@@ -153,11 +153,9 @@ class MessageBox {
                      rid);
 
             // Clear previous BLE messages so only fresh response is read
-            save_nvs((char *)"ble_messages", std::string(""));
             ble_uart_clear_cached_messages();
-            // Phone app should reply with a frame stored in NVS under
-            // "ble_messages". Include redundant identifier fields to maximise
-            // compatibility across app versions.
+            // Phone app should reply with a frame in BLE RAM cache.
+            // Include redundant identifier fields to maximise compatibility across app versions.
             StaticJsonDocument<256> doc;
             doc["id"] = std::to_string(rid);
             doc["type"] = "get_messages";
@@ -180,9 +178,7 @@ class MessageBox {
             int waited = 0;
             while (waited < timeout_ms) {
                 std::string js = ble_uart_get_cached_messages();
-                if (js.empty()) {
-                    js = get_nvs((char *)"ble_messages");
-                } else {
+                if (!js.empty()) {
                     ble_uart_clear_cached_messages();
                 }
                 if (!js.empty()) {

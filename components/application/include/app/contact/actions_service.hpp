@@ -101,20 +101,23 @@ inline std::vector<std::pair<std::string, std::string>> fetch_pending_requests(
         long long rid = esp_timer_get_time();
         std::string req = std::string("{ \"id\":\"") + std::to_string(rid) +
                           "\", \"type\": \"get_pending\" }\n";
+        ble_uart_clear_cached_pending();
         ble_uart_send(reinterpret_cast<const uint8_t*>(req.c_str()), req.size());
 
         const int timeout_ms = 2500;
         int waited = 0;
         while (waited < timeout_ms) {
             if (feed_wdt) feed_wdt();
-            std::string js = get_nvs((char*)"ble_pending");
+            std::string js = ble_uart_get_cached_pending();
             if (!js.empty()) {
                 auto out = parse_pending_requests(js);
+                ble_uart_clear_cached_pending();
                 if (!out.empty()) return out;
             }
             vTaskDelay(100 / portTICK_PERIOD_MS);
             waited += 100;
         }
+        ble_uart_clear_cached_pending();
     }
 
     auto& api = chatapi::shared_client(true);

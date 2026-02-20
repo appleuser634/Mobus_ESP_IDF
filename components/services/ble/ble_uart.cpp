@@ -11,6 +11,7 @@
 #include <vector>
 #include <algorithm>
 #include <cstring>
+#include <mutex>
 
 #include "sdkconfig.h"
 #include "esp_log.h"
@@ -46,7 +47,10 @@ static void handle_frame_from_phone(const std::string& frame);
 static bool g_stack_inited = false;
 static bool g_net_suspended_for_ble = false;
 static int g_last_err = 0;
+static std::string g_cached_contacts;
+static std::string g_cached_pending;
 static std::string g_cached_messages;
+static std::mutex g_cache_mutex;
 extern EventGroupHandle_t s_wifi_event_group;
 
 // Network helpers used to free/recover memory around BLE usage
@@ -68,32 +72,53 @@ static bool wifi_has_link() {
 // both NimBLE and Bluedroid paths can link against it.
 static void handle_frame_from_phone(const std::string& frame) {
     ESP_LOGI(GATTS_TAG, "RXFrame: %s", frame.c_str());
+    auto extract_json_string_field = [&](const char* key) -> std::string {
+        std::string token = std::string("\"") + key + "\"";
+        size_t p = frame.find(token);
+        if (p == std::string::npos) return std::string();
+        size_t colon = frame.find(':', p + token.size());
+        if (colon == std::string::npos) return std::string();
+        size_t q1 = frame.find('"', colon);
+        if (q1 == std::string::npos) return std::string();
+        size_t q2 = frame.find('"', q1 + 1);
+        if (q2 == std::string::npos || q2 <= q1 + 1) return std::string();
+        return frame.substr(q1 + 1, q2 - q1 - 1);
+    };
+    const std::string msg_type = extract_json_string_field("type");
+
     if (frame.find("\"type\":\"new_message\"") != std::string::npos) {
         notification_bridge::handle_external_message();
     }
     // Cache friends/contacts list sent from phone app
-    if (frame.find("\"type\":\"friends\"") != std::string::npos ||
-        frame.find("\"type\":\"contacts\"") != std::string::npos) {
-        save_nvs((char*)"ble_contacts", frame);
-        ESP_LOGI(GATTS_TAG, "Saved friends list to NVS (ble_contacts)");
+    if (msg_type == "friends" || msg_type == "contacts") {
+        std::lock_guard<std::mutex> lock(g_cache_mutex);
+        g_cached_contacts = frame;
+        ESP_LOGI(GATTS_TAG, "Cached contact list in RAM");
     }
     // Cache messages list for current friend
     if (frame.find("\"type\":\"messages\"") != std::string::npos) {
-        g_cached_messages = frame;
-        save_nvs((char*)"ble_messages", frame);
-        ESP_LOGI(GATTS_TAG, "Cached messages (ble_messages)");
+        {
+            std::lock_guard<std::mutex> lock(g_cache_mutex);
+            g_cached_messages = frame;
+        }
+        ESP_LOGI(GATTS_TAG, "Cached messages in RAM");
     }
     // Fallback: if top-level contains a "messages" field, persist it even if type differs
     else if (frame.find("\"messages\"") != std::string::npos) {
-        g_cached_messages = frame;
-        save_nvs((char*)"ble_messages", frame);
-        ESP_LOGI(GATTS_TAG, "Cached messages (fallback) (ble_messages)");
+        {
+            std::lock_guard<std::mutex> lock(g_cache_mutex);
+            g_cached_messages = frame;
+        }
+        ESP_LOGI(GATTS_TAG, "Cached messages in RAM (fallback)");
     }
     // Cache pending requests list
     if (frame.find("\"type\":\"pending_requests\"") != std::string::npos ||
         frame.find("\"requests\"") != std::string::npos) {
-        save_nvs((char*)"ble_pending", frame);
-        ESP_LOGI(GATTS_TAG, "Saved pending requests to NVS (ble_pending)");
+        {
+            std::lock_guard<std::mutex> lock(g_cache_mutex);
+            g_cached_pending = frame;
+        }
+        ESP_LOGI(GATTS_TAG, "Cached pending requests in RAM");
     }
     // Friend request results (send/accept/decline) -> store last result + id
     if (frame.find("\"type\":\"friend_request_result\"") != std::string::npos ||
@@ -117,6 +142,36 @@ static void handle_frame_from_phone(const std::string& frame) {
         save_nvs((char*)"ble_last_result", frame);
         ESP_LOGI(GATTS_TAG, "Saved BLE last result (id=%s)", id.c_str());
     }
+}
+
+std::string ble_uart_get_cached_contacts() {
+    std::lock_guard<std::mutex> lock(g_cache_mutex);
+    return g_cached_contacts;
+}
+
+void ble_uart_clear_cached_contacts() {
+    std::lock_guard<std::mutex> lock(g_cache_mutex);
+    g_cached_contacts.clear();
+}
+
+std::string ble_uart_get_cached_pending() {
+    std::lock_guard<std::mutex> lock(g_cache_mutex);
+    return g_cached_pending;
+}
+
+void ble_uart_clear_cached_pending() {
+    std::lock_guard<std::mutex> lock(g_cache_mutex);
+    g_cached_pending.clear();
+}
+
+std::string ble_uart_get_cached_messages() {
+    std::lock_guard<std::mutex> lock(g_cache_mutex);
+    return g_cached_messages;
+}
+
+void ble_uart_clear_cached_messages() {
+    std::lock_guard<std::mutex> lock(g_cache_mutex);
+    g_cached_messages.clear();
 }
 
 #if defined(CONFIG_BT_ENABLED) && defined(CONFIG_BT_NIMBLE_ENABLED)
@@ -469,10 +524,6 @@ extern "C" int ble_uart_send_str(const char* s) {
 }
 
 extern "C" int ble_uart_last_err(void) { return g_last_err; }
-
-std::string ble_uart_get_cached_messages() { return g_cached_messages; }
-
-void ble_uart_clear_cached_messages() { g_cached_messages.clear(); }
 
 #elif defined(CONFIG_BT_ENABLED) && defined(CONFIG_BT_BLE_ENABLED)
 

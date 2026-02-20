@@ -753,6 +753,15 @@ class HttpClient {
         if (!running.compare_exchange_strong(expected, true)) {
             return;
         }
+        {
+            wifi_ap_record_t ap = {};
+            if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
+                ESP_LOGI(TAG,
+                         "Skip starting notification task: Wi-Fi not connected");
+                running.store(false);
+                return;
+            }
+        }
 
         TaskHandle_t handle = nullptr;
         BaseType_t ok = xTaskCreatePinnedToCore(&http_get_notifications_task,
@@ -817,9 +826,9 @@ inline void http_get_notifications_task(void *pvParameters) {
         }
         if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
             ESP_LOGW(TAG, "Wi-Fi not connected; postponing MQTT start");
-            while (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
-                vTaskDelay(500 / portTICK_PERIOD_MS);
-            }
+            notifications_task_running_flag().store(false);
+            vTaskDelete(NULL);
+            return;
         }
     }
 

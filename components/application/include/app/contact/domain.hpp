@@ -39,9 +39,27 @@ inline int parse_unread_count(JsonVariantConst node) {
 inline ContactEntry make_contact_entry(JsonVariantConst node) {
     ContactEntry c;
     const char* uname = node["username"].as<const char*>();
+    if (!uname || std::strlen(uname) == 0) {
+        uname = node["user_name"].as<const char*>();
+    }
+    if (!uname || std::strlen(uname) == 0) {
+        uname = node["login_id"].as<const char*>();
+    }
     const char* nick = node["nickname"].as<const char*>();
+    if (!nick || std::strlen(nick) == 0) {
+        nick = node["display_name"].as<const char*>();
+    }
     const char* sid = node["short_id"].as<const char*>();
+    if (!sid || std::strlen(sid) == 0) {
+        sid = node["shortId"].as<const char*>();
+    }
     const char* fid = node["friend_id"].as<const char*>();
+    if (!fid || std::strlen(fid) == 0) {
+        fid = node["friendId"].as<const char*>();
+    }
+    if (!fid || std::strlen(fid) == 0) {
+        fid = node["id"].as<const char*>();
+    }
 
     c.username = uname ? uname : std::string();
     const std::string nickname = nick ? nick : std::string();

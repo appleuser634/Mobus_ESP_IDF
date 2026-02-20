@@ -30,6 +30,7 @@
 #include <vector>
 #include <utility>
 #include <mutex>
+#include <unordered_map>
 
 // Demo utilities removed to avoid unused warnings
 
@@ -39,6 +40,15 @@ constexpr size_t kNvsMaxKeyLen = 15;
 inline std::mutex& nvs_mutex() {
     static std::mutex m;
     return m;
+}
+
+inline std::unordered_map<std::string, std::string>& ble_ram_store() {
+    static std::unordered_map<std::string, std::string> s_store;
+    return s_store;
+}
+
+inline bool is_ble_ram_key(const char* key) {
+    return key != nullptr && strncmp(key, "ble_", 4) == 0;
 }
 
 inline esp_err_t nvs_set_str_internal(nvs_handle_t handle, const char *key,
@@ -79,6 +89,10 @@ inline void save_nvs(const char *key, const std::string &record) {
     }
 
     std::lock_guard<std::mutex> lock(nvs_mutex());
+    if (is_ble_ram_key(key)) {
+        ble_ram_store()[key] = record;
+        return;
+    }
     // Initialize NVS once; avoid erasing flash while other subsystems use it
     static bool s_nvs_ok = false;
     if (!s_nvs_ok) {
@@ -136,6 +150,11 @@ inline std::string get_nvs(const char *key) {
     }
 
     std::lock_guard<std::mutex> lock(nvs_mutex());
+    if (is_ble_ram_key(key)) {
+        auto it = ble_ram_store().find(key);
+        if (it == ble_ram_store().end()) return std::string("");
+        return it->second;
+    }
     // Initialize NVS once; avoid erasing flash while other subsystems use it
     static bool s_nvs_ok = false;
     if (!s_nvs_ok) {

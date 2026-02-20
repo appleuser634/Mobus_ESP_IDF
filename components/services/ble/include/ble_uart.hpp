@@ -37,6 +37,10 @@ int ble_uart_send_str(const char* s);
 }
 
 // C++ helpers for cached BLE frames.
+std::string ble_uart_get_cached_contacts();
+void ble_uart_clear_cached_contacts();
+std::string ble_uart_get_cached_pending();
+void ble_uart_clear_cached_pending();
 std::string ble_uart_get_cached_messages();
 void ble_uart_clear_cached_messages();
 #endif

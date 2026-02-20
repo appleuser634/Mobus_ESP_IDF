@@ -129,7 +129,10 @@ class ContactBook {
         // Fetch friends list via BLE (if connected) or HTTP( Wi‑Fi )
         std::vector<app::contactbook::ContactEntry> contacts;
         bool got_from_ble = false;
-        if (!wifi_is_connected() && ble_uart_is_ready()) {
+        const bool ble_ready = ble_uart_is_ready();
+        ESP_LOGI("CONTACT", "BLE ready=%d wifi_connected=%d", ble_ready ? 1 : 0,
+                 wifi_is_connected() ? 1 : 0);
+        if (!wifi_is_connected() && ble_ready) {
             std::string username = get_nvs((char *)"user_name");
             app::contactbook::FetchLoopHooks hooks;
             hooks.on_tick = [&]() {
@@ -148,74 +151,85 @@ class ContactBook {
         }
 
         if (!got_from_ble) {
+            const bool wifi_manual_off = WiFi::is_wifi_manual_off();
+            const bool ble_pair_forced = WiFi::is_ble_pairing_forced();
+            const bool allow_wifi_fallback = !wifi_manual_off && !ble_pair_forced;
+            if (!allow_wifi_fallback) {
+                ESP_LOGW("CONTACT",
+                         "Skip Wi-Fi fallback (manual_off=%d ble_pair=%d)",
+                         wifi_manual_off ? 1 : 0, ble_pair_forced ? 1 : 0);
+            }
+
             // Keep BLE connection alive and fall back to HTTP in parallel.
             // With NimBLE using PSRAM, Wi‑Fi coexists without disabling BLE.
             // HTTP fallback (Wi‑Fi). Ensure Wi‑Fi is connected.
-            int64_t last_connect_try_us = 0;
-            int64_t last_ap_check_us = 0;
-            while (true) {
-                feed_wdt();
-                bool connected = false;
-                if (s_wifi_event_group) {
-                    EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
-                    connected = bits & WIFI_CONNECTED_BIT;
-                }
-                // Event bits can lag; check link state periodically.
-                const int64_t now_us = esp_timer_get_time();
-                if (!connected && (now_us - last_ap_check_us) >= 1000000LL) {
-                    last_ap_check_us = now_us;
-                    wifi_ap_record_t ap = {};
-                    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
-                        connected = true;
+            if (allow_wifi_fallback) {
+                int64_t last_connect_try_us = 0;
+                int64_t last_ap_check_us = 0;
+                while (true) {
+                    feed_wdt();
+                    bool connected = false;
+                    if (s_wifi_event_group) {
+                        EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
+                        connected = bits & WIFI_CONNECTED_BIT;
                     }
-                }
-                // Ensure connect is actually requested (start alone is not
-                // enough).
-                if (!connected && (now_us - last_connect_try_us) >= 3000000LL) {
-                    last_connect_try_us = now_us;
-                    esp_err_t serr = esp_wifi_start();
-                    if (serr != ESP_OK && serr != ESP_ERR_WIFI_CONN &&
-                        serr != ESP_ERR_WIFI_NOT_STOPPED) {
-                        ESP_LOGW("CONTACT", "esp_wifi_start returned %s",
-                                 esp_err_to_name(serr));
+                    // Event bits can lag; check link state periodically.
+                    const int64_t now_us = esp_timer_get_time();
+                    if (!connected && (now_us - last_ap_check_us) >= 1000000LL) {
+                        last_ap_check_us = now_us;
+                        wifi_ap_record_t ap = {};
+                        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+                            connected = true;
+                        }
                     }
-                    esp_err_t cerr = esp_wifi_connect();
-                    if (cerr != ESP_OK && cerr != ESP_ERR_WIFI_CONN) {
-                        ESP_LOGW("CONTACT", "esp_wifi_connect returned %s",
-                                 esp_err_to_name(cerr));
+                    // Ensure connect is actually requested (start alone is not
+                    // enough).
+                    if (!connected && (now_us - last_connect_try_us) >= 3000000LL) {
+                        last_connect_try_us = now_us;
+                        esp_err_t serr = esp_wifi_start();
+                        if (serr != ESP_OK && serr != ESP_ERR_WIFI_CONN &&
+                            serr != ESP_ERR_WIFI_NOT_STOPPED) {
+                            ESP_LOGW("CONTACT", "esp_wifi_start returned %s",
+                                     esp_err_to_name(serr));
+                        }
+                        esp_err_t cerr = esp_wifi_connect();
+                        if (cerr != ESP_OK && cerr != ESP_ERR_WIFI_CONN) {
+                            ESP_LOGW("CONTACT", "esp_wifi_connect returned %s",
+                                     esp_err_to_name(cerr));
+                        }
                     }
-                }
-                if (connected) break;
+                    if (connected) break;
 
-                ui::render_status_panel(status_panel_api, "Connecting Wi-Fi...",
-                                        "Press Back to exit");
-                if (back_button.get_button_state().pushed) {
+                    ui::render_status_panel(status_panel_api, "Connecting Wi-Fi...",
+                                            "Press Back to exit");
+                    if (back_button.get_button_state().pushed) {
+                        finish_task();
+                        return;
+                    }
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                }
+
+                const auto creds = chatapi::load_credentials_from_nvs();
+                std::string username = creds.username;
+                if (recreate_contact_sprite(lcd.width(), lcd.height())) {
+                    ui::render_status_panel(status_panel_api, "Loading contacts...",
+                                            "via Wi-Fi", 24, 40);
+                }
+                feed_wdt();
+                auto friends_resp = app::contactbook::fetch_contacts_via_http(
+                    http_client, username, contacts, 15000);
+                feed_wdt();
+                if (!recreate_contact_sprite(lcd.width(), lcd.height())) {
+                    ESP_LOGE("CONTACT", "Sprite recreate failed after HTTP");
                     finish_task();
                     return;
                 }
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-            }
-
-            const auto creds = chatapi::load_credentials_from_nvs();
-            std::string username = creds.username;
-            if (recreate_contact_sprite(lcd.width(), lcd.height())) {
-                ui::render_status_panel(status_panel_api, "Loading contacts...",
-                                        "via Wi-Fi", 24, 40);
-            }
-            feed_wdt();
-            auto friends_resp = app::contactbook::fetch_contacts_via_http(
-                http_client, username, contacts, 15000);
-            feed_wdt();
-            if (!recreate_contact_sprite(lcd.width(), lcd.height())) {
-                ESP_LOGE("CONTACT", "Sprite recreate failed after HTTP");
-                finish_task();
-                return;
-            }
-            if (!(friends_resp.err == ESP_OK && friends_resp.status >= 200 &&
-                  friends_resp.status < 300)) {
-                ESP_LOGW("CONTACT", "Friends fetch failed (err=%s status=%d)",
-                         esp_err_to_name(friends_resp.err),
-                         friends_resp.status);
+                if (!(friends_resp.err == ESP_OK && friends_resp.status >= 200 &&
+                      friends_resp.status < 300)) {
+                    ESP_LOGW("CONTACT", "Friends fetch failed (err=%s status=%d)",
+                             esp_err_to_name(friends_resp.err),
+                             friends_resp.status);
+                }
             }
         }
 
@@ -376,4 +390,3 @@ bool ContactBook::running_flag = false;
 TaskHandle_t ContactBook::task_handle_ = nullptr;
 StaticTask_t ContactBook::task_buffer_;
 StackType_t *ContactBook::task_stack_ = nullptr;
-
